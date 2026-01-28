@@ -1,0 +1,136 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: notification-service
+
+  # Kafka configuration (when enabled)
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: true
+
+  # Jackson configuration
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+# Notification service configuration
+notification:
+  default-tenant: default
+
+  rest:
+    enabled: true
+    base-path: /api/v1
+
+  kafka:
+    enabled: ${KAFKA_ENABLED:false}
+    topic: ${KAFKA_TOPIC:notifications}
+    group-id: ${KAFKA_GROUP_ID:notification-service}
+
+  audit:
+    enabled: ${AUDIT_ENABLED:false}
+    store-request-payload: false
+    store-response-payload: false
+    retention-days: 90
+    async: true
+
+  template:
+    base-path: classpath:/templates/
+    cache-enabled: true
+    cache-ttl-seconds: 3600
+
+  # Tenant configurations
+  tenants:
+    default:
+      channels:
+        email:
+          enabled: ${EMAIL_ENABLED:true}
+          config:
+            from-address: ${EMAIL_FROM:noreply@example.com}
+            from-name: ${EMAIL_FROM_NAME:Notification Service}
+          providers:
+            # Single provider - auto-default, no need to specify in request
+            smtp:
+              properties:
+                host: ${SMTP_HOST:smtp.gmail.com}
+                port: ${SMTP_PORT:587}
+                username: ${SMTP_USER:}
+                password: ${SMTP_PASSWORD:}
+                start-tls: true
+                auth: true
+
+            # Uncomment to enable SES (when multiple providers, set default: true on one)
+            # ses:
+            #   default: true  # Mark as default when multiple providers
+            #   properties:
+            #     region: ${AWS_REGION:us-east-1}
+
+        sms:
+          enabled: ${SMS_ENABLED:false}
+          providers:
+            # Single provider - auto-default
+            twilio:
+              properties:
+                account-sid: ${TWILIO_ACCOUNT_SID:}
+                auth-token: ${TWILIO_AUTH_TOKEN:}
+                from: ${TWILIO_FROM_NUMBER:}
+
+            # Uncomment to enable SNS
+            # sns:
+            #   properties:
+            #     region: ${AWS_REGION:us-east-1}
+
+        whatsapp:
+          enabled: ${WHATSAPP_ENABLED:false}
+          providers:
+            twilio:
+              properties:
+                account-sid: ${TWILIO_ACCOUNT_SID:}
+                auth-token: ${TWILIO_AUTH_TOKEN:}
+                from: ${TWILIO_WHATSAPP_FROM:}
+
+        push:
+          enabled: ${PUSH_ENABLED:false}
+          providers:
+            fcm:
+              properties:
+                credentials-path: ${FCM_CREDENTIALS_PATH:/config/firebase-credentials.json}
+
+    # Example: Tenant with multiple email providers
+    # acme-corp:
+    #   channels:
+    #     email:
+    #       enabled: true
+    #       config:
+    #         from-address: notifications@acme.com
+    #       providers:
+    #         smtp:
+    #           # No default=true, so this is NOT the default
+    #           properties:
+    #             host: smtp.acme.com
+    #             port: 587
+    #         ses:
+    #           default: true  # SES is the default for acme-corp
+    #           properties:
+    #             region: us-west-2
+
+# Actuator endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
+# Logging
+logging:
+  level:
+    com.lazydevs.notification: ${LOG_LEVEL:INFO}
+    org.springframework.kafka: WARN

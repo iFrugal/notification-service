@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.ifrugal</groupId>
+        <artifactId>notification-service</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>notification-audit</artifactId>
+    <packaging>jar</packaging>
+
+    <name>${project.artifactId}</name>
+    <description>Notification Service Audit - Audit persistence using persistence-api</description>
+
+    <dependencies>
+        <!-- Internal -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>notification-api</artifactId>
+        </dependency>
+
+        <!-- persistence-api for GeneralAppender, GeneralReader -->
+        <dependency>
+            <groupId>com.github.ifrugal</groupId>
+            <artifactId>persistence-api</artifactId>
+        </dependency>
+
+        <!-- Spring for conditional beans -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>

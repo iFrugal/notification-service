@@ -1,0 +1,1 @@
+Your order #${orderId} has been shipped! <#if trackingNumber??>Track: ${trackingNumber}</#if> <#if trackingUrl??>${trackingUrl}</#if>

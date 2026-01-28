@@ -1,0 +1,1 @@
+Your verification code is: ${otp}. This code expires in ${defaultValue(expiryMinutes, '5')} minutes. Do not share this code with anyone.

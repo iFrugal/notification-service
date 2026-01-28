@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.ifrugal</groupId>
+        <artifactId>notification-service</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>notification-server</artifactId>
+    <packaging>jar</packaging>
+
+    <name>${project.artifactId}</name>
+    <description>Notification Service Server - Standalone Spring Boot application for Docker deployment</description>
+
+    <dependencies>
+        <!-- Core -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>notification-core</artifactId>
+        </dependency>
+
+        <!-- REST API -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>notification-rest</artifactId>
+        </dependency>
+
+        <!-- Kafka -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>notification-kafka</artifactId>
+        </dependency>
+
+        <!-- Audit -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>notification-audit</artifactId>
+        </dependency>
+
+        <!-- All Email Providers -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>email-provider-smtp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>email-provider-ses</artifactId>
+        </dependency>
+
+        <!-- All SMS Providers -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>sms-provider-twilio</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>sms-provider-sns</artifactId>
+        </dependency>
+
+        <!-- All WhatsApp Providers -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>whatsapp-provider-twilio</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>whatsapp-provider-meta</artifactId>
+        </dependency>
+
+        <!-- All Push Providers -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>push-provider-fcm</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>push-provider-apns</artifactId>
+        </dependency>
+
+        <!-- Persistence Implementations (user chooses one) -->
+        <!-- MongoDB - commonly used for audit -->
+        <dependency>
+            <groupId>com.github.ifrugal</groupId>
+            <artifactId>mongodb-persistence</artifactId>
+            <version>${persistence.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Spring Boot -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- Actuator for health/metrics -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Micrometer for metrics -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Testing -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Spring Boot Maven Plugin for executable jar -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <mainClass>com.lazydevs.notification.server.NotificationServerApplication</mainClass>
+                </configuration>
+            </plugin>
+
+            <!-- Docker build with Jib -->
+            <plugin>
+                <groupId>com.google.cloud.tools</groupId>
+                <artifactId>jib-maven-plugin</artifactId>
+                <version>3.4.0</version>
+                <configuration>
+                    <from>
+                        <image>eclipse-temurin:17-jre-alpine</image>
+                    </from>
+                    <to>
+                        <image>lazydevs/notification-service:${project.version}</image>
+                        <tags>
+                            <tag>latest</tag>
+                        </tags>
+                    </to>
+                    <container>
+                        <mainClass>com.lazydevs.notification.server.NotificationServerApplication</mainClass>
+                        <ports>
+                            <port>8080</port>
+                        </ports>
+                        <environment>
+                            <SPRING_PROFILES_ACTIVE>docker</SPRING_PROFILES_ACTIVE>
+                        </environment>
+                        <jvmFlags>
+                            <jvmFlag>-Xms256m</jvmFlag>
+                            <jvmFlag>-Xmx512m</jvmFlag>
+                        </jvmFlags>
+                    </container>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!-- Profile for building Docker image -->
+        <profile>
+            <id>docker</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.google.cloud.tools</groupId>
+                        <artifactId>jib-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>dockerBuild</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
+</project>
