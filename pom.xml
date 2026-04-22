@@ -45,7 +45,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- Spring Boot -->
-        <spring-boot.version>3.2.2</spring-boot.version>
+        <spring-boot.version>4.0.5</spring-boot.version>
 
         <!-- all-about-persistence -->
         <persistence.version>1.0.45-SNAPSHOT</persistence.version>
