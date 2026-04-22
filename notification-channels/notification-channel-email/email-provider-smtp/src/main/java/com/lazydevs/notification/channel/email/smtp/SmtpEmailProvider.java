@@ -129,7 +129,7 @@ public class SmtpEmailProvider implements EmailProvider {
             }
 
             // Subject
-            String subject = content.getSubject();
+            String subject = content.subject();
             if (subject == null || subject.isBlank()) {
                 subject = recipient.getSubject();
             }
@@ -143,18 +143,18 @@ public class SmtpEmailProvider implements EmailProvider {
                 MimeMultipart multipart = new MimeMultipart("alternative");
 
                 MimeBodyPart textPart = new MimeBodyPart();
-                textPart.setText(content.getTextBody(), "UTF-8");
+                textPart.setText(content.textBody(), "UTF-8");
                 multipart.addBodyPart(textPart);
 
                 MimeBodyPart htmlPart = new MimeBodyPart();
-                htmlPart.setContent(content.getHtmlBody(), "text/html; charset=UTF-8");
+                htmlPart.setContent(content.htmlBody(), "text/html; charset=UTF-8");
                 multipart.addBodyPart(htmlPart);
 
                 message.setContent(multipart);
             } else if (content.hasHtml()) {
-                message.setContent(content.getHtmlBody(), "text/html; charset=UTF-8");
+                message.setContent(content.htmlBody(), "text/html; charset=UTF-8");
             } else {
-                message.setText(content.getTextBody(), "UTF-8");
+                message.setText(content.textBody(), "UTF-8");
             }
 
             // Handle attachments
@@ -164,9 +164,9 @@ public class SmtpEmailProvider implements EmailProvider {
                 // Add body
                 MimeBodyPart bodyPart = new MimeBodyPart();
                 if (content.hasHtml()) {
-                    bodyPart.setContent(content.getHtmlBody(), "text/html; charset=UTF-8");
+                    bodyPart.setContent(content.htmlBody(), "text/html; charset=UTF-8");
                 } else {
-                    bodyPart.setText(content.getTextBody(), "UTF-8");
+                    bodyPart.setText(content.textBody(), "UTF-8");
                 }
                 mixedMultipart.addBodyPart(bodyPart);
 

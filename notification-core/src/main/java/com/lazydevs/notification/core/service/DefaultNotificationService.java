@@ -77,7 +77,7 @@ public class DefaultNotificationService implements NotificationService {
 
             // Build response
             NotificationResponse response;
-            if (result.isSuccess()) {
+            if (result.success()) {
                 response = NotificationResponse.builder()
                         .requestId(request.getRequestId())
                         .correlationId(request.getCorrelationId())
@@ -85,14 +85,14 @@ public class DefaultNotificationService implements NotificationService {
                         .channel(request.getChannel())
                         .provider(provider.getProviderName())
                         .status(NotificationStatus.SENT)
-                        .providerMessageId(result.getMessageId())
+                        .providerMessageId(result.messageId())
                         .receivedAt(receivedAt)
                         .processedAt(Instant.now())
-                        .sentAt(result.getTimestamp())
+                        .sentAt(result.timestamp())
                         .build();
 
                 log.info("Notification sent: requestId={}, provider={}, messageId={}",
-                        request.getRequestId(), provider.getProviderName(), result.getMessageId());
+                        request.getRequestId(), provider.getProviderName(), result.messageId());
             } else {
                 response = NotificationResponse.builder()
                         .requestId(request.getRequestId())
@@ -101,14 +101,14 @@ public class DefaultNotificationService implements NotificationService {
                         .channel(request.getChannel())
                         .provider(provider.getProviderName())
                         .status(NotificationStatus.FAILED)
-                        .errorCode(result.getErrorCode())
-                        .errorMessage(result.getErrorMessage())
+                        .errorCode(result.errorCode())
+                        .errorMessage(result.errorMessage())
                         .receivedAt(receivedAt)
                         .processedAt(Instant.now())
                         .build();
 
                 log.warn("Notification failed: requestId={}, error={}: {}",
-                        request.getRequestId(), result.getErrorCode(), result.getErrorMessage());
+                        request.getRequestId(), result.errorCode(), result.errorMessage());
             }
 
             // Update audit

@@ -79,7 +79,7 @@ public class SesEmailProvider implements EmailProvider {
             EmailContent.Builder emailContentBuilder = EmailContent.builder();
 
             // Subject
-            String subject = content.getSubject();
+            String subject = content.subject();
             if (subject == null || subject.isBlank()) {
                 subject = recipient.getSubject();
             }
@@ -87,10 +87,10 @@ public class SesEmailProvider implements EmailProvider {
             // Body
             Body.Builder bodyBuilder = Body.builder();
             if (content.hasHtml()) {
-                bodyBuilder.html(Content.builder().data(content.getHtmlBody()).charset("UTF-8").build());
+                bodyBuilder.html(Content.builder().data(content.htmlBody()).charset("UTF-8").build());
             }
             if (content.hasText()) {
-                bodyBuilder.text(Content.builder().data(content.getTextBody()).charset("UTF-8").build());
+                bodyBuilder.text(Content.builder().data(content.textBody()).charset("UTF-8").build());
             }
 
             Message message = Message.builder()

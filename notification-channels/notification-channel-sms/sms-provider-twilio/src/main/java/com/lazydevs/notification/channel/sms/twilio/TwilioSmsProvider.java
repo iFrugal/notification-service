@@ -67,7 +67,7 @@ public class TwilioSmsProvider implements SmsProvider {
             Message message = Message.creator(
                     new PhoneNumber(recipient.getPhoneNumber()),
                     new PhoneNumber(fromNumber),
-                    content.getTextBody()
+                    content.textBody()
             ).create();
 
             log.debug("SMS sent via Twilio: to={}, sid={}", recipient.getPhoneNumber(), message.getSid());

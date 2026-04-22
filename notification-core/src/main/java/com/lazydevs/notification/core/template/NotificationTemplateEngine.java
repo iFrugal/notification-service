@@ -191,12 +191,11 @@ public class NotificationTemplateEngine {
                 body.contains("<body") || body.contains("<BODY") ||
                 body.contains("<div") || body.contains("<p>");
 
-        return RenderedContent.builder()
-                .subject(subject)
-                .htmlBody(isHtml ? body : null)
-                .textBody(isHtml ? null : body)
-                .templateId(templateId)
-                .build();
+        return new RenderedContent(
+                subject,
+                isHtml ? null : body,
+                isHtml ? body : null,
+                templateId);
     }
 
     /**
