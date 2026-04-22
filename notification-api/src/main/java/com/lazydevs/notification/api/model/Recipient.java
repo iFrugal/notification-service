@@ -2,39 +2,36 @@ package com.lazydevs.notification.api.model;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import lombok.experimental.SuperBuilder;
 
 /**
- * Base class for notification recipients.
- * Uses Jackson polymorphic deserialization based on channel type.
+ * Sealed supertype for notification recipients. Each channel has its own
+ * record implementation which carries channel-specific fields (e.g. email
+ * CC list, SMS phone number, WhatsApp template parameters).
+ *
+ * <p>Polymorphic JSON (de)serialization is driven by a {@code "type"}
+ * property keyed to channel name.
  */
-@Data
-@SuperBuilder
-@NoArgsConstructor
-@AllArgsConstructor
 @JsonTypeInfo(
-    use = JsonTypeInfo.Id.NAME,
-    include = JsonTypeInfo.As.PROPERTY,
-    property = "type"
+        use = JsonTypeInfo.Id.NAME,
+        include = JsonTypeInfo.As.PROPERTY,
+        property = "type"
 )
 @JsonSubTypes({
-    @JsonSubTypes.Type(value = EmailRecipient.class, name = "EMAIL"),
-    @JsonSubTypes.Type(value = SmsRecipient.class, name = "SMS"),
-    @JsonSubTypes.Type(value = WhatsAppRecipient.class, name = "WHATSAPP"),
-    @JsonSubTypes.Type(value = PushRecipient.class, name = "PUSH")
+        @JsonSubTypes.Type(value = EmailRecipient.class, name = "EMAIL"),
+        @JsonSubTypes.Type(value = SmsRecipient.class, name = "SMS"),
+        @JsonSubTypes.Type(value = WhatsAppRecipient.class, name = "WHATSAPP"),
+        @JsonSubTypes.Type(value = PushRecipient.class, name = "PUSH")
 })
-public abstract class Recipient {
+public sealed interface Recipient
+        permits EmailRecipient, SmsRecipient, WhatsAppRecipient, PushRecipient {
 
     /**
-     * Optional recipient identifier for tracking purposes
+     * @return optional recipient identifier for tracking purposes.
      */
-    private String id;
+    String id();
 
     /**
-     * Get the channel type for this recipient
+     * @return channel name this recipient is scoped to, e.g. {@code "EMAIL"}.
      */
-    public abstract String getChannelType();
+    String channelType();
 }

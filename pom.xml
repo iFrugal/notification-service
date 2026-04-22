@@ -39,13 +39,13 @@
 
     <properties>
         <!-- Java Version -->
-        <java.version>17</java.version>
+        <java.version>25</java.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- Spring Boot -->
-        <spring-boot.version>3.2.2</spring-boot.version>
+        <spring-boot.version>4.0.5</spring-boot.version>
 
         <!-- all-about-persistence -->
         <persistence.version>1.0.45-SNAPSHOT</persistence.version>
@@ -158,12 +158,22 @@
             </dependency>
             <dependency>
                 <groupId>${project.groupId}</groupId>
+                <artifactId>whatsapp-provider-meta</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
                 <artifactId>notification-channel-push</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
                 <groupId>${project.groupId}</groupId>
                 <artifactId>push-provider-fcm</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>push-provider-apns</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

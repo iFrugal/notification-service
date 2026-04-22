@@ -1,98 +1,61 @@
 package com.lazydevs.notification.api.model;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 import java.time.Instant;
 import java.util.Map;
 
 /**
  * Result of sending a notification via a provider.
- * Returned by NotificationProvider.send() method.
+ * Returned by {@link com.lazydevs.notification.api.channel.NotificationProvider#send} method.
+ *
+ * @param success          whether the send was successful
+ * @param messageId        provider-specific message ID (may be {@code null} on failure)
+ * @param errorCode        error code (may be {@code null} on success)
+ * @param errorMessage     error message (may be {@code null} on success)
+ * @param timestamp        timestamp of the result (never {@code null})
+ * @param providerMetadata additional provider-specific metadata (may be {@code null})
  */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class SendResult {
+public record SendResult(
+        boolean success,
+        String messageId,
+        String errorCode,
+        String errorMessage,
+        Instant timestamp,
+        Map<String, Object> providerMetadata) {
 
     /**
-     * Whether the send was successful
+     * Compact constructor — ensures {@code timestamp} is never {@code null}.
      */
-    private boolean success;
+    public SendResult {
+        if (timestamp == null) {
+            timestamp = Instant.now();
+        }
+    }
 
     /**
-     * Provider-specific message ID
-     */
-    private String messageId;
-
-    /**
-     * Error code (if failed)
-     */
-    private String errorCode;
-
-    /**
-     * Error message (if failed)
-     */
-    private String errorMessage;
-
-    /**
-     * Timestamp of the result
-     */
-    @Builder.Default
-    private Instant timestamp = Instant.now();
-
-    /**
-     * Additional provider-specific metadata
-     */
-    private Map<String, Object> providerMetadata;
-
-    /**
-     * Create a successful result
+     * Create a successful result.
      */
     public static SendResult success(String messageId) {
-        return SendResult.builder()
-                .success(true)
-                .messageId(messageId)
-                .timestamp(Instant.now())
-                .build();
+        return new SendResult(true, messageId, null, null, Instant.now(), null);
     }
 
     /**
-     * Create a successful result with metadata
+     * Create a successful result with metadata.
      */
     public static SendResult success(String messageId, Map<String, Object> metadata) {
-        return SendResult.builder()
-                .success(true)
-                .messageId(messageId)
-                .providerMetadata(metadata)
-                .timestamp(Instant.now())
-                .build();
+        return new SendResult(true, messageId, null, null, Instant.now(), metadata);
     }
 
     /**
-     * Create a failed result
+     * Create a failed result.
      */
     public static SendResult failure(String errorCode, String errorMessage) {
-        return SendResult.builder()
-                .success(false)
-                .errorCode(errorCode)
-                .errorMessage(errorMessage)
-                .timestamp(Instant.now())
-                .build();
+        return new SendResult(false, null, errorCode, errorMessage, Instant.now(), null);
     }
 
     /**
-     * Create a failed result from exception
+     * Create a failed result from exception.
      */
     public static SendResult failure(Exception e) {
-        return SendResult.builder()
-                .success(false)
-                .errorCode(e.getClass().getSimpleName())
-                .errorMessage(e.getMessage())
-                .timestamp(Instant.now())
-                .build();
+        return new SendResult(false, null, e.getClass().getSimpleName(), e.getMessage(), Instant.now(), null);
     }
 }

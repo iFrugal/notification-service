@@ -77,43 +77,31 @@ public class DefaultNotificationService implements NotificationService {
 
             // Build response
             NotificationResponse response;
-            if (result.isSuccess()) {
-                response = NotificationResponse.builder()
-                        .requestId(request.getRequestId())
-                        .correlationId(request.getCorrelationId())
-                        .tenantId(request.getTenantId())
-                        .channel(request.getChannel())
-                        .provider(provider.getProviderName())
-                        .status(NotificationStatus.SENT)
-                        .providerMessageId(result.getMessageId())
-                        .receivedAt(receivedAt)
-                        .processedAt(Instant.now())
-                        .sentAt(result.getTimestamp())
-                        .build();
+            if (result.success()) {
+                response = NotificationResponse.sent(
+                        request,
+                        provider.getProviderName(),
+                        result.messageId(),
+                        receivedAt,
+                        result.timestamp());
 
                 log.info("Notification sent: requestId={}, provider={}, messageId={}",
-                        request.getRequestId(), provider.getProviderName(), result.getMessageId());
+                        request.getRequestId(), provider.getProviderName(), result.messageId());
             } else {
-                response = NotificationResponse.builder()
-                        .requestId(request.getRequestId())
-                        .correlationId(request.getCorrelationId())
-                        .tenantId(request.getTenantId())
-                        .channel(request.getChannel())
-                        .provider(provider.getProviderName())
-                        .status(NotificationStatus.FAILED)
-                        .errorCode(result.getErrorCode())
-                        .errorMessage(result.getErrorMessage())
-                        .receivedAt(receivedAt)
-                        .processedAt(Instant.now())
-                        .build();
+                response = NotificationResponse.failed(
+                        request,
+                        provider.getProviderName(),
+                        result.errorCode(),
+                        result.errorMessage(),
+                        receivedAt);
 
                 log.warn("Notification failed: requestId={}, error={}: {}",
-                        request.getRequestId(), result.getErrorCode(), result.getErrorMessage());
+                        request.getRequestId(), result.errorCode(), result.errorMessage());
             }
 
             // Update audit
-            auditService.updateStatus(request.getRequestId(), response.getStatus(),
-                    response.getProviderMessageId(), response.getErrorCode(), response.getErrorMessage());
+            auditService.updateStatus(request.getRequestId(), response.status(),
+                    response.providerMessageId(), response.errorCode(), response.errorMessage());
 
             return response;
 
@@ -121,40 +109,30 @@ public class DefaultNotificationService implements NotificationService {
             log.error("Notification error: requestId={}, error={}: {}",
                     request.getRequestId(), e.getErrorCode(), e.getMessage());
 
-            NotificationResponse response = NotificationResponse.builder()
-                    .requestId(request.getRequestId())
-                    .correlationId(request.getCorrelationId())
-                    .tenantId(request.getTenantId())
-                    .channel(request.getChannel())
-                    .status(NotificationStatus.FAILED)
-                    .errorCode(e.getErrorCode())
-                    .errorMessage(e.getMessage())
-                    .receivedAt(receivedAt)
-                    .processedAt(Instant.now())
-                    .build();
+            NotificationResponse response = NotificationResponse.failed(
+                    request,
+                    null,
+                    e.getErrorCode(),
+                    e.getMessage(),
+                    receivedAt);
 
-            auditService.updateStatus(request.getRequestId(), response.getStatus(),
-                    null, response.getErrorCode(), response.getErrorMessage());
+            auditService.updateStatus(request.getRequestId(), response.status(),
+                    null, response.errorCode(), response.errorMessage());
 
             return response;
 
         } catch (Exception e) {
             log.error("Unexpected error processing notification: requestId={}", request.getRequestId(), e);
 
-            NotificationResponse response = NotificationResponse.builder()
-                    .requestId(request.getRequestId())
-                    .correlationId(request.getCorrelationId())
-                    .tenantId(request.getTenantId())
-                    .channel(request.getChannel())
-                    .status(NotificationStatus.FAILED)
-                    .errorCode("INTERNAL_ERROR")
-                    .errorMessage(e.getMessage())
-                    .receivedAt(receivedAt)
-                    .processedAt(Instant.now())
-                    .build();
+            NotificationResponse response = NotificationResponse.failed(
+                    request,
+                    null,
+                    "INTERNAL_ERROR",
+                    e.getMessage(),
+                    receivedAt);
 
-            auditService.updateStatus(request.getRequestId(), response.getStatus(),
-                    null, response.getErrorCode(), response.getErrorMessage());
+            auditService.updateStatus(request.getRequestId(), response.status(),
+                    null, response.errorCode(), response.errorMessage());
 
             return response;
         }

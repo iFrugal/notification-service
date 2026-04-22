@@ -1,85 +1,56 @@
 package com.lazydevs.notification.api.channel;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 /**
  * Rendered notification content from the template engine.
+ *
+ * @param subject    subject line (used for email and push notification title)
+ * @param textBody   plain-text body
+ * @param htmlBody   HTML body (used for email)
+ * @param templateId template ID that was used to render this content
  */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class RenderedContent {
+public record RenderedContent(
+        String subject,
+        String textBody,
+        String htmlBody,
+        String templateId) {
 
     /**
-     * Subject line (for email, push title)
-     */
-    private String subject;
-
-    /**
-     * Plain text body
-     */
-    private String textBody;
-
-    /**
-     * HTML body (for email)
-     */
-    private String htmlBody;
-
-    /**
-     * Template ID that was used
-     */
-    private String templateId;
-
-    /**
-     * Create simple text content
+     * Create simple text content.
      */
     public static RenderedContent text(String body) {
-        return RenderedContent.builder()
-                .textBody(body)
-                .build();
+        return new RenderedContent(null, body, null, null);
     }
 
     /**
-     * Create email content with subject and HTML
+     * Create email content with subject, HTML body, and text body.
      */
     public static RenderedContent email(String subject, String htmlBody, String textBody) {
-        return RenderedContent.builder()
-                .subject(subject)
-                .htmlBody(htmlBody)
-                .textBody(textBody)
-                .build();
+        return new RenderedContent(subject, textBody, htmlBody, null);
     }
 
     /**
-     * Create email content with subject and HTML only
+     * Create email content with subject and HTML body only.
      */
     public static RenderedContent emailHtml(String subject, String htmlBody) {
-        return RenderedContent.builder()
-                .subject(subject)
-                .htmlBody(htmlBody)
-                .build();
+        return new RenderedContent(subject, null, htmlBody, null);
     }
 
     /**
-     * Get the best available body (HTML preferred for email, text otherwise)
+     * Get the best available body — HTML preferred for email, plain text otherwise.
      */
-    public String getPreferredBody() {
+    public String preferredBody() {
         return htmlBody != null ? htmlBody : textBody;
     }
 
     /**
-     * Check if HTML content is available
+     * @return {@code true} if HTML content is available.
      */
     public boolean hasHtml() {
         return htmlBody != null && !htmlBody.isBlank();
     }
 
     /**
-     * Check if text content is available
+     * @return {@code true} if text content is available.
      */
     public boolean hasText() {
         return textBody != null && !textBody.isBlank();

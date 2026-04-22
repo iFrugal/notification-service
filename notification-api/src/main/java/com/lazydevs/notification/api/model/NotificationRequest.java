@@ -108,16 +108,17 @@ public class NotificationRequest {
     private java.util.List<Attachment> attachments;
 
     /**
-     * Email attachment
+     * Email attachment.
+     *
+     * @param filename    attachment filename (as seen by the recipient)
+     * @param contentType MIME content type, e.g. {@code application/pdf}
+     * @param content     raw bytes of the attachment (mutually exclusive with {@code url})
+     * @param url         URL to fetch the attachment from (alternative to {@code content})
      */
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class Attachment {
-        private String filename;
-        private String contentType;
-        private byte[] content;
-        private String url; // Alternative: fetch from URL
+    public record Attachment(
+            String filename,
+            String contentType,
+            byte[] content,
+            String url) {
     }
 }

@@ -107,31 +107,31 @@ public class SmtpEmailProvider implements EmailProvider {
             }
 
             // To
-            message.setRecipient(Message.RecipientType.TO, new InternetAddress(recipient.getTo()));
+            message.setRecipient(Message.RecipientType.TO, new InternetAddress(recipient.to()));
 
             // CC
-            if (recipient.getCc() != null && !recipient.getCc().isEmpty()) {
-                for (String cc : recipient.getCc()) {
+            if (recipient.cc() != null && !recipient.cc().isEmpty()) {
+                for (String cc : recipient.cc()) {
                     message.addRecipient(Message.RecipientType.CC, new InternetAddress(cc));
                 }
             }
 
             // BCC
-            if (recipient.getBcc() != null && !recipient.getBcc().isEmpty()) {
-                for (String bcc : recipient.getBcc()) {
+            if (recipient.bcc() != null && !recipient.bcc().isEmpty()) {
+                for (String bcc : recipient.bcc()) {
                     message.addRecipient(Message.RecipientType.BCC, new InternetAddress(bcc));
                 }
             }
 
             // Reply-To
-            if (recipient.getReplyTo() != null && !recipient.getReplyTo().isBlank()) {
-                message.setReplyTo(new Address[]{new InternetAddress(recipient.getReplyTo())});
+            if (recipient.replyTo() != null && !recipient.replyTo().isBlank()) {
+                message.setReplyTo(new Address[]{new InternetAddress(recipient.replyTo())});
             }
 
             // Subject
-            String subject = content.getSubject();
+            String subject = content.subject();
             if (subject == null || subject.isBlank()) {
-                subject = recipient.getSubject();
+                subject = recipient.subject();
             }
             if (subject != null) {
                 message.setSubject(subject, "UTF-8");
@@ -143,18 +143,18 @@ public class SmtpEmailProvider implements EmailProvider {
                 MimeMultipart multipart = new MimeMultipart("alternative");
 
                 MimeBodyPart textPart = new MimeBodyPart();
-                textPart.setText(content.getTextBody(), "UTF-8");
+                textPart.setText(content.textBody(), "UTF-8");
                 multipart.addBodyPart(textPart);
 
                 MimeBodyPart htmlPart = new MimeBodyPart();
-                htmlPart.setContent(content.getHtmlBody(), "text/html; charset=UTF-8");
+                htmlPart.setContent(content.htmlBody(), "text/html; charset=UTF-8");
                 multipart.addBodyPart(htmlPart);
 
                 message.setContent(multipart);
             } else if (content.hasHtml()) {
-                message.setContent(content.getHtmlBody(), "text/html; charset=UTF-8");
+                message.setContent(content.htmlBody(), "text/html; charset=UTF-8");
             } else {
-                message.setText(content.getTextBody(), "UTF-8");
+                message.setText(content.textBody(), "UTF-8");
             }
 
             // Handle attachments
@@ -164,17 +164,17 @@ public class SmtpEmailProvider implements EmailProvider {
                 // Add body
                 MimeBodyPart bodyPart = new MimeBodyPart();
                 if (content.hasHtml()) {
-                    bodyPart.setContent(content.getHtmlBody(), "text/html; charset=UTF-8");
+                    bodyPart.setContent(content.htmlBody(), "text/html; charset=UTF-8");
                 } else {
-                    bodyPart.setText(content.getTextBody(), "UTF-8");
+                    bodyPart.setText(content.textBody(), "UTF-8");
                 }
                 mixedMultipart.addBodyPart(bodyPart);
 
                 // Add attachments
                 for (NotificationRequest.Attachment attachment : request.getAttachments()) {
                     MimeBodyPart attachmentPart = new MimeBodyPart();
-                    attachmentPart.setFileName(attachment.getFilename());
-                    attachmentPart.setContent(attachment.getContent(), attachment.getContentType());
+                    attachmentPart.setFileName(attachment.filename());
+                    attachmentPart.setContent(attachment.content(), attachment.contentType());
                     mixedMultipart.addBodyPart(attachmentPart);
                 }
 
@@ -190,13 +190,13 @@ public class SmtpEmailProvider implements EmailProvider {
             }
 
             log.debug("Email sent via SMTP: to={}, subject={}, messageId={}",
-                    recipient.getTo(), subject, messageId);
+                    recipient.to(), subject, messageId);
 
             return SendResult.success(messageId);
 
         } catch (Exception e) {
             log.error("Failed to send email via SMTP: to={}, error={}",
-                    recipient.getTo(), e.getMessage());
+                    recipient.to(), e.getMessage());
             return SendResult.failure(e);
         }
     }

@@ -65,12 +65,12 @@ public class TwilioSmsProvider implements SmsProvider {
 
         try {
             Message message = Message.creator(
-                    new PhoneNumber(recipient.getPhoneNumber()),
+                    new PhoneNumber(recipient.phoneNumber()),
                     new PhoneNumber(fromNumber),
-                    content.getTextBody()
+                    content.textBody()
             ).create();
 
-            log.debug("SMS sent via Twilio: to={}, sid={}", recipient.getPhoneNumber(), message.getSid());
+            log.debug("SMS sent via Twilio: to={}, sid={}", recipient.phoneNumber(), message.getSid());
 
             return SendResult.success(message.getSid(), Map.of(
                     "status", message.getStatus().toString(),
@@ -79,7 +79,7 @@ public class TwilioSmsProvider implements SmsProvider {
 
         } catch (Exception e) {
             log.error("Failed to send SMS via Twilio: to={}, error={}",
-                    recipient.getPhoneNumber(), e.getMessage());
+                    recipient.phoneNumber(), e.getMessage());
             return SendResult.failure(e);
         }
     }
