@@ -107,31 +107,31 @@ public class SmtpEmailProvider implements EmailProvider {
             }
 
             // To
-            message.setRecipient(Message.RecipientType.TO, new InternetAddress(recipient.getTo()));
+            message.setRecipient(Message.RecipientType.TO, new InternetAddress(recipient.to()));
 
             // CC
-            if (recipient.getCc() != null && !recipient.getCc().isEmpty()) {
-                for (String cc : recipient.getCc()) {
+            if (recipient.cc() != null && !recipient.cc().isEmpty()) {
+                for (String cc : recipient.cc()) {
                     message.addRecipient(Message.RecipientType.CC, new InternetAddress(cc));
                 }
             }
 
             // BCC
-            if (recipient.getBcc() != null && !recipient.getBcc().isEmpty()) {
-                for (String bcc : recipient.getBcc()) {
+            if (recipient.bcc() != null && !recipient.bcc().isEmpty()) {
+                for (String bcc : recipient.bcc()) {
                     message.addRecipient(Message.RecipientType.BCC, new InternetAddress(bcc));
                 }
             }
 
             // Reply-To
-            if (recipient.getReplyTo() != null && !recipient.getReplyTo().isBlank()) {
-                message.setReplyTo(new Address[]{new InternetAddress(recipient.getReplyTo())});
+            if (recipient.replyTo() != null && !recipient.replyTo().isBlank()) {
+                message.setReplyTo(new Address[]{new InternetAddress(recipient.replyTo())});
             }
 
             // Subject
             String subject = content.subject();
             if (subject == null || subject.isBlank()) {
-                subject = recipient.getSubject();
+                subject = recipient.subject();
             }
             if (subject != null) {
                 message.setSubject(subject, "UTF-8");
@@ -190,13 +190,13 @@ public class SmtpEmailProvider implements EmailProvider {
             }
 
             log.debug("Email sent via SMTP: to={}, subject={}, messageId={}",
-                    recipient.getTo(), subject, messageId);
+                    recipient.to(), subject, messageId);
 
             return SendResult.success(messageId);
 
         } catch (Exception e) {
             log.error("Failed to send email via SMTP: to={}, error={}",
-                    recipient.getTo(), e.getMessage());
+                    recipient.to(), e.getMessage());
             return SendResult.failure(e);
         }
     }

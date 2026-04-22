@@ -2,54 +2,31 @@ package com.lazydevs.notification.api.model;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.NoArgsConstructor;
-import lombok.experimental.SuperBuilder;
 
 import java.util.List;
 
 /**
  * Email recipient details.
+ *
+ * @param id      optional recipient identifier for tracking
+ * @param to      primary recipient email address (required)
+ * @param cc      CC recipient addresses (optional)
+ * @param bcc     BCC recipient addresses (optional)
+ * @param replyTo reply-to address (optional)
+ * @param subject email subject (may be overridden by the rendered template)
  */
-@Data
-@SuperBuilder
-@NoArgsConstructor
-@AllArgsConstructor
-@EqualsAndHashCode(callSuper = true)
-public class EmailRecipient extends Recipient {
-
-    /**
-     * Primary recipient email address
-     */
-    @NotBlank(message = "Email 'to' address is required")
-    @Email(message = "Invalid email address format")
-    private String to;
-
-    /**
-     * CC recipients (optional)
-     */
-    private List<@Email String> cc;
-
-    /**
-     * BCC recipients (optional)
-     */
-    private List<@Email String> bcc;
-
-    /**
-     * Reply-to address (optional)
-     */
-    @Email
-    private String replyTo;
-
-    /**
-     * Email subject (can be overridden by template)
-     */
-    private String subject;
+public record EmailRecipient(
+        String id,
+        @NotBlank(message = "Email 'to' address is required")
+        @Email(message = "Invalid email address format")
+        String to,
+        List<@Email String> cc,
+        List<@Email String> bcc,
+        @Email String replyTo,
+        String subject) implements Recipient {
 
     @Override
-    public String getChannelType() {
+    public String channelType() {
         return "EMAIL";
     }
 }

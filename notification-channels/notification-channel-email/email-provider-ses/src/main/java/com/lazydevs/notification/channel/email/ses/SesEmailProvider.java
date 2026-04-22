@@ -66,13 +66,13 @@ public class SesEmailProvider implements EmailProvider {
         try {
             // Build destination
             Destination.Builder destinationBuilder = Destination.builder()
-                    .toAddresses(recipient.getTo());
+                    .toAddresses(recipient.to());
 
-            if (recipient.getCc() != null && !recipient.getCc().isEmpty()) {
-                destinationBuilder.ccAddresses(recipient.getCc());
+            if (recipient.cc() != null && !recipient.cc().isEmpty()) {
+                destinationBuilder.ccAddresses(recipient.cc());
             }
-            if (recipient.getBcc() != null && !recipient.getBcc().isEmpty()) {
-                destinationBuilder.bccAddresses(recipient.getBcc());
+            if (recipient.bcc() != null && !recipient.bcc().isEmpty()) {
+                destinationBuilder.bccAddresses(recipient.bcc());
             }
 
             // Build email content
@@ -81,7 +81,7 @@ public class SesEmailProvider implements EmailProvider {
             // Subject
             String subject = content.subject();
             if (subject == null || subject.isBlank()) {
-                subject = recipient.getSubject();
+                subject = recipient.subject();
             }
 
             // Body
@@ -107,8 +107,8 @@ public class SesEmailProvider implements EmailProvider {
                     .content(emailContentBuilder.build());
 
             // Reply-to
-            if (recipient.getReplyTo() != null && !recipient.getReplyTo().isBlank()) {
-                sendRequestBuilder.replyToAddresses(recipient.getReplyTo());
+            if (recipient.replyTo() != null && !recipient.replyTo().isBlank()) {
+                sendRequestBuilder.replyToAddresses(recipient.replyTo());
             }
 
             // Configuration set
@@ -119,13 +119,13 @@ public class SesEmailProvider implements EmailProvider {
             // Send
             SendEmailResponse response = sesClient.sendEmail(sendRequestBuilder.build());
 
-            log.debug("Email sent via SES: to={}, messageId={}", recipient.getTo(), response.messageId());
+            log.debug("Email sent via SES: to={}, messageId={}", recipient.to(), response.messageId());
 
             return SendResult.success(response.messageId());
 
         } catch (Exception e) {
             log.error("Failed to send email via SES: to={}, error={}",
-                    recipient.getTo(), e.getMessage());
+                    recipient.to(), e.getMessage());
             return SendResult.failure(e);
         }
     }
