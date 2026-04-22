@@ -173,8 +173,8 @@ public class SmtpEmailProvider implements EmailProvider {
                 // Add attachments
                 for (NotificationRequest.Attachment attachment : request.getAttachments()) {
                     MimeBodyPart attachmentPart = new MimeBodyPart();
-                    attachmentPart.setFileName(attachment.getFilename());
-                    attachmentPart.setContent(attachment.getContent(), attachment.getContentType());
+                    attachmentPart.setFileName(attachment.filename());
+                    attachmentPart.setContent(attachment.content(), attachment.contentType());
                     mixedMultipart.addBodyPart(attachmentPart);
                 }
 

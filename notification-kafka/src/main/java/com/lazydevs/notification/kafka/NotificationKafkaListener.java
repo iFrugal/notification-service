@@ -56,13 +56,13 @@ public class NotificationKafkaListener {
             // Process notification
             NotificationResponse response = notificationService.send(request);
 
-            if (response.getStatus().name().startsWith("FAIL") ||
-                    response.getStatus().name().equals("REJECTED")) {
+            if (response.status().name().startsWith("FAIL") ||
+                    response.status().name().equals("REJECTED")) {
                 log.warn("Notification processing failed: requestId={}, status={}, error={}",
-                        response.getRequestId(), response.getStatus(), response.getErrorMessage());
+                        response.requestId(), response.status(), response.errorMessage());
             } else {
                 log.info("Notification processed from Kafka: requestId={}, status={}",
-                        response.getRequestId(), response.getStatus());
+                        response.requestId(), response.status());
             }
 
         } catch (Exception e) {
