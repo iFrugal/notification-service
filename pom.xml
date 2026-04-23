@@ -47,8 +47,12 @@
         <!-- Spring Boot -->
         <spring-boot.version>4.0.5</spring-boot.version>
 
-        <!-- all-about-persistence -->
-        <persistence.version>1.0.45-SNAPSHOT</persistence.version>
+        <!-- all-about-persistence: shared version for persistence-api,
+             persistence-utils, app-building-commons, and mongodb-persistence.
+             Keep this as a single released version (not -SNAPSHOT) so the
+             reactor resolves cleanly for every consumer, CI runner, and
+             Central-Portal release job. -->
+        <all-about-persistence.version>1.0.46</all-about-persistence.version>
 
         <!-- Jackson -->
         <jackson.version>2.16.1</jackson.version>
@@ -181,17 +185,17 @@
             <dependency>
                 <groupId>com.github.ifrugal</groupId>
                 <artifactId>persistence-utils</artifactId>
-                <version>${persistence.version}</version>
+                <version>${all-about-persistence.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.github.ifrugal</groupId>
                 <artifactId>persistence-api</artifactId>
-                <version>${persistence.version}</version>
+                <version>${all-about-persistence.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.github.ifrugal</groupId>
                 <artifactId>app-building-commons</artifactId>
-                <version>${persistence.version}</version>
+                <version>${all-about-persistence.version}</version>
             </dependency>
 
             <!-- Jackson -->
