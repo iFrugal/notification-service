@@ -1,0 +1,111 @@
+name: Release to Maven Central
+
+# Intentionally NOT triggered on every push to main. Releases are manual
+# (via workflow_dispatch) or tag-driven (pushing a v-prefixed tag).
+# This avoids the all-about-persistence pattern where every merge to master
+# starts a release, which is surprising and hard to roll back.
+on:
+  workflow_dispatch:
+    inputs:
+      release-version:
+        description: 'Release version (e.g. 1.0.0). Leave blank to let maven-release-plugin auto-derive from current SNAPSHOT.'
+        required: false
+        type: string
+      development-version:
+        description: 'Next development version (e.g. 1.0.1-SNAPSHOT). Leave blank for auto.'
+        required: false
+        type: string
+      dry-run:
+        description: 'If true, run release:prepare with -DdryRun=true and skip release:perform.'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # needed to push tag + version-bump commits back to the repo
+  packages: write
+
+jobs:
+  release:
+    name: Release & deploy
+    runs-on: ubuntu-latest
+    environment: maven-central   # GitHub environment with required-reviewer + secret gating
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Guard — refuse to release from a non-main branch
+        run: |
+          if [[ "${GITHUB_REF_NAME}" != "main" ]]; then
+            echo "::error::Releases must originate from main, not ${GITHUB_REF_NAME}."
+            exit 1
+          fi
+
+      - name: Set up JDK 25 + Maven Central credentials
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: '25'
+          cache: maven
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_TOKEN
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: GPG_PASSPHRASE
+
+      - name: Configure git identity
+        run: |
+          git config --global user.email "abhijeet.techrepo@gmail.com"
+          git config --global user.name  "Abhijeet Rai"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git"
+
+      - name: Pre-flight verify (no deploy)
+        run: ./mvnw -B -ntp -U clean verify -Dgpg.skip=true
+
+      - name: Release — prepare & perform
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_TOKEN:    ${{ secrets.CENTRAL_TOKEN }}
+          GPG_PASSPHRASE:   ${{ secrets.GPG_PASSPHRASE }}
+          GITHUB_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          DRY_RUN_FLAG=""
+          if [[ "${{ inputs.dry-run }}" == "true" ]]; then
+            DRY_RUN_FLAG="-DdryRun=true"
+          fi
+
+          VERSION_ARGS=()
+          if [[ -n "${{ inputs.release-version }}" ]]; then
+            VERSION_ARGS+=("-DreleaseVersion=${{ inputs.release-version }}")
+          fi
+          if [[ -n "${{ inputs.development-version }}" ]]; then
+            VERSION_ARGS+=("-DdevelopmentVersion=${{ inputs.development-version }}")
+          fi
+
+          ./mvnw -B -ntp \
+            -s "$HOME/.m2/settings.xml" \
+            -DscmCommentPrefix="[release] [skip ci] " \
+            -Darguments="-DskipTests=true -Dcentral.autoPublish=false -Dcentral.waitUntil=uploaded" \
+            $DRY_RUN_FLAG \
+            "${VERSION_ARGS[@]}" \
+            release:clean release:prepare
+
+          if [[ "${{ inputs.dry-run }}" != "true" ]]; then
+            ./mvnw -B -ntp \
+              -s "$HOME/.m2/settings.xml" \
+              -Darguments="-DskipTests=true -Dcentral.autoPublish=false -Dcentral.waitUntil=uploaded" \
+              release:perform
+          fi
+
+      - name: Publish GitHub Release from tag
+        if: ${{ inputs.dry-run != true }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
