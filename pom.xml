@@ -74,7 +74,7 @@
         <aws-sdk.version>2.23.9</aws-sdk.version>
         <twilio.version>9.14.1</twilio.version>
         <firebase-admin.version>9.8.0</firebase-admin.version>
-        <jakarta-mail.version>2.0.1</jakarta-mail.version>
+        <jakarta-mail.version>2.0.2</jakarta-mail.version>
 
         <!-- Kafka -->
         <kafka.version>3.6.1</kafka.version>
