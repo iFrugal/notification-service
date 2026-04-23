@@ -58,7 +58,11 @@
         <jackson.version>2.16.1</jackson.version>
 
         <!-- Lombok -->
-        <lombok.version>1.18.30</lombok.version>
+        <!-- 1.18.30 predates JDK 22 and fails on JDK 25 with:
+             "com.sun.tools.javac.code.TypeTag :: UNKNOWN". 1.18.46 has
+             native JDK 25 support. Bump when Lombok ships a newer release
+             (Dependabot will open the PR). -->
+        <lombok.version>1.18.46</lombok.version>
 
         <!-- Testing -->
         <testng.version>7.9.0</testng.version>
