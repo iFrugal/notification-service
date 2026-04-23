@@ -55,7 +55,7 @@
         <all-about-persistence.version>1.0.46</all-about-persistence.version>
 
         <!-- Jackson -->
-        <jackson.version>2.16.1</jackson.version>
+        <jackson.version>2.21.2</jackson.version>
 
         <!-- Lombok -->
         <!-- 1.18.30 predates JDK 22 and fails on JDK 25 with:
