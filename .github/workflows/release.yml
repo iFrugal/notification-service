@@ -45,6 +45,11 @@ jobs:
           fi
 
       - name: Set up JDK 25 + Maven Central credentials
+        # Intentionally NOT using setup-java's gpg-private-key input — it uses
+        # a strict `gpg --import` that fails with cryptic "exit code 2" when
+        # the ASCII-armored key has any subtle formatting difference. The
+        # dedicated crazy-max/ghaction-import-gpg step below handles the
+        # import robustly and matches the approach used by all-about-persistence.
         uses: actions/setup-java@v5
         with:
           distribution: corretto
@@ -53,8 +58,12 @@ jobs:
           server-id: central
           server-username: CENTRAL_USERNAME
           server-password: CENTRAL_TOKEN
-          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
-          gpg-passphrase: GPG_PASSPHRASE
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Configure git identity
         run: |
