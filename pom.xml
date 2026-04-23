@@ -73,7 +73,7 @@
         <!-- Channel Provider Dependencies -->
         <aws-sdk.version>2.23.9</aws-sdk.version>
         <twilio.version>9.14.1</twilio.version>
-        <firebase-admin.version>9.2.0</firebase-admin.version>
+        <firebase-admin.version>9.8.0</firebase-admin.version>
         <jakarta-mail.version>2.0.1</jakarta-mail.version>
 
         <!-- Kafka -->
