@@ -8,7 +8,7 @@
     <parent>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>ifrugal-parent</artifactId>
-        <version>1.0.14</version>
+        <version>1.0.15</version>
     </parent>
 
     <artifactId>notification-service</artifactId>
@@ -55,25 +55,28 @@
         <all-about-persistence.version>1.0.46</all-about-persistence.version>
 
         <!-- Jackson -->
-        <jackson.version>2.16.1</jackson.version>
+        <jackson.version>2.21.2</jackson.version>
 
         <!-- Lombok -->
         <!-- 1.18.30 predates JDK 22 and fails on JDK 25 with:
              "com.sun.tools.javac.code.TypeTag :: UNKNOWN". 1.18.46 has
-             native JDK 25 support. Dependabot will keep this current. -->
+             native JDK 25 support. Bump when Lombok ships a newer release
+             (Dependabot will open the PR). -->
         <lombok.version>1.18.46</lombok.version>
 
         <!-- Testing -->
-        <testng.version>7.9.0</testng.version>
+        <testng.version>7.12.0</testng.version>
 
         <!-- Logging -->
         <slf4j.version>2.0.11</slf4j.version>
 
         <!-- Channel Provider Dependencies -->
-        <aws-sdk.version>2.23.9</aws-sdk.version>
-        <twilio.version>9.14.1</twilio.version>
-        <firebase-admin.version>9.2.0</firebase-admin.version>
-        <jakarta-mail.version>2.0.1</jakarta-mail.version>
+
+        <aws-sdk.version>2.42.39</aws-sdk.version>
+        <twilio.version>12.0.0</twilio.version>
+        <firebase-admin.version>9.8.0</firebase-admin.version>
+        <jakarta-mail.version>2.0.2</jakarta-mail.version>
+
 
         <!-- Kafka -->
         <kafka.version>3.6.1</kafka.version>
@@ -284,7 +287,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.12.1</version>
+                <version>3.15.0</version>
                 <configuration>
                     <source>${java.version}</source>
                     <target>${java.version}</target>
@@ -300,7 +303,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
-                <version>3.6.3</version>
+                <version>3.12.0</version>
                 <executions>
                     <execution>
                         <id>attach-javadocs</id>

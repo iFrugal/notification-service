@@ -62,7 +62,7 @@ Once the above is set up:
 3. Tick `dry-run: true` for the first run to validate the wiring without publishing.
 4. Approve the deployment in the `maven-central` environment when prompted.
 5. The workflow will:
-   1. Pre-flight `./mvnw clean verify` (no deploy, GPG skipped).
+   1. Pre-flight `./mvnw clean verify` (no deploy).
    2. `release:prepare` — bumps to release version, commits, tags, bumps to next SNAPSHOT, commits.
    3. `release:perform` — checks out the tag, builds, signs, uploads to Central.
    4. Publishes a GitHub Release with auto-generated notes.

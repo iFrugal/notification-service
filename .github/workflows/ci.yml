@@ -23,16 +23,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Primary LTS. Add the next LTS here once it's GA to catch
-        # regressions early.
+        # Primary LTS + next LTS so regressions on 29 are caught early.
+        # Adjust this list once a new LTS becomes the project target.
         java: ['25']
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: corretto
           java-version: ${{ matrix.java }}
@@ -49,7 +49,7 @@ jobs:
 
       - name: Upload build artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: surefire-reports-jdk${{ matrix.java }}
           path: |
@@ -65,9 +65,9 @@ jobs:
     # Don't block PR completion on this — it's a hygiene check, not a gate.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: corretto
           java-version: '25'
