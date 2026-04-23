@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.kafka.autoconfigure.KafkaProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
@@ -27,10 +28,12 @@ public class KafkaConfig {
 
     @Bean
     public ConsumerFactory<String, NotificationRequest> consumerFactory(
-            org.springframework.boot.autoconfigure.kafka.KafkaProperties kafkaProperties,
+            KafkaProperties kafkaProperties,
             ObjectMapper objectMapper) {
 
-        Map<String, Object> config = new HashMap<>(kafkaProperties.buildConsumerProperties(null));
+        // KafkaProperties#buildConsumerProperties() is no-args in Spring Boot 4
+        // (was buildConsumerProperties(SslBundles) in 3.x).
+        Map<String, Object> config = new HashMap<>(kafkaProperties.buildConsumerProperties());
 
         // Configure deserializers
         config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
