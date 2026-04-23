@@ -8,7 +8,7 @@
     <parent>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>ifrugal-parent</artifactId>
-        <version>1.0.14</version>
+        <version>1.0.15</version>
     </parent>
 
     <artifactId>notification-service</artifactId>
