@@ -87,7 +87,7 @@
         <dependency>
             <groupId>com.github.ifrugal</groupId>
             <artifactId>mongodb-persistence</artifactId>
-            <version>${persistence.version}</version>
+            <version>${all-about-persistence.version}</version>
             <optional>true</optional>
         </dependency>
 
