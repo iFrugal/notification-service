@@ -45,7 +45,9 @@ jobs:
           queries: security-and-quality
 
       - name: Build with Maven
-        run: ./mvnw -B -ntp -U -DskipTests clean package
+        # -Dgpg.skip=true: maven-gpg-plugin inherited from ifrugal-parent
+        # fires during package without a configured key otherwise.
+        run: ./mvnw -B -ntp -U -DskipTests -Dgpg.skip=true clean package
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v3

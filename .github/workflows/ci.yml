@@ -42,7 +42,10 @@ jobs:
         run: ./mvnw -B -ntp validate
 
       - name: Build & verify
-        run: ./mvnw -B -ntp -U clean verify
+        # -Dgpg.skip=true: maven-gpg-plugin is inherited from ifrugal-parent
+        # and binds to verify. CI has no GPG key configured; signing is a
+        # release-time concern, not a CI concern.
+        run: ./mvnw -B -ntp -U -Dgpg.skip=true clean verify
 
       - name: Upload build artifacts on failure
         if: failure()
@@ -71,4 +74,4 @@ jobs:
           cache: maven
 
       - name: Analyze declared vs. used dependencies
-        run: ./mvnw -B -ntp -DskipTests dependency:analyze
+        run: ./mvnw -B -ntp -DskipTests -Dgpg.skip=true dependency:analyze
