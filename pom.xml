@@ -47,14 +47,22 @@
         <!-- Spring Boot -->
         <spring-boot.version>4.0.5</spring-boot.version>
 
-        <!-- all-about-persistence -->
-        <persistence.version>1.0.45-SNAPSHOT</persistence.version>
+        <!-- all-about-persistence: shared version for persistence-api,
+             persistence-utils, app-building-commons, and mongodb-persistence.
+             Keep this as a single released version (not -SNAPSHOT) so the
+             reactor resolves cleanly for every consumer, CI runner, and
+             Central-Portal release job. -->
+        <all-about-persistence.version>1.0.46</all-about-persistence.version>
 
         <!-- Jackson -->
         <jackson.version>2.16.1</jackson.version>
 
         <!-- Lombok -->
-        <lombok.version>1.18.30</lombok.version>
+        <!-- 1.18.30 predates JDK 22 and fails on JDK 25 with:
+             "com.sun.tools.javac.code.TypeTag :: UNKNOWN". 1.18.46 has
+             native JDK 25 support. Bump when Lombok ships a newer release
+             (Dependabot will open the PR). -->
+        <lombok.version>1.18.46</lombok.version>
 
         <!-- Testing -->
         <testng.version>7.9.0</testng.version>
@@ -181,17 +189,17 @@
             <dependency>
                 <groupId>com.github.ifrugal</groupId>
                 <artifactId>persistence-utils</artifactId>
-                <version>${persistence.version}</version>
+                <version>${all-about-persistence.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.github.ifrugal</groupId>
                 <artifactId>persistence-api</artifactId>
-                <version>${persistence.version}</version>
+                <version>${all-about-persistence.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.github.ifrugal</groupId>
                 <artifactId>app-building-commons</artifactId>
-                <version>${persistence.version}</version>
+                <version>${all-about-persistence.version}</version>
             </dependency>
 
             <!-- Jackson -->

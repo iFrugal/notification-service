@@ -1,0 +1,50 @@
+version: 2
+updates:
+  # Maven dependency updates — weekly, grouped to reduce PR noise.
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - java
+    groups:
+      spring-boot-ecosystem:
+        patterns:
+          - "org.springframework.boot:*"
+          - "org.springframework:*"
+          - "org.springframework.kafka:*"
+      jackson:
+        patterns:
+          - "com.fasterxml.jackson*:*"
+      aws-sdk:
+        patterns:
+          - "software.amazon.awssdk:*"
+      test-deps:
+        dependency-type: "development"
+    ignore:
+      # Allow only patch/minor bumps for Spring Boot — majors are a deliberate
+      # project decision, not a Dependabot one.
+      - dependency-name: "org.springframework.boot:*"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions workflow updates — less churn, monthly is enough.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+      day: monday
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      all-actions:
+        patterns:
+          - "*"
