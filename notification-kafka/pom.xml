@@ -36,6 +36,16 @@
             <artifactId>spring-boot-autoconfigure</artifactId>
         </dependency>
 
+        <!-- Kafka auto-configuration (including KafkaProperties). Spring Boot 4
+             split Kafka auto-config out of spring-boot-autoconfigure into its
+             own spring-boot-kafka artifact, with the package renamed from
+             org.springframework.boot.autoconfigure.kafka to
+             org.springframework.boot.kafka.autoconfigure. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-kafka</artifactId>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>org.springframework.kafka</groupId>

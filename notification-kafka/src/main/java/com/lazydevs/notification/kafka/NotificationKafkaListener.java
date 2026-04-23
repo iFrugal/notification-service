@@ -71,7 +71,8 @@ public class NotificationKafkaListener {
             // Failed notifications are tracked via audit service
 
         } finally {
-            TenantContext.clear();
+            // TenantContext was renamed clear() -> reset() in persistence-utils 1.0.46.
+            TenantContext.reset();
         }
     }
 }

@@ -42,6 +42,15 @@
             <artifactId>spring-boot-autoconfigure</artifactId>
         </dependency>
 
+        <!-- @PostConstruct / @PreDestroy used by ProviderRegistry.
+             Spring Framework 7 / Spring Boot 4 dropped this as a transitive
+             dependency of spring-context; has to be declared explicitly now.
+             Version managed by the Spring Boot BOM. -->
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+        </dependency>
+
         <!-- Validation -->
         <dependency>
             <groupId>org.hibernate.validator</groupId>
