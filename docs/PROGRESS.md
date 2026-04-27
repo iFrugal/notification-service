@@ -99,7 +99,7 @@ collaborator) can pick up where the last one left off.
         added to existing `DefaultNotificationServiceIdempotencyTest`
   - [x] README — "Caller Identity" section + Features bullet +
         admin-endpoints row
-  - [ ] Push branch + open PR + capture URL here
+  - [x] PR raised: [#26](https://github.com/iFrugal/notification-service/pull/26)
 
 ### Phase 5+ — Queued (no DD yet)
 
@@ -116,8 +116,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-
-_(none currently — DD-11 PR will be added here once raised)_
+| [#26](https://github.com/iFrugal/notification-service/pull/26) | feat(dd-11): caller identity via X-Service-Id | `feat/dd-11-caller-identity` | **awaiting review/merge** | Ships DD-11 end-to-end + first version of `docs/PROGRESS.md` |
 
 ---
 
