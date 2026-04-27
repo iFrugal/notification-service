@@ -1,6 +1,6 @@
 # Decision 10: Idempotency Key (First-Class)
 
-## Status: PROPOSED
+## Status: DECIDED
 
 ## Context
 
