@@ -28,8 +28,10 @@ Add an opt-in, configurable rate limiter scoped over
 `(tenantId, callerId, channel)`. The default state is **off** —
 existing deployments are unaffected. Once enabled, requests that exceed
 their bucket return HTTP **429 Too Many Requests** with a `Retry-After`
-header (REST) or are skipped with a WARN log and a FAILED
-`NotificationResponse` (Kafka).
+header on the REST path. On the Kafka path the message is skipped with
+a WARN log and the consumer commits the offset (drop-and-commit) — at
+least-once requeue would amplify the very pressure the limiter is
+trying to relieve.
 
 ### Library
 
@@ -123,13 +125,23 @@ caller. On deny:
 
 Order in the send pipeline:
 
-```
-enrichRequest → rate-limit check → idempotency check → audit → dispatch
+```text
+enrichRequest → idempotency-replay short-circuit → rate-limit check
+              → fresh dispatch → audit
 ```
 
-Why before idempotency: a denied request shouldn't burn an idempotency
-slot, and replays of an already-completed key don't need to consume a
-token.
+Note the limiter runs **after** the idempotency replay branch but
+**before** the fresh dispatch. Replays of completed keys are returning
+cached responses — they shouldn't burn rate-limit tokens. Genuinely new
+work does. (This was clarified during DD-12 review — earlier drafts
+described the limiter running before idempotency entirely.)
+
+Why this ordering: replays of already-completed idempotency keys are
+returning a cached response — they shouldn't burn rate-limit tokens.
+But the limiter still runs before {`markInProgress` → fresh dispatch},
+so a brand-new request that's about to do real provider work does pay a
+token. The IN_PROGRESS path also runs before the limiter so the 409
+path is cheap.
 
 ### Admin endpoint
 
@@ -196,16 +208,23 @@ cover REST. Enforcement in `DefaultNotificationService.send()` covers
 everything that goes through the service contract — including future
 gRPC, JMS, or programmatic embeddings.
 
-### Why before idempotency
+### Why this ordering relative to idempotency
 
-Three reasons:
+Three rules govern the placement:
 
-1. A denied request shouldn't consume an idempotency-store slot — that
-   would let an attacker exhaust the cache.
-2. Replays of already-completed keys are returning cached responses;
-   they shouldn't burn rate-limit tokens.
-3. Symmetry with how DD-10 §State-table treats `IN_PROGRESS` —
-   pre-state checks, then the rest.
+1. **Replays of completed keys are exempt.** A caller hitting the cache
+   is getting back the original send's response — they shouldn't pay a
+   rate-limit token for that.
+2. **IN_PROGRESS conflicts are exempt.** A 409 response is cheap by
+   design; making the limiter gate it would slow down the cheap path
+   for no benefit.
+3. **Fresh sends pay.** Anything that actually causes a `markInProgress`
+   → provider call → `markComplete` cycle goes through the limiter
+   first.
+
+The implementation runs the limiter inside the same block as the
+idempotency check, after the replay/IN_PROGRESS short-circuits and
+before `markInProgress`.
 
 ### Why Bucket4j
 

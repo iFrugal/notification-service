@@ -65,15 +65,14 @@ public class GlobalExceptionHandler extends RESTExceptionHandler {
      * { "error": "RATE_LIMIT_EXCEEDED", "retryAfterSeconds": 3, "message": "..." }
      * </pre>
      *
-     * <p>Retry-After is rounded up to whole seconds — the HTTP spec
-     * doesn't allow sub-second precision (RFC 7231 §7.1.3). A token
-     * available in 200ms still surfaces as {@code Retry-After: 1} so
-     * compliant clients always wait at least as long as the bucket needs.
+     * <p>The exception itself rounds {@code retryAfter} up to whole
+     * seconds (RFC 7231 §7.1.3 doesn't allow sub-second precision) and
+     * uses that same value in its message text — so {@code Retry-After},
+     * {@code retryAfterSeconds}, and the {@code message} all agree.
      */
     @ExceptionHandler(RateLimitExceededException.class)
     public ResponseEntity<Map<String, Object>> handleRateLimit(RateLimitExceededException e) {
-        long retryAfterSeconds = Math.max(1L,
-                (e.getRetryAfter().toMillis() + 999L) / 1000L);
+        long retryAfterSeconds = e.getRetryAfterSeconds();
         log.warn("Rate limit exceeded: {}", e.getMessage());
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("error", "RATE_LIMIT_EXCEEDED");
