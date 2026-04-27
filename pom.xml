@@ -64,9 +64,6 @@
              (Dependabot will open the PR). -->
         <lombok.version>1.18.46</lombok.version>
 
-        <!-- Testing -->
-        <testng.version>7.12.0</testng.version>
-
         <!-- Logging -->
         <slf4j.version>2.0.11</slf4j.version>
 
@@ -255,12 +252,6 @@
             </dependency>
 
             <!-- Testing -->
-            <dependency>
-                <groupId>org.testng</groupId>
-                <artifactId>testng</artifactId>
-                <version>${testng.version}</version>
-                <scope>test</scope>
-            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -275,15 +266,54 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>
+        <!-- Common test stack: JUnit 5 + AssertJ + Mockito (the briefing's
+             standard, §5). Pulled in test scope so every module gets the
+             same assertions and mocking primitives without each module
+             having to declare them. Modules that need full Spring testing
+             (MockMvc, @SpringBootTest, etc.) add spring-boot-starter-test
+             themselves — this keeps the lightweight modules' test classpath
+             from pulling all of Spring just for a unit test. -->
         <dependency>
-            <groupId>org.testng</groupId>
-            <artifactId>testng</artifactId>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
 
     <build>
         <plugins>
+            <!-- ifrugal-parent pins JaCoCo to 0.8.12 directly in its
+                 <build><plugins> block, which bundles an ASM that can't
+                 read Java 25 bytecode (major version 69) and fails report
+                 generation with "Unsupported class file major version 69".
+                 Re-declaring here in <plugins> overrides the inherited
+                 version. 0.8.14 is the first JaCoCo release with ASM new
+                 enough for JDK 25. -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.14</version>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
