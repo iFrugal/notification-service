@@ -110,7 +110,7 @@ collaborator) can pick up where the last one left off.
         body-wins-over-header, header-absent, blank-header,
         default-tenant fallback, exception-still-resets-context
   - [x] README — Kafka section explains both headers + admission semantics
-  - [ ] Branch pushed + PR opened + URL captured here
+  - [x] PR raised: [#28](https://github.com/iFrugal/notification-service/pull/28)
 
 ### Phase 6+ — Queued
 
@@ -126,8 +126,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-
-_(none currently — flag here as soon as a PR is raised)_
+| [#28](https://github.com/iFrugal/notification-service/pull/28) | feat(kafka): X-Service-Id header propagates into callerId | `feat/kafka-caller-identity` | **awaiting review/merge** | Phase 5 — extends DD-11 to Kafka transport |
 
 ---
 
