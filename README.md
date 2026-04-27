@@ -484,7 +484,21 @@ Message format (same as REST API body):
 }
 ```
 
-Tenant can be passed via Kafka header `X-Tenant-Id`.
+**Headers** (mirroring the REST API):
+
+- `X-Tenant-Id` — tenant identifier (DD-03). Defaults to
+  `notification.default-tenant` when absent.
+- `X-Service-Id` — calling-service identifier (DD-11). Optional. Stamped
+  onto `request.callerId` so the Kafka path participates in the same
+  idempotency dedup tuple `(tenantId, callerId, idempotencyKey)` and the
+  same audit trail as REST. If the message body already sets `callerId`,
+  the body wins.
+
+The caller registry (`notification.caller-registry`) is consulted by the
+REST admission filter only — Kafka deliveries skip the strict-mode 403
+gate by design (publishers can't observe a 403 from a topic), so unknown
+caller-ids on the Kafka path are accepted with a WARN log when the
+registry is enabled.
 
 ---
 
