@@ -148,7 +148,7 @@ collaborator) can pick up where the last one left off.
         across api/core/rest. Full reactor verify green
   - [x] README — Features bullet, "Retries + Dead-Letter" section,
         admin row
-  - [ ] Branch pushed + PR opened + URL captured here
+  - [x] PR raised: [#30](https://github.com/iFrugal/notification-service/pull/30)
 
 ### Phase 8+ — Queued
 
@@ -164,7 +164,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-_(none currently — flag here as soon as a PR is raised)_
+| [#30](https://github.com/iFrugal/notification-service/pull/30) | feat(dd-13): retries + dead-letter queue | `feat/dd-13-retries-dlq` | **awaiting review/merge** | Phase 7 — opt-in retry with classified failures + bounded in-memory DLQ |
 
 ---
 
