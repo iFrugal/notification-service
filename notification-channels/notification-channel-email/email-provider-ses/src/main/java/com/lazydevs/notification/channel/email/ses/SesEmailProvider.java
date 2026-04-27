@@ -133,8 +133,10 @@ public class SesEmailProvider implements EmailProvider {
     @Override
     public boolean isHealthy() {
         try {
-            // Simple health check - get account details
-            sesClient.getAccount();
+            // Simple health check — fetch account details. SesV2Client.getAccount
+            // requires a GetAccountRequest (no no-arg overload exists in AWS SDK v2),
+            // so we pass the builder-consumer form.
+            sesClient.getAccount(b -> {});
             return true;
         } catch (Exception e) {
             log.warn("SES health check failed: {}", e.getMessage());

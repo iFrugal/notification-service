@@ -74,4 +74,10 @@ jobs:
           cache: maven
 
       - name: Analyze declared vs. used dependencies
-        run: ./mvnw -B -ntp -DskipTests -Dgpg.skip=true dependency:analyze
+        # Pin to 3.9.0: earlier versions bundle an ASM that can't read
+        # Java 25 bytecode (major version 69), failing with
+        # "Byte code of ... is corrupt ... Unsupported class file major
+        # version 69". 3.9.0 was the first release with ASM new enough
+        # for JDK 25 support.
+        run: ./mvnw -B -ntp -DskipTests -Dgpg.skip=true
+          org.apache.maven.plugins:maven-dependency-plugin:3.9.0:analyze
