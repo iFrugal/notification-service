@@ -1,5 +1,10 @@
 # Notification Service
 
+[![CI](https://github.com/iFrugal/notification-service/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/iFrugal/notification-service/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/iFrugal/notification-service/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/iFrugal/notification-service/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Java](https://img.shields.io/badge/Java-25-orange.svg)](https://openjdk.org/projects/jdk/25/)
+
 A multi-tenant notification service supporting multiple channels (Email, SMS, WhatsApp, Push) with pluggable providers. Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone Docker container**.
 
 ## Table of Contents
