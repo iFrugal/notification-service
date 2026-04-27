@@ -5,6 +5,7 @@ import com.lazydevs.notification.api.Priority;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -38,6 +39,16 @@ public class NotificationRequest {
      * Tenant ID (populated from X-Tenant-Id header if not provided)
      */
     private String tenantId;
+
+    /**
+     * Optional caller-supplied idempotency key. If present, duplicate
+     * requests within the configured TTL are deduplicated against an
+     * {@link com.lazydevs.notification.api.idempotency.IdempotencyStore}.
+     * Scoped per {@code (tenantId, callerId, idempotencyKey)} — see DD-10.
+     * Maximum 255 characters.
+     */
+    @Size(max = 255, message = "idempotencyKey must be at most 255 characters")
+    private String idempotencyKey;
 
     // ========== Routing ==========
 

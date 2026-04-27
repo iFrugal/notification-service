@@ -42,6 +42,16 @@
             <artifactId>spring-boot-autoconfigure</artifactId>
         </dependency>
 
+        <!-- @PostConstruct / @PreDestroy used by ProviderRegistry. Spring
+             Framework 7 / Spring Boot 4 dropped this as a transitive of
+             spring-context — has to be declared explicitly now. Version
+             managed by the Spring Boot BOM. (Same fix carried in the
+             pending fix/release-workflow-and-jdk25 PR.) -->
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+        </dependency>
+
         <!-- Validation -->
         <dependency>
             <groupId>org.hibernate.validator</groupId>
@@ -59,6 +69,13 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-text</artifactId>
             <version>1.15.0</version>
+        </dependency>
+
+        <!-- Caffeine — backing store for the default in-memory
+             IdempotencyStore (DD-10). Version managed by the Spring Boot BOM. -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
         </dependency>
     </dependencies>
 
