@@ -1,5 +1,9 @@
 # Notification Service
 
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=iFrugal_notification-service&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=iFrugal_notification-service)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=iFrugal_notification-service&metric=coverage)](https://sonarcloud.io/summary/new_code?id=iFrugal_notification-service)
+[![SonarCloud](https://sonarcloud.io/images/project_badges/sonarcloud-white.svg)](https://sonarcloud.io/summary/new_code?id=iFrugal_notification-service)
+
 A multi-tenant notification service supporting multiple channels (Email, SMS, WhatsApp, Push) with pluggable providers. Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone Docker container**.
 
 ## Table of Contents
