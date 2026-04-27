@@ -78,7 +78,7 @@ class NotificationControllerIdempotencyTest {
         // Service returns a replay-stamped NotificationResponse — what
         // DefaultNotificationService actually does on a cached idempotency hit.
         NotificationResponse cached = new NotificationResponse(
-                "orig-req-99", "corr-99", "acme", Channel.EMAIL,
+                "orig-req-99", "corr-99", "acme", null, Channel.EMAIL,
                 "smtp", NotificationStatus.SENT, "msg-99",
                 null, null,
                 Instant.parse("2026-04-27T10:00:00Z"),
@@ -115,7 +115,7 @@ class NotificationControllerIdempotencyTest {
     void freshResponse_doesNotSetIdempotentReplayHeader() throws Exception {
         // No replay flag = fresh response = no header.
         NotificationResponse fresh = new NotificationResponse(
-                "fresh-req", "corr-fresh", "acme", Channel.EMAIL,
+                "fresh-req", "corr-fresh", "acme", null, Channel.EMAIL,
                 "smtp", NotificationStatus.SENT, "msg-fresh",
                 null, null,
                 Instant.now(), Instant.now(), Instant.now(),

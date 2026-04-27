@@ -2,6 +2,7 @@ package com.lazydevs.notification.rest.controller;
 
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.channel.NotificationProvider;
+import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import com.lazydevs.notification.core.config.NotificationProperties.ChannelConfig;
 import com.lazydevs.notification.core.config.NotificationProperties.ProviderConfig;
@@ -33,13 +34,16 @@ public class AdminController {
     private final NotificationProperties properties;
     private final ProviderRegistry providerRegistry;
     private final NotificationTemplateEngine templateEngine;
+    private final CallerRegistry callerRegistry;
 
     public AdminController(NotificationProperties properties,
                            ProviderRegistry providerRegistry,
-                           NotificationTemplateEngine templateEngine) {
+                           NotificationTemplateEngine templateEngine,
+                           CallerRegistry callerRegistry) {
         this.properties = properties;
         this.providerRegistry = providerRegistry;
         this.templateEngine = templateEngine;
+        this.callerRegistry = callerRegistry;
     }
 
     /**
@@ -122,6 +126,22 @@ public class AdminController {
         // Audit status
         result.put("audit", Map.of("enabled", properties.getAudit().isEnabled()));
 
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Caller-registry state (DD-11). Mirrors the configuration the
+     * registry was initialised with — useful during rollout to confirm the
+     * deployed pod sees the expected list and mode.
+     */
+    @GetMapping("/caller-registry")
+    public ResponseEntity<Map<String, Object>> getCallerRegistry() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("enabled", callerRegistry.isEnabled());
+        result.put("strict", callerRegistry.isStrict());
+        // Sorted-by-config-order set; Set.copyOf on a LinkedHashSet
+        // preserves the iteration order, so ArrayList.sort is unnecessary.
+        result.put("knownServices", new java.util.ArrayList<>(callerRegistry.getKnownServices()));
         return ResponseEntity.ok(result);
     }
 

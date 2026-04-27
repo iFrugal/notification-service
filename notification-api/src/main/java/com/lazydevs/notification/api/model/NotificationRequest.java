@@ -50,6 +50,27 @@ public class NotificationRequest {
     @Size(max = 255, message = "idempotencyKey must be at most 255 characters")
     private String idempotencyKey;
 
+    /**
+     * Optional identifier of the upstream service that initiated this
+     * request. Populated from the {@code X-Service-Id} HTTP header by the
+     * REST filter (see DD-11). If both the header and an explicit body
+     * value are present, the body wins — same precedence rule
+     * {@code tenantId} uses (DD-03 §request-precedence).
+     *
+     * <p>Used by:
+     * <ul>
+     *   <li>The idempotency store as part of the dedup tuple
+     *       {@code (tenantId, callerId, idempotencyKey)} (DD-10).</li>
+     *   <li>The audit record for "who sent it?" traceability.</li>
+     *   <li>The optional caller registry for admission control / observability.</li>
+     * </ul>
+     *
+     * <p>Maximum 128 characters; ASCII service-name conventions apply but
+     * are not enforced here.
+     */
+    @Size(max = 128, message = "callerId must be at most 128 characters")
+    private String callerId;
+
     // ========== Routing ==========
 
     /**

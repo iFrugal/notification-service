@@ -22,6 +22,7 @@ This document tracks all architectural and design decisions made during the deve
 | 7 | Audit Persistence | DECIDED | Use `persistence-api` with pluggable impl | [07-audit-persistence.md](./07-audit-persistence.md) |
 | 8 | Starter vs Standalone Packaging | DECIDED | Single Docker image, config-driven, Configuration API | [08-packaging-modes.md](./08-packaging-modes.md) |
 | 10 | Idempotency Key (First-Class) | DECIDED | Optional `idempotencyKey` on request, scoped `(tenantId, callerId, key)`, Caffeine default store with Redis SPI | [10-idempotency.md](./10-idempotency.md) |
+| 11 | Caller Identity (`X-Service-Id`) | DECIDED | Optional `X-Service-Id` header → `callerId` on request/response/audit, closes DD-10 callerId gap, opt-in caller registry with `strict` rejection mode | [11-caller-identity.md](./11-caller-identity.md) |
 
 ---
 
@@ -58,6 +59,7 @@ This document tracks all architectural and design decisions made during the deve
 | 2025-01-17 | 8 | Decided: Single Docker image, Config API with masking | - |
 | 2026-04-23 | 10 | Proposed: optional `idempotencyKey` request field, Caffeine default store with SPI for Redis | Abhijeet |
 | 2026-04-27 | 10 | Decided: full rollout merged — SPI + Caffeine impl, service integration, 409 handler, X-Idempotent-Replay header, JUnit 5 tests, README docs | Abhijeet |
+| 2026-04-27 | 11 | Decided: optional `X-Service-Id` header → `callerId` on request/response/audit; closes DD-10 callerId gap; opt-in caller registry with `strict` rejection mode | Abhijeet |
 
 ---
 
