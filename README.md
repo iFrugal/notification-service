@@ -48,6 +48,7 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
 - **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)
+- **Rate Limiting**: Opt-in token-bucket throttle per `(tenant, caller, channel)` with `429 + Retry-After` (DD-12)
 - **Template Engine**: FreeMarker templates with tenant-specific overrides
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service
@@ -431,6 +432,75 @@ The current registry state is exposed at `GET /api/v1/admin/caller-registry`:
 }
 ```
 
+### Rate Limiting
+
+Throttle requests per `(tenant, caller, channel)` triple with a
+token-bucket model. Off by default — see
+[DD-12](docs/design-decisions/12-rate-limiting.md).
+
+```yaml
+notification:
+  rate-limit:
+    enabled: true
+    default:
+      capacity: 200             # bucket size = burst tolerance
+      refill-tokens: 100        # tokens added per refill period
+      refill-period: PT1S       # ISO-8601 duration
+    overrides:
+      - tenant: acme            # required
+        caller: billing-svc     # optional — omit for tenant-wide
+        channel: sms            # optional — omit for all channels
+        capacity: 50
+        refill-tokens: 10
+        refill-period: PT1S
+      - tenant: acme
+        caller: marketing-svc
+        capacity: 1000
+        refill-tokens: 1000
+        refill-period: PT1S
+```
+
+**Match precedence (most specific wins):**
+`(tenant, caller, channel)` → `(tenant, caller)` → `(tenant)` → `default`.
+
+**On rejection (REST):**
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 3
+Content-Type: application/json
+
+{
+  "error": "RATE_LIMIT_EXCEEDED",
+  "retryAfterSeconds": 3,
+  "message": "Rate limit exceeded for tenant=acme, caller=billing-svc, channel=email (retry after 3s)"
+}
+```
+
+`Retry-After` is rounded up to whole seconds per RFC 7231.
+
+**On rejection (Kafka):** the message is logged at WARN level and the
+offset is committed. At-least-once requeue would amplify the pressure
+the limiter is trying to relieve.
+
+Live state — configured rules + currently-tracked buckets — exposed at
+`GET /api/v1/admin/rate-limit`:
+
+```json
+{
+  "enabled": true,
+  "default": {"capacity": 200, "refillTokens": 100, "refillPeriod": "PT1S"},
+  "overrides": [
+    {"tenant": "acme", "caller": "billing-svc", "channel": "sms",
+     "capacity": 50, "refillTokens": 10, "refillPeriod": "PT1S"}
+  ],
+  "activeBuckets": [
+    {"tenant": "acme", "caller": "billing-svc", "channel": "email",
+     "availableTokens": 187}
+  ]
+}
+```
+
 ### Send Batch
 
 ```http
@@ -452,6 +522,7 @@ Content-Type: application/json
 | `/api/v1/admin/configuration/tenants/{id}` | GET | Get specific tenant config |
 | `/api/v1/admin/configuration/tenants/{id}/channels/{ch}` | GET | Get channel config |
 | `/api/v1/admin/caller-registry` | GET | Caller-registry state (DD-11) |
+| `/api/v1/admin/rate-limit` | GET | Rate-limit config + live bucket snapshot (DD-12) |
 | `/api/v1/admin/health` | GET | Provider health status |
 | `/api/v1/admin/cache/templates/clear` | POST | Clear template cache |
 

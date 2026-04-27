@@ -2,12 +2,16 @@ package com.lazydevs.notification.rest.controller;
 
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.channel.NotificationProvider;
+import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import com.lazydevs.notification.core.config.NotificationProperties.ChannelConfig;
 import com.lazydevs.notification.core.config.NotificationProperties.ProviderConfig;
+import com.lazydevs.notification.core.config.NotificationProperties.RateLimitOverride;
+import com.lazydevs.notification.core.config.NotificationProperties.RateLimitProperties;
 import com.lazydevs.notification.core.config.NotificationProperties.TenantConfig;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
+import com.lazydevs.notification.core.ratelimit.Bucket4jRateLimiter;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -35,15 +39,18 @@ public class AdminController {
     private final ProviderRegistry providerRegistry;
     private final NotificationTemplateEngine templateEngine;
     private final CallerRegistry callerRegistry;
+    private final java.util.Optional<RateLimiter> rateLimiter;
 
     public AdminController(NotificationProperties properties,
                            ProviderRegistry providerRegistry,
                            NotificationTemplateEngine templateEngine,
-                           CallerRegistry callerRegistry) {
+                           CallerRegistry callerRegistry,
+                           java.util.Optional<RateLimiter> rateLimiter) {
         this.properties = properties;
         this.providerRegistry = providerRegistry;
         this.templateEngine = templateEngine;
         this.callerRegistry = callerRegistry;
+        this.rateLimiter = rateLimiter;
     }
 
     /**
@@ -143,6 +150,57 @@ public class AdminController {
         // preserves the iteration order, so ArrayList.sort is unnecessary.
         result.put("knownServices", new java.util.ArrayList<>(callerRegistry.getKnownServices()));
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Rate-limit configuration + live bucket snapshot (DD-12). Returns
+     * the configured default rule, all overrides, and (when the in-memory
+     * Bucket4j impl is active) the per-bucket available-token counts.
+     */
+    @GetMapping("/rate-limit")
+    public ResponseEntity<Map<String, Object>> getRateLimit() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        RateLimitProperties cfg = properties.getRateLimit();
+        result.put("enabled", cfg.isEnabled());
+        result.put("default", ruleAsMap(cfg.getDefaultRule()));
+
+        java.util.List<Map<String, Object>> overrides = new java.util.ArrayList<>();
+        for (RateLimitOverride o : cfg.getOverrides()) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("tenant", o.getTenant());
+            if (o.getCaller() != null) entry.put("caller", o.getCaller());
+            if (o.getChannel() != null) entry.put("channel", o.getChannel());
+            entry.put("capacity", o.getCapacity());
+            entry.put("refillTokens", o.getRefillTokens());
+            entry.put("refillPeriod", o.getRefillPeriod().toString());
+            overrides.add(entry);
+        }
+        result.put("overrides", overrides);
+
+        // Live snapshot — only available when the default Bucket4j impl is
+        // wired (a future Redis impl would expose this differently or not
+        // at all).
+        if (rateLimiter.isPresent() && rateLimiter.get() instanceof Bucket4jRateLimiter b4j) {
+            java.util.List<Map<String, Object>> active = new java.util.ArrayList<>();
+            b4j.snapshot().forEach((key, tokens) -> {
+                Map<String, Object> e = new LinkedHashMap<>();
+                e.put("tenant", key.tenantId());
+                e.put("caller", key.callerId());
+                e.put("channel", key.channel());
+                e.put("availableTokens", tokens);
+                active.add(e);
+            });
+            result.put("activeBuckets", active);
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    private static Map<String, Object> ruleAsMap(NotificationProperties.RateLimitRule r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("capacity", r.getCapacity());
+        m.put("refillTokens", r.getRefillTokens());
+        m.put("refillPeriod", r.getRefillPeriod().toString());
+        return m;
     }
 
     /**

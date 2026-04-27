@@ -53,6 +53,14 @@ public class NotificationProperties {
     private CallerRegistryProperties callerRegistry = new CallerRegistryProperties();
 
     /**
+     * Rate-limit configuration (see DD-12). Off by default — turning it
+     * on activates the {@code Bucket4jRateLimiter} bean and engages the
+     * pre-dispatch token-bucket check inside
+     * {@code DefaultNotificationService.send()}.
+     */
+    private RateLimitProperties rateLimit = new RateLimitProperties();
+
+    /**
      * Tenant-specific configurations
      */
     private Map<String, TenantConfig> tenants = new LinkedHashMap<>();
@@ -141,6 +149,84 @@ public class NotificationProperties {
          * {@link #strict}).
          */
         private List<String> knownServices = new ArrayList<>();
+    }
+
+    /**
+     * Rate-limit handling. See {@code docs/design-decisions/12-rate-limiting.md}.
+     *
+     * <p>Off by default. When enabled, every request through
+     * {@code DefaultNotificationService.send()} consumes a token from the
+     * bucket matching the most-specific rule for its
+     * {@code (tenantId, callerId, channel)} triple. Buckets are
+     * Bucket4j-backed, in-process by default; a future Redis-backed bean
+     * will substitute via {@code @ConditionalOnMissingBean}.
+     */
+    @Data
+    public static class RateLimitProperties {
+        /** Master switch — false leaves the {@code RateLimiter} bean absent. */
+        private boolean enabled = false;
+
+        /**
+         * Default rule applied when no override matches the request's
+         * {@code (tenantId, callerId, channel)} triple. Generous defaults
+         * — operators almost always want to override per-tenant or
+         * per-caller; the default is just a backstop that prevents
+         * unbounded fan-out.
+         */
+        private RateLimitRule defaultRule = new RateLimitRule(200, 100, java.time.Duration.ofSeconds(1));
+
+        /**
+         * Targeted rule overrides. Match precedence is most-specific-wins:
+         * {@code (tenant, caller, channel)} > {@code (tenant, caller)}
+         * > {@code (tenant)} > {@code defaultRule}. Within the same
+         * specificity, configuration order is the tiebreaker.
+         */
+        private List<RateLimitOverride> overrides = new ArrayList<>();
+    }
+
+    /**
+     * A rate-limit rule: bucket capacity, refill amount, and refill period.
+     * Bucket4j semantics: at any time the bucket holds at most
+     * {@link #capacity} tokens; every {@link #refillPeriod}, up to
+     * {@link #refillTokens} are added (greedy refill — they're not held
+     * back for a fixed-window boundary).
+     */
+    @Data
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class RateLimitRule {
+        /** Maximum tokens in the bucket — the burst tolerance. */
+        private long capacity = 200;
+
+        /** Tokens added each refill period (must be {@code <= capacity}). */
+        private long refillTokens = 100;
+
+        /** How often the refill happens. ISO-8601 duration. */
+        private java.time.Duration refillPeriod = java.time.Duration.ofSeconds(1);
+    }
+
+    /**
+     * A targeted override on top of the default rate-limit rule. At least
+     * {@link #tenant} must be set; {@link #caller} and {@link #channel}
+     * narrow the match further.
+     */
+    @Data
+    public static class RateLimitOverride extends RateLimitRule {
+        /** Tenant the rule applies to. Required. */
+        private String tenant;
+
+        /**
+         * Caller-id the rule narrows to. Optional — leave {@code null} to
+         * apply tenant-wide regardless of caller.
+         */
+        private String caller;
+
+        /**
+         * Channel the rule narrows to (e.g. {@code "email"}, {@code "sms"}).
+         * Optional — leave {@code null} to apply across all channels.
+         * Matched case-insensitively.
+         */
+        private String channel;
     }
 
     @Data

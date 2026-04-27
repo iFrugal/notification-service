@@ -6,6 +6,7 @@ import com.lazydevs.notification.api.channel.NotificationProvider;
 import com.lazydevs.notification.api.channel.RenderedContent;
 import com.lazydevs.notification.api.exception.IdempotencyInProgressException;
 import com.lazydevs.notification.api.exception.NotificationException;
+import com.lazydevs.notification.api.exception.RateLimitExceededException;
 import com.lazydevs.notification.api.idempotency.IdempotencyKey;
 import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
@@ -13,6 +14,7 @@ import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.model.SendResult;
+import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
@@ -43,6 +45,7 @@ public class DefaultNotificationService implements NotificationService {
     private final NotificationTemplateEngine templateEngine;
     private final NotificationAuditService auditService;
     private final Optional<IdempotencyStore> idempotencyStore;
+    private final Optional<RateLimiter> rateLimiter;
     private final Executor asyncExecutor;
 
     public DefaultNotificationService(
@@ -50,7 +53,8 @@ public class DefaultNotificationService implements NotificationService {
             ProviderRegistry providerRegistry,
             NotificationTemplateEngine templateEngine,
             NotificationAuditService auditService,
-            Optional<IdempotencyStore> idempotencyStore) {
+            Optional<IdempotencyStore> idempotencyStore,
+            Optional<RateLimiter> rateLimiter) {
         this.properties = properties;
         this.providerRegistry = providerRegistry;
         this.templateEngine = templateEngine;
@@ -58,6 +62,9 @@ public class DefaultNotificationService implements NotificationService {
         // Optional<IdempotencyStore>: empty when notification.idempotency.enabled=false
         // (the CaffeineIdempotencyStore @ConditionalOnProperty drops out of the context).
         this.idempotencyStore = idempotencyStore;
+        // Optional<RateLimiter>: empty when notification.rate-limit.enabled=false
+        // — same wiring shape as idempotency, see DD-12.
+        this.rateLimiter = rateLimiter;
         this.asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
     }
 
@@ -71,6 +78,30 @@ public class DefaultNotificationService implements NotificationService {
         enrichRequest(request);
         log.debug("Processing notification: requestId={}, channel={}, type={}",
                 request.getRequestId(), request.getChannel(), request.getNotificationType());
+
+        // ============== Rate-limit check (DD-12) ==============
+        // Run BEFORE the idempotency check per DD-12 §"Why before
+        // idempotency": denied requests don't burn an idempotency slot,
+        // and replays of completed keys don't burn a token.
+        if (rateLimiter.isPresent()) {
+            String channel = request.getChannel() != null
+                    ? request.getChannel().name().toLowerCase()
+                    : "unknown";
+            // Anonymous traffic gets bucketed under the literal string
+            // "anonymous" so missing-callerId requests share a bucket
+            // rather than each carving their own under a null key.
+            String callerForBucket = request.getCallerId() != null
+                    ? request.getCallerId()
+                    : "anonymous";
+            RateLimiter.RateLimitKey rlKey = new RateLimiter.RateLimitKey(
+                    request.getTenantId(), callerForBucket, channel);
+            RateLimiter.Decision decision = rateLimiter.get().tryConsume(rlKey);
+            if (!decision.allowed()) {
+                throw new RateLimitExceededException(
+                        request.getTenantId(), callerForBucket, channel,
+                        decision.retryAfter());
+            }
+        }
 
         // ============== Idempotency check (DD-10) ==============
         // Run BEFORE the main try/catch so IdempotencyInProgressException
