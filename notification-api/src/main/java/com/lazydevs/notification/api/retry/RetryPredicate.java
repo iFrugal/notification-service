@@ -34,8 +34,13 @@ public interface RetryPredicate {
      * PERMANENT. Exposed as a static so the service can fall back to it
      * when no custom bean is provided, and tests can reference it
      * directly.
+     *
+     * <p>The {@code attempt} parameter is unused by this default
+     * (renamed to {@code _} per JEP 456 — silences static analyzers
+     * that flag unused lambda params). Custom predicates can still
+     * read the attempt count: the interface contract preserves it.
      */
-    RetryPredicate DEFAULT = (result, attempt) -> {
+    RetryPredicate DEFAULT = (result, _) -> {
         if (result == null || result.success()) {
             return false;
         }

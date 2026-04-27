@@ -559,6 +559,18 @@ The admin response intentionally omits the request payload (template
 data may carry PII). A future replay endpoint will re-submit by
 request id.
 
+When the DLQ is disabled (`notification.dead-letter.enabled=false`)
+the endpoint returns **HTTP 503 Service Unavailable** with a small
+explanatory body — the endpoint is meaningfully disabled, not just
+empty:
+
+```json
+{
+  "enabled": false,
+  "message": "Dead-letter store is disabled. Enable with notification.dead-letter.enabled=true."
+}
+```
+
 Live state — configured rules + currently-tracked buckets — exposed at
 `GET /api/v1/admin/rate-limit`:
 

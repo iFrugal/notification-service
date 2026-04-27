@@ -23,7 +23,9 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-04-28 (DD-13 retries + DLQ PR open)
+- **Last updated:** 2026-04-28 IST (DD-13 retries + DLQ PR open). All
+  dates in this file are local IST (UTC+5:30) since that's where the
+  work is happening; UTC equivalents differ by ~5h30m.
 
 ---
 

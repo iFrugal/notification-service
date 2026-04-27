@@ -2,6 +2,7 @@ package com.lazydevs.notification.core.config;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -305,9 +306,13 @@ public class NotificationProperties {
         /**
          * Total attempts including the first. {@code max-attempts: 1}
          * means "no retries". Capped at 10 — anything higher should
-         * almost certainly be moved to async / DLQ instead.
+         * almost certainly be moved to async / DLQ instead. The cap is
+         * enforced at binding so a misconfigured deployment can't
+         * silently hang request threads on a 100-attempt backoff
+         * window.
          */
         @Min(value = 1, message = "retry max-attempts must be at least 1")
+        @Max(value = 10, message = "retry max-attempts must be at most 10 — use async + DLQ for higher")
         private int maxAttempts = 3;
 
         /** First backoff window. {@code Duration.ZERO} would defeat backoff. */
@@ -338,9 +343,14 @@ public class NotificationProperties {
                 message = "retry jitter must be in [0.0, 1.0]")
         private double jitter = 0.5;
 
-        @AssertTrue(message = "retry initialDelay must be non-negative")
+        @AssertTrue(message = "retry initialDelay must be positive (zero defeats backoff)")
         public boolean isInitialDelayValid() {
-            return initialDelay != null && !initialDelay.isNegative();
+            // Class doc says "Duration.ZERO would defeat backoff" — a
+            // zero initial delay turns retries into a tight loop, which
+            // is almost always a config typo. Enforce strictly positive.
+            return initialDelay != null
+                    && !initialDelay.isNegative()
+                    && !initialDelay.isZero();
         }
 
         @AssertTrue(message = "retry maxDelay must be positive and >= initialDelay")

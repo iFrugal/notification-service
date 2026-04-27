@@ -51,7 +51,7 @@ public class InMemoryDeadLetterStore implements DeadLetterStore {
     }
 
     @Override
-    public void record(DeadLetterEntry entry) {
+    public void add(DeadLetterEntry entry) {
         // SPI contract: never throw. Catch + log so a flaky DLQ doesn't
         // turn an already-failed send into a double-failure for the caller.
         try {

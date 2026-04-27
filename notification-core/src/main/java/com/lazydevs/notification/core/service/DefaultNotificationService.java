@@ -171,8 +171,12 @@ public class DefaultNotificationService implements NotificationService {
                 result = outcome.result();
                 attempts = outcome.attempts();
                 if (attempts > 1) {
+                    // Sanitize request-derived values before logging
+                    // (CodeQL "log injection" rule) — requestId may be
+                    // caller-supplied and could carry control chars.
                     log.info("Notification took {} attempt(s): requestId={}, provider={}, success={}",
-                            attempts, request.getRequestId(), provider.getProviderName(), result.success());
+                            attempts, sanitizeForLog(request.getRequestId()),
+                            sanitizeForLog(provider.getProviderName()), result.success());
                 }
             } else {
                 result = provider.send(request, content);
@@ -281,11 +285,13 @@ public class DefaultNotificationService implements NotificationService {
             return;
         }
         try {
-            deadLetterStore.get().record(new DeadLetterEntry(
+            deadLetterStore.get().add(new DeadLetterEntry(
                     Instant.now(), request, response, attempts, failureType));
         } catch (RuntimeException e) {
+            // Same sanitization rationale as above — requestId may
+            // carry caller-supplied control chars (CodeQL log injection).
             log.warn("DLQ record failed for requestId={}: {}",
-                    request.getRequestId(), e.toString());
+                    sanitizeForLog(request.getRequestId()), e.toString());
         }
     }
 
@@ -429,4 +435,16 @@ public class DefaultNotificationService implements NotificationService {
      * literal here to avoid a cyclic core → rest module dependency.
      */
     private static final String CALLER_ID_ATTRIBUTE = "notification.callerId";
+
+    /**
+     * Strip ASCII control characters from a value before it goes into a
+     * log line — defense against log-injection through caller-supplied
+     * fields like {@code requestId} and provider-supplied
+     * {@code providerName}. Also sanitizes {@code null} to a literal
+     * {@code "null"} so the log line stays well-formed even when a
+     * caller leaves a field empty.
+     */
+    private static String sanitizeForLog(String s) {
+        return s == null ? "null" : s.replaceAll("[\\p{Cntrl}]", "_");
+    }
 }

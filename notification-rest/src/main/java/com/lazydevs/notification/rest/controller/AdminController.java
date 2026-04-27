@@ -31,6 +31,17 @@ import java.util.*;
 @ConditionalOnProperty(prefix = "notification.rest", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class AdminController {
 
+    /**
+     * JSON field name for the channel identifier across admin responses.
+     * Pulled out as a constant so a typo in one place doesn't ship with
+     * an inconsistent envelope (and to satisfy Sonar's "duplicated
+     * literal" rule).
+     */
+    private static final String FIELD_CHANNEL = "channel";
+
+    /** JSON field name for human-readable status / explanation strings. */
+    private static final String FIELD_MESSAGE = "message";
+
     private static final Set<String> SENSITIVE_KEYS = Set.of(
             "password", "secret", "token", "api-key", "apikey", "auth-token", "authtoken",
             "credentials", "private-key", "privatekey", "account-sid", "accountsid",
@@ -174,7 +185,7 @@ public class AdminController {
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("tenant", o.getTenant());
             if (o.getCaller() != null) entry.put("caller", o.getCaller());
-            if (o.getChannel() != null) entry.put("channel", o.getChannel());
+            if (o.getChannel() != null) entry.put(FIELD_CHANNEL, o.getChannel());
             entry.put("capacity", o.getCapacity());
             entry.put("refillTokens", o.getRefillTokens());
             entry.put("refillPeriod", o.getRefillPeriod().toString());
@@ -191,7 +202,7 @@ public class AdminController {
                 Map<String, Object> e = new LinkedHashMap<>();
                 e.put("tenant", key.tenantId());
                 e.put("caller", key.callerId());
-                e.put("channel", key.channel());
+                e.put(FIELD_CHANNEL, key.channel());
                 e.put("availableTokens", tokens);
                 active.add(e);
             });
@@ -228,7 +239,7 @@ public class AdminController {
         if (deadLetterStore.isEmpty()) {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("enabled", false);
-            body.put("message", "Dead-letter store is disabled. "
+            body.put(FIELD_MESSAGE, "Dead-letter store is disabled. "
                     + "Enable with notification.dead-letter.enabled=true.");
             return ResponseEntity.status(503).body(body);
         }
@@ -243,14 +254,16 @@ public class AdminController {
         // entries); the in-memory default always returns a list.
         java.util.Optional<java.util.List<DeadLetterEntry>> snapshot = store.snapshot();
         if (snapshot.isPresent()) {
-            int safeLimit = Math.max(1, Math.min(limit, 1000));
+            // Math.clamp arrived in Java 21 — clearer than the
+            // Math.max(min, Math.min(max, x)) idiom and Sonar prefers it.
+            int safeLimit = Math.clamp(limit, 1, 1000);
             result.put("entries", snapshot.get().stream()
                     .limit(safeLimit)
                     .map(this::toAdminEntry)
                     .toList());
         } else {
             result.put("entries", null);
-            result.put("message",
+            result.put(FIELD_MESSAGE,
                     "Backing store does not support snapshot iteration; query the store directly.");
         }
         return ResponseEntity.ok(result);
@@ -266,7 +279,7 @@ public class AdminController {
         m.put("timestamp", entry.timestamp().toString());
         m.put("tenantId", entry.request().getTenantId());
         m.put("callerId", entry.request().getCallerId());
-        m.put("channel", entry.request().getChannel() != null
+        m.put(FIELD_CHANNEL, entry.request().getChannel() != null
                 ? entry.request().getChannel().name() : null);
         m.put("requestId", entry.request().getRequestId());
         m.put("attempts", entry.attempts());
@@ -285,10 +298,10 @@ public class AdminController {
 
         if (tenantId != null) {
             templateEngine.clearCache(tenantId);
-            return ResponseEntity.ok(Map.of("message", "Template cache cleared for tenant: " + tenantId));
+            return ResponseEntity.ok(Map.of(FIELD_MESSAGE, "Template cache cleared for tenant: " + tenantId));
         } else {
             templateEngine.clearAllCache();
-            return ResponseEntity.ok(Map.of("message", "All template caches cleared"));
+            return ResponseEntity.ok(Map.of(FIELD_MESSAGE, "All template caches cleared"));
         }
     }
 

@@ -120,7 +120,7 @@ class DefaultNotificationServiceRetryTest {
         // Permanent failure → no retries, DLQ records 1 attempt with PERMANENT.
         verify(provider, times(1)).send(any(), any());
         ArgumentCaptor<DeadLetterEntry> captor = ArgumentCaptor.forClass(DeadLetterEntry.class);
-        verify(deadLetterStore).record(captor.capture());
+        verify(deadLetterStore).add(captor.capture());
         assertThat(captor.getValue().attempts()).isEqualTo(1);
         assertThat(captor.getValue().failureType()).isEqualTo(FailureType.PERMANENT);
         assertThat(captor.getValue().response().errorCode()).isEqualTo("BAD_RECIPIENT");
@@ -140,7 +140,7 @@ class DefaultNotificationServiceRetryTest {
         // 3 max-attempts × 1 send each = 3 calls, then DLQ.
         verify(provider, times(3)).send(any(), any());
         ArgumentCaptor<DeadLetterEntry> captor = ArgumentCaptor.forClass(DeadLetterEntry.class);
-        verify(deadLetterStore).record(captor.capture());
+        verify(deadLetterStore).add(captor.capture());
         assertThat(captor.getValue().attempts()).isEqualTo(3);
         assertThat(captor.getValue().failureType()).isEqualTo(FailureType.TRANSIENT);
     }
@@ -221,7 +221,7 @@ class DefaultNotificationServiceRetryTest {
         noRetry.send(baseRequest());
 
         verify(provider, times(1)).send(any(), any());
-        verify(deadLetterStore).record(any(DeadLetterEntry.class));
+        verify(deadLetterStore).add(any(DeadLetterEntry.class));
     }
 
     @Test
@@ -244,13 +244,13 @@ class DefaultNotificationServiceRetryTest {
         when(provider.send(any(), any()))
                 .thenReturn(SendResult.failure("X", "x", FailureType.PERMANENT));
         org.mockito.Mockito.doThrow(new RuntimeException("DLQ broke"))
-                .when(deadLetterStore).record(any());
+                .when(deadLetterStore).add(any());
 
         // Send must still complete with a FAILED response — DLQ failure
         // is a non-event from the caller's perspective.
         NotificationResponse response = service.send(baseRequest());
         assertThat(response.status()).isEqualTo(NotificationStatus.FAILED);
-        verify(deadLetterStore, atLeastOnce()).record(any());
+        verify(deadLetterStore, atLeastOnce()).add(any());
     }
 
     // -----------------------------------------------------------------

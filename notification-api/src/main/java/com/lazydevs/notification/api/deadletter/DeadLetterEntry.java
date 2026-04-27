@@ -1,5 +1,6 @@
 package com.lazydevs.notification.api.deadletter;
 
+import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
@@ -40,5 +41,16 @@ public record DeadLetterEntry(
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(response, "response");
         Objects.requireNonNull(failureType, "failureType");
+        // Enforce the documented invariants — bad entries should fail
+        // at construction, not later in the admin endpoint mapper.
+        if (attempts < 1) {
+            throw new IllegalArgumentException(
+                    "attempts must be >= 1 (got " + attempts + ")");
+        }
+        if (response.status() != NotificationStatus.FAILED
+                && response.status() != NotificationStatus.REJECTED) {
+            throw new IllegalArgumentException(
+                    "DLQ entry response must be FAILED or REJECTED (got " + response.status() + ")");
+        }
     }
 }

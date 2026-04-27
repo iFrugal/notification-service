@@ -87,7 +87,8 @@ notification:
     jitter: 0.5                  # 0..1, fraction of delay randomized ±
 ```
 
-Backoff schedule: `delay(n) = min(initialDelay × multiplierⁿ, maxDelay)`,
+Backoff schedule (where `n` is the 1-based attempt number that just
+failed): `delay(n) = min(initialDelay × multiplier^(n-1), maxDelay)`,
 then perturbed by ±`jitter`× of itself. Jitter is critical to avoid
 thundering-herd on shared providers when many tenants retry the same
 provider outage simultaneously.

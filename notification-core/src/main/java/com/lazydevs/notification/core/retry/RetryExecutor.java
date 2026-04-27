@@ -119,8 +119,12 @@ public class RetryExecutor {
     Duration computeBackoff(int attempt) {
         // attempt is 1-based; first delay (after attempt 1 fails) uses
         // initialDelay × multiplier^0 = initialDelay.
+        // Explicit (double) cast on the exponent — silences Sonar's
+        // "subtraction operands should be double when result is used as
+        // double" lint, and protects against the (theoretical) integer
+        // overflow if attempt were ever Integer.MIN_VALUE.
         double base = config.getInitialDelay().toMillis()
-                * Math.pow(config.getMultiplier(), attempt - 1);
+                * Math.pow(config.getMultiplier(), (double) (attempt - 1));
         double capped = Math.min(base, config.getMaxDelay().toMillis());
         double jittered = applyJitter(capped, config.getJitter());
         return Duration.ofMillis(Math.max(0L, (long) jittered));
@@ -137,8 +141,13 @@ public class RetryExecutor {
             return baseMillis;
         }
         double clamped = Math.min(1.0, jitter);
-        // ThreadLocalRandom for cheap per-thread randomness.
-        double factor = 1.0 + ThreadLocalRandom.current().nextDouble(-clamped, clamped);
+        // ThreadLocalRandom is the right tool here — backoff jitter is a
+        // load-distribution decision, not a security boundary. We don't
+        // need crypto-strength entropy and we definitely don't want the
+        // contention of SecureRandom on every retry. Sonar's
+        // "secure-random" hotspot doesn't apply to non-secret randomness.
+        double factor = 1.0 + ThreadLocalRandom.current() // NOSONAR — non-security use
+                .nextDouble(-clamped, clamped);
         return baseMillis * factor;
     }
 
@@ -154,7 +163,10 @@ public class RetryExecutor {
         try {
             Thread.sleep(d.toMillis());
             return true;
-        } catch (InterruptedException e) {
+        } catch (InterruptedException _) {
+            // Body doesn't reference the exception — JEP 456 unnamed
+            // variable makes that explicit and silences "unused param"
+            // lints. We just propagate interruption.
             Thread.currentThread().interrupt();
             return false;
         }

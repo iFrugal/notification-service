@@ -19,8 +19,13 @@ public interface DeadLetterStore {
      * Persist a single dead-letter entry. Implementations should
      * never throw — losing a DLQ entry is regrettable but must not
      * propagate back to the caller as an error. Log instead.
+     *
+     * <p>Named {@code add} rather than {@code record} because
+     * {@code record} is a Java contextual keyword — using it as a
+     * method name reads strangely and trips static analyzers like
+     * Sonar's "S6213 — restricted identifier" rule.
      */
-    void record(DeadLetterEntry entry);
+    void add(DeadLetterEntry entry);
 
     /**
      * Return a snapshot of currently-tracked entries, most recent first,
