@@ -1,5 +1,6 @@
 package com.lazydevs.notification.api.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.NotificationStatus;
 
@@ -20,6 +21,13 @@ import java.time.Instant;
  * @param receivedAt        timestamp when the request was received
  * @param processedAt       timestamp when the notification was processed
  * @param sentAt            timestamp when the notification was sent to the provider
+ * @param idempotentReplay  internal flag — non-{@code null} {@link Boolean#TRUE}
+ *                          when this response is being returned from the
+ *                          idempotency cache rather than from a fresh
+ *                          provider call. Marked {@link JsonIgnore} so it
+ *                          is never serialised to the JSON response body —
+ *                          the controller surfaces it instead via the
+ *                          {@code X-Idempotent-Replay} HTTP header per DD-10.
  */
 public record NotificationResponse(
         String requestId,
@@ -33,7 +41,8 @@ public record NotificationResponse(
         String errorMessage,
         Instant receivedAt,
         Instant processedAt,
-        Instant sentAt) {
+        Instant sentAt,
+        @JsonIgnore Boolean idempotentReplay) {
 
     // ======================================================================
     //  Minimal factories preserved from the original builder-based API.
@@ -59,7 +68,8 @@ public record NotificationResponse(
                 null,
                 null,
                 now,
-                now);
+                now,
+                null);
     }
 
     /**
@@ -80,6 +90,7 @@ public record NotificationResponse(
                 errorMessage,
                 null,
                 Instant.now(),
+                null,
                 null);
     }
 
@@ -98,6 +109,7 @@ public record NotificationResponse(
                 null,
                 null,
                 Instant.now(),
+                null,
                 null,
                 null);
     }
@@ -118,6 +130,7 @@ public record NotificationResponse(
                 errorMessage,
                 null,
                 Instant.now(),
+                null,
                 null);
     }
 
@@ -145,7 +158,8 @@ public record NotificationResponse(
                 null,
                 receivedAt,
                 Instant.now(),
-                sentAt);
+                sentAt,
+                null);
     }
 
     /**
@@ -167,6 +181,38 @@ public record NotificationResponse(
                 errorMessage,
                 receivedAt,
                 Instant.now(),
+                null,
                 null);
+    }
+
+    /**
+     * Stamp an existing response as an idempotency cache replay (DD-10).
+     *
+     * <p>Used by {@code DefaultNotificationService} when returning a cached
+     * response for a duplicate idempotency key — keeps the original
+     * timestamps and provider message id intact (the caller is seeing
+     * exactly what the original send produced) but flips the
+     * {@link #idempotentReplay} flag so the controller can surface the
+     * {@code X-Idempotent-Replay: true} header.
+     *
+     * <p>The flag is {@link JsonIgnore}d so the response body shape is
+     * unchanged from a fresh send — the difference shows up only in the
+     * HTTP header, exactly as DD-10 specifies.
+     */
+    public static NotificationResponse replayedFrom(NotificationResponse cached) {
+        return new NotificationResponse(
+                cached.requestId(),
+                cached.correlationId(),
+                cached.tenantId(),
+                cached.channel(),
+                cached.provider(),
+                cached.status(),
+                cached.providerMessageId(),
+                cached.errorCode(),
+                cached.errorMessage(),
+                cached.receivedAt(),
+                cached.processedAt(),
+                cached.sentAt(),
+                Boolean.TRUE);
     }
 }

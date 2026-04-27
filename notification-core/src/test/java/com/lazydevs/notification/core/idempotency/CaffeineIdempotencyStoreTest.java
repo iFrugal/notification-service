@@ -193,6 +193,7 @@ class CaffeineIdempotencyStoreTest {
                 requestId, "corr-" + requestId, "acme", Channel.EMAIL,
                 "smtp", NotificationStatus.SENT, "msg-" + requestId,
                 null, null,
-                Instant.now(), Instant.now(), Instant.now());
+                Instant.now(), Instant.now(), Instant.now(),
+                null);
     }
 }

@@ -316,6 +316,58 @@ Content-Type: application/json
 }
 ```
 
+### Idempotency
+
+To make retries safe, include an opaque `idempotencyKey` (max 255
+characters) in the request body. The service deduplicates against an
+in-memory store, scoped per `(tenantId, callerId, idempotencyKey)`,
+with a configurable TTL — default 24 hours.
+
+```json
+{
+  "idempotencyKey": "order-12345-confirmation",
+  "channel": "EMAIL",
+  "notificationType": "ORDER_CONFIRMATION",
+  "recipient": { "to": ["customer@example.com"] },
+  "templateData": { "orderId": "12345" }
+}
+```
+
+**Behaviour for duplicate keys within TTL:**
+
+| Prior state | Status code | Body | Header |
+|---|---|---|---|
+| No prior record | 200 | Fresh response (`status: "SENT"` etc.) | — |
+| Prior request still **in-flight** | 409 | `{ "notificationId": "<original>", "status": "IN_PROGRESS" }` | — |
+| Prior request **completed successfully** (`SENT` / `DELIVERED` / `ACCEPTED`) | 200 | The original response, replayed verbatim | `X-Idempotent-Replay: true` |
+| Prior request **failed permanently** (`FAILED` / `REJECTED`) | Treated as fresh — proceeds to a new provider call | New response | — |
+
+The `X-Idempotent-Replay` header lets callers with side-effect-on-success
+flows (e.g. "after the email sends, mark the ticket Resolved")
+distinguish a real send from a cache replay without parsing timestamps
+or comparing `requestId`.
+
+Disable idempotency entirely with:
+
+```yaml
+notification:
+  idempotency:
+    enabled: false
+```
+
+Tune TTL or cache bound:
+
+```yaml
+notification:
+  idempotency:
+    ttl: PT24H        # ISO-8601 duration
+    max-entries: 100000
+```
+
+See [DD-10](docs/design-decisions/10-idempotency.md) for the design
+rationale, semantics, and the storage-SPI shape for replacing the
+default in-memory store with Redis.
+
 ### Send Batch
 
 ```http
