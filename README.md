@@ -46,6 +46,8 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - **Multi-Channel Support**: Email, SMS, WhatsApp, Push notifications
 - **Multiple Providers per Channel**: SMTP, AWS SES, Twilio, Firebase FCM, etc.
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header
+- **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
+- **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)
 - **Template Engine**: FreeMarker templates with tenant-specific overrides
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service
@@ -376,6 +378,59 @@ See [DD-10](docs/design-decisions/10-idempotency.md) for the design
 rationale, semantics, and the storage-SPI shape for replacing the
 default in-memory store with Redis.
 
+### Caller Identity
+
+Identify the calling service with the optional `X-Service-Id` header (max
+128 characters). The value flows into the response, the audit record, and
+the idempotency dedup tuple — closing the cross-service collision risk
+described in [DD-11](docs/design-decisions/11-caller-identity.md).
+
+```http
+POST /api/v1/notifications
+X-Tenant-Id: default
+X-Service-Id: billing-svc
+Content-Type: application/json
+
+{ ... }
+```
+
+The header is optional. Requests that omit it continue to work exactly as
+before — the only effect is that the idempotency scope reduces to
+`(tenantId, null, idempotencyKey)`.
+
+**Caller registry (optional, off by default).** When operators want to
+track or restrict which services may call the notification API, populate
+the registry:
+
+```yaml
+notification:
+  caller-registry:
+    enabled: true
+    strict: false              # set true to reject unknown caller-ids
+    known-services:
+      - billing-svc
+      - marketing-svc
+      - account-svc
+```
+
+Behaviour matrix:
+
+| `enabled` | `strict` | Unknown `X-Service-Id` | Missing `X-Service-Id` |
+|-----------|----------|------------------------|------------------------|
+| `false`   | _n/a_    | accepted, no log       | accepted, `callerId = null` |
+| `true`    | `false`  | accepted, WARN log     | accepted, `callerId = null` |
+| `true`    | `true`   | **rejected with HTTP 403** | accepted, `callerId = null` |
+
+The current registry state is exposed at `GET /api/v1/admin/caller-registry`:
+
+```json
+{
+  "enabled": true,
+  "strict": false,
+  "knownServices": ["billing-svc", "marketing-svc", "account-svc"]
+}
+```
+
 ### Send Batch
 
 ```http
@@ -396,6 +451,7 @@ Content-Type: application/json
 | `/api/v1/admin/configuration` | GET | Get all tenant configurations |
 | `/api/v1/admin/configuration/tenants/{id}` | GET | Get specific tenant config |
 | `/api/v1/admin/configuration/tenants/{id}/channels/{ch}` | GET | Get channel config |
+| `/api/v1/admin/caller-registry` | GET | Caller-registry state (DD-11) |
 | `/api/v1/admin/health` | GET | Provider health status |
 | `/api/v1/admin/cache/templates/clear` | POST | Clear template cache |
 

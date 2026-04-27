@@ -12,6 +12,10 @@ import java.time.Instant;
  * @param requestId         request ID (same as request or auto-generated)
  * @param correlationId     correlation ID for cross-system tracking
  * @param tenantId          tenant ID
+ * @param callerId          calling-service identifier echoed back from
+ *                          the request — populated from {@code X-Service-Id}
+ *                          header or request body. May be {@code null} when
+ *                          the caller didn't identify itself. See DD-11.
  * @param channel           channel used
  * @param provider          provider used (may be {@code null} if never dispatched)
  * @param status            current status of the notification
@@ -33,6 +37,7 @@ public record NotificationResponse(
         String requestId,
         String correlationId,
         String tenantId,
+        String callerId,
         Channel channel,
         String provider,
         NotificationStatus status,
@@ -60,6 +65,7 @@ public record NotificationResponse(
                 request.getRequestId(),
                 request.getCorrelationId(),
                 request.getTenantId(),
+                request.getCallerId(),
                 request.getChannel(),
                 provider,
                 NotificationStatus.SENT,
@@ -82,6 +88,7 @@ public record NotificationResponse(
                 request.getRequestId(),
                 request.getCorrelationId(),
                 request.getTenantId(),
+                request.getCallerId(),
                 request.getChannel(),
                 provider,
                 NotificationStatus.FAILED,
@@ -102,6 +109,7 @@ public record NotificationResponse(
                 request.getRequestId(),
                 request.getCorrelationId(),
                 request.getTenantId(),
+                request.getCallerId(),
                 request.getChannel(),
                 null,
                 NotificationStatus.ACCEPTED,
@@ -122,6 +130,7 @@ public record NotificationResponse(
                 request.getRequestId(),
                 request.getCorrelationId(),
                 request.getTenantId(),
+                request.getCallerId(),
                 request.getChannel(),
                 null,
                 NotificationStatus.REJECTED,
@@ -150,6 +159,7 @@ public record NotificationResponse(
                 request.getRequestId(),
                 request.getCorrelationId(),
                 request.getTenantId(),
+                request.getCallerId(),
                 request.getChannel(),
                 provider,
                 NotificationStatus.SENT,
@@ -173,6 +183,7 @@ public record NotificationResponse(
                 request.getRequestId(),
                 request.getCorrelationId(),
                 request.getTenantId(),
+                request.getCallerId(),
                 request.getChannel(),
                 provider,
                 NotificationStatus.FAILED,
@@ -204,6 +215,7 @@ public record NotificationResponse(
                 cached.requestId(),
                 cached.correlationId(),
                 cached.tenantId(),
+                cached.callerId(),
                 cached.channel(),
                 cached.provider(),
                 cached.status(),

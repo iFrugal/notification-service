@@ -190,7 +190,7 @@ class CaffeineIdempotencyStoreTest {
 
     private static NotificationResponse sentResponse(String requestId) {
         return new NotificationResponse(
-                requestId, "corr-" + requestId, "acme", Channel.EMAIL,
+                requestId, "corr-" + requestId, "acme", null, Channel.EMAIL,
                 "smtp", NotificationStatus.SENT, "msg-" + requestId,
                 null, null,
                 Instant.now(), Instant.now(), Instant.now(),

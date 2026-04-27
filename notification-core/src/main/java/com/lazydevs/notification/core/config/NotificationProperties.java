@@ -3,7 +3,9 @@ package com.lazydevs.notification.core.config;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -42,6 +44,13 @@ public class NotificationProperties {
      * Idempotency configuration (see DD-10).
      */
     private IdempotencyProperties idempotency = new IdempotencyProperties();
+
+    /**
+     * Caller-registry configuration (see DD-11). Off by default — turning
+     * it on populates the admin endpoint and (optionally) enforces strict
+     * admission of {@code X-Service-Id} values.
+     */
+    private CallerRegistryProperties callerRegistry = new CallerRegistryProperties();
 
     /**
      * Tenant-specific configurations
@@ -100,6 +109,38 @@ public class NotificationProperties {
          * a future {@code redis} option is foreseen by DD-10.
          */
         private String store = "caffeine";
+    }
+
+    /**
+     * Caller-registry handling. See {@code docs/design-decisions/11-caller-identity.md}.
+     *
+     * <p>Default state ({@code enabled=false}) is the no-op: the
+     * {@code X-Service-Id} header is still read into {@code callerId}, but
+     * unknown values are accepted silently and the admin endpoint reports
+     * the registry as off.
+     */
+    @Data
+    public static class CallerRegistryProperties {
+        /** Master switch for caller-registry behaviour. */
+        private boolean enabled = false;
+
+        /**
+         * If {@code true} <strong>and</strong> {@code enabled=true}, an
+         * incoming request whose resolved {@code callerId} is non-null and
+         * NOT in {@link #knownServices} is rejected with HTTP 403. A null
+         * {@code callerId} (no header sent) is always accepted — strict
+         * mode is about admitting only listed callers, not about forcing
+         * every caller to identify itself.
+         */
+        private boolean strict = false;
+
+        /**
+         * Advisory list of known caller-ids. When {@link #enabled} is
+         * {@code false} this is purely documentation. When {@code true}
+         * unknown callers are logged at WARN level (and rejected if
+         * {@link #strict}).
+         */
+        private List<String> knownServices = new ArrayList<>();
     }
 
     @Data

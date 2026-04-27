@@ -99,7 +99,30 @@ class DefaultNotificationServiceIdempotencyTest {
         verify(idempotencyStore).markComplete(eq(keyCaptor.getValue()), any(NotificationResponse.class));
         assertThat(keyCaptor.getValue().tenantId()).isEqualTo("acme");
         assertThat(keyCaptor.getValue().idempotencyKey()).isEqualTo("idem-1");
+        // callerId is null because baseRequest() doesn't set X-Service-Id —
+        // dedup scope reduces to (tenantId, null, idempotencyKey), matching
+        // pre-DD-11 behaviour for callers that don't identify themselves.
         assertThat(keyCaptor.getValue().callerId()).isNull();
+    }
+
+    @Test
+    void send_withCallerId_propagatesIntoIdempotencyKey() {
+        // DD-11: when the request carries a callerId, it becomes part of
+        // the dedup tuple. Two requests with the same idempotency key but
+        // different callers will *not* be treated as duplicates.
+        NotificationRequest req = baseRequest("idem-with-caller");
+        req.setCallerId("billing-svc");
+        when(idempotencyStore.findExisting(any())).thenReturn(Optional.empty());
+        when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
+        stubProviderHappyPath();
+
+        service.send(req);
+
+        ArgumentCaptor<IdempotencyKey> keyCaptor = ArgumentCaptor.forClass(IdempotencyKey.class);
+        verify(idempotencyStore).markInProgress(keyCaptor.capture(), anyString());
+        assertThat(keyCaptor.getValue().tenantId()).isEqualTo("acme");
+        assertThat(keyCaptor.getValue().callerId()).isEqualTo("billing-svc");
+        assertThat(keyCaptor.getValue().idempotencyKey()).isEqualTo("idem-with-caller");
     }
 
     @Test
@@ -242,7 +265,7 @@ class DefaultNotificationServiceIdempotencyTest {
 
     private static NotificationResponse sentResponse(String requestId) {
         return new NotificationResponse(
-                requestId, "corr-" + requestId, "acme", Channel.EMAIL,
+                requestId, "corr-" + requestId, "acme", null, Channel.EMAIL,
                 "smtp", NotificationStatus.SENT, "msg-" + requestId,
                 null, null,
                 Instant.now().minusSeconds(60), Instant.now().minusSeconds(60), Instant.now().minusSeconds(60),
@@ -251,7 +274,7 @@ class DefaultNotificationServiceIdempotencyTest {
 
     private static NotificationResponse failedResponse(String requestId) {
         return new NotificationResponse(
-                requestId, "corr-" + requestId, "acme", Channel.EMAIL,
+                requestId, "corr-" + requestId, "acme", null, Channel.EMAIL,
                 "smtp", NotificationStatus.FAILED, null,
                 "PROVIDER_ERROR", "smtp 421 — try again later",
                 Instant.now().minusSeconds(120), Instant.now().minusSeconds(120), null,

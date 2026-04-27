@@ -39,6 +39,13 @@ public class NotificationAudit {
      */
     private String tenantId;
 
+    /**
+     * Calling-service identifier (DD-11). Populated from the
+     * {@code X-Service-Id} header or request body. May be {@code null} when
+     * the caller did not identify itself.
+     */
+    private String callerId;
+
     // ========== Request Details ==========
 
     /**

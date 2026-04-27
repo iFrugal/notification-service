@@ -206,13 +206,19 @@ public class DefaultNotificationService implements NotificationService {
      * idempotency is disabled (no store bean) or the caller didn't supply
      * an {@code idempotencyKey}.
      *
-     * <p>{@code callerId} is intentionally hardcoded {@code null} pre-DD-11.
+     * <p>The {@code callerId} component (DD-11) is read from
+     * {@link NotificationRequest#getCallerId()} — the request enrichment
+     * step has already pulled it from the {@code X-Service-Id} header via
+     * {@link RequestContext} when the REST path is used. A {@code null}
+     * value is permitted; in that case the dedup scope reduces to
+     * {@code (tenantId, null, idempotencyKey)} which matches pre-DD-11
+     * behaviour.
      */
     private IdempotencyKey idempotencyKeyFor(NotificationRequest request) {
         if (idempotencyStore.isEmpty() || !StringUtils.hasText(request.getIdempotencyKey())) {
             return null;
         }
-        return new IdempotencyKey(request.getTenantId(), null, request.getIdempotencyKey());
+        return new IdempotencyKey(request.getTenantId(), request.getCallerId(), request.getIdempotencyKey());
     }
 
     /**
@@ -254,7 +260,8 @@ public class DefaultNotificationService implements NotificationService {
 
     /**
      * Enrich request with default values.
-     * Uses RequestContext from app-building-commons for requestId and tenant.
+     * Uses RequestContext from app-building-commons for requestId, tenant,
+     * and caller id (DD-11).
      */
     private void enrichRequest(NotificationRequest request) {
         RequestContext context = RequestContext.current();
@@ -278,9 +285,28 @@ public class DefaultNotificationService implements NotificationService {
                     : properties.getDefaultTenant());
         }
 
+        // Caller id (DD-11): body wins over header; if neither is set, leave null.
+        // The TenantFilter stashes the X-Service-Id header value under
+        // CALLER_ID_ATTRIBUTE on RequestContext (the constant lives in the
+        // REST module, but core can't depend on it — read by literal name).
+        if (!StringUtils.hasText(request.getCallerId())) {
+            Object contextCaller = context.get(CALLER_ID_ATTRIBUTE);
+            if (contextCaller instanceof String s && StringUtils.hasText(s)) {
+                request.setCallerId(s);
+            }
+        }
+
         // Ensure template data is not null
         if (request.getTemplateData() == null) {
             request.setTemplateData(new java.util.HashMap<>());
         }
     }
+
+    /**
+     * RequestContext attribute key under which the resolved caller id is
+     * stashed by the REST {@code TenantFilter}. Mirrors
+     * {@code TenantFilter.CALLER_ID_ATTRIBUTE} — duplicated as a string
+     * literal here to avoid a cyclic core → rest module dependency.
+     */
+    private static final String CALLER_ID_ATTRIBUTE = "notification.callerId";
 }
