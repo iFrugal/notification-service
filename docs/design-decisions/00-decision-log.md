@@ -21,7 +21,7 @@ This document tracks all architectural and design decisions made during the deve
 | 6 | External Provider Discovery | DECIDED | No SPI needed; `beanName`/`fqcn` explicit config; lifecycle methods | [06-spi-discovery.md](./06-spi-discovery.md) |
 | 7 | Audit Persistence | DECIDED | Use `persistence-api` with pluggable impl | [07-audit-persistence.md](./07-audit-persistence.md) |
 | 8 | Starter vs Standalone Packaging | DECIDED | Single Docker image, config-driven, Configuration API | [08-packaging-modes.md](./08-packaging-modes.md) |
-| 10 | Idempotency Key (First-Class) | PROPOSED | Optional `idempotencyKey` on request, scoped `(tenantId, callerId, key)`, Caffeine default store with Redis SPI | [10-idempotency.md](./10-idempotency.md) |
+| 10 | Idempotency Key (First-Class) | DECIDED | Optional `idempotencyKey` on request, scoped `(tenantId, callerId, key)`, Caffeine default store with Redis SPI | [10-idempotency.md](./10-idempotency.md) |
 
 ---
 
@@ -57,6 +57,7 @@ This document tracks all architectural and design decisions made during the deve
 | 2025-01-17 | 6 | Decided: No SPI, lifecycle methods (init/destroy) | - |
 | 2025-01-17 | 8 | Decided: Single Docker image, Config API with masking | - |
 | 2026-04-23 | 10 | Proposed: optional `idempotencyKey` request field, Caffeine default store with SPI for Redis | Abhijeet |
+| 2026-04-27 | 10 | Decided: full rollout merged — SPI + Caffeine impl, service integration, 409 handler, X-Idempotent-Replay header, JUnit 5 tests, README docs | Abhijeet |
 
 ---
 
