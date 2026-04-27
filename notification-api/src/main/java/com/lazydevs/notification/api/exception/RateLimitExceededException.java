@@ -63,9 +63,15 @@ public class RateLimitExceededException extends NotificationException {
     private static String buildMessage(String tenantId, String callerId, String channel,
                                        Duration retryAfter) {
         long seconds = retryAfter == null ? 0 : roundUpToSeconds(retryAfter);
-        return "Rate limit exceeded for tenant=" + tenantId
-                + ", caller=" + callerId
-                + ", channel=" + channel
+        // Sanitize at construction so the message is safe to log
+        // downstream — getMessage() is referenced by GlobalExceptionHandler
+        // (and any future caller), so taint scrubbed here propagates
+        // everywhere. ASCII control chars in tenantId/callerId/channel
+        // (request-derived, not server-validated) would otherwise let an
+        // attacker inject log lines via the exception path.
+        return "Rate limit exceeded for tenant=" + sanitize(tenantId)
+                + ", caller=" + sanitize(callerId)
+                + ", channel=" + sanitize(channel)
                 + " (retry after " + seconds + "s)";
     }
 
@@ -77,5 +83,15 @@ public class RateLimitExceededException extends NotificationException {
      */
     private static long roundUpToSeconds(Duration d) {
         return Math.max(1L, (d.toMillis() + 999L) / 1000L);
+    }
+
+    /**
+     * Strip ASCII control characters (newlines, CR, etc.) so an
+     * attacker-controlled header value can't inject fake lines into
+     * downstream log output. Runs once at construction; the resulting
+     * message is then safe for any log handler.
+     */
+    private static String sanitize(String s) {
+        return s == null ? "null" : s.replaceAll("[\\p{Cntrl}]", "_");
     }
 }

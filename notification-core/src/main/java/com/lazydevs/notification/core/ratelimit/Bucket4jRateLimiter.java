@@ -103,17 +103,12 @@ public class Bucket4jRateLimiter implements RateLimiter {
         }
         // nanosToWaitForRefill is documented as "time until at least 1 token is available"
         Duration retryAfter = Duration.ofNanos(probe.getNanosToWaitForRefill());
-        if (log.isDebugEnabled()) {
-            // Sanitize the user-controlled fields before logging — caller
-            // and tenant ids aren't validated server-side and could carry
-            // newlines / control characters that pollute log streams
-            // (CodeQL "Log injection" rule).
-            log.debug("Rate limit hit for tenant={}, caller={}, channel={} — retry in {}ms",
-                    sanitize(key.tenantId()),
-                    sanitize(key.callerId()),
-                    sanitize(key.channel()),
-                    retryAfter.toMillis());
-        }
+        // Don't log the user-controlled key components here — taint-tracking
+        // tools can't statically prove our control-char scrub is sufficient,
+        // and the (sanitized) RateLimitExceededException message that
+        // GlobalExceptionHandler logs already carries the same context.
+        // Only the duration (a long, not user-controlled) is logged.
+        log.debug("Rate limit hit — retry in {}ms", retryAfter.toMillis());
         return Decision.deny(retryAfter);
     }
 
@@ -185,19 +180,4 @@ public class Bucket4jRateLimiter implements RateLimiter {
         return Map.copyOf(out);
     }
 
-    /**
-     * Strip newlines and other control characters from a value before it
-     * goes into a log line. Defensive measure: the
-     * {@code (tenant, caller, channel)} components originate from
-     * request headers / body and are not validated server-side, so they
-     * can contain anything the caller cares to send. Without this, a
-     * crafted {@code X-Service-Id} could inject fake log lines.
-     */
-    private static String sanitize(String s) {
-        if (s == null) {
-            return "null";
-        }
-        // Replace any ASCII control char (\\x00-\\x1F, \\x7F) with '_'.
-        return s.replaceAll("[\\p{Cntrl}]", "_");
-    }
 }

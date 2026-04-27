@@ -1,7 +1,13 @@
 package com.lazydevs.notification.core.config;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -12,6 +18,7 @@ import java.util.Map;
  * Configuration properties for the notification service.
  */
 @Data
+@Validated
 @ConfigurationProperties(prefix = "notification")
 public class NotificationProperties {
 
@@ -58,6 +65,7 @@ public class NotificationProperties {
      * pre-dispatch token-bucket check inside
      * {@code DefaultNotificationService.send()}.
      */
+    @Valid
     private RateLimitProperties rateLimit = new RateLimitProperties();
 
     /**
@@ -173,6 +181,8 @@ public class NotificationProperties {
          * per-caller; the default is just a backstop that prevents
          * unbounded fan-out.
          */
+        @Valid
+        @NotNull
         private RateLimitRule defaultRule = new RateLimitRule(200, 100, java.time.Duration.ofSeconds(1));
 
         /**
@@ -181,6 +191,7 @@ public class NotificationProperties {
          * > {@code (tenant)} > {@code defaultRule}. Within the same
          * specificity, configuration order is the tiebreaker.
          */
+        @Valid
         private List<RateLimitOverride> overrides = new ArrayList<>();
     }
 
@@ -196,23 +207,60 @@ public class NotificationProperties {
     @lombok.AllArgsConstructor
     public static class RateLimitRule {
         /** Maximum tokens in the bucket — the burst tolerance. */
+        @Min(value = 1, message = "rate-limit capacity must be at least 1")
         private long capacity = 200;
 
         /** Tokens added each refill period (must be {@code <= capacity}). */
+        @Min(value = 1, message = "rate-limit refillTokens must be at least 1")
         private long refillTokens = 100;
 
-        /** How often the refill happens. ISO-8601 duration. */
+        /** How often the refill happens. ISO-8601 duration. Non-zero, positive. */
+        @NotNull
         private java.time.Duration refillPeriod = java.time.Duration.ofSeconds(1);
+
+        /**
+         * Bean-validation predicate enforcing
+         * {@code refillTokens <= capacity}. Refill bigger than capacity
+         * means the bucket overflows on every refill, which is almost
+         * certainly a config typo. Custom {@code @AssertTrue} rather
+         * than a separate {@code @Constraint} so all the rule's
+         * invariants stay in one file.
+         */
+        @AssertTrue(message = "rate-limit refillTokens must not exceed capacity")
+        public boolean isRefillTokensWithinCapacity() {
+            return refillTokens <= capacity;
+        }
+
+        /**
+         * {@link #refillPeriod} must be strictly positive (not zero, not
+         * negative). {@code @NotNull} above only catches missing values.
+         */
+        @AssertTrue(message = "rate-limit refillPeriod must be positive")
+        public boolean isRefillPeriodPositive() {
+            return refillPeriod != null
+                    && !refillPeriod.isZero()
+                    && !refillPeriod.isNegative();
+        }
     }
 
     /**
      * A targeted override on top of the default rate-limit rule. At least
      * {@link #tenant} must be set; {@link #caller} and {@link #channel}
      * narrow the match further.
+     *
+     * <p>Uses {@code @Getter}/{@code @Setter} (not {@code @Data}) on
+     * purpose: {@code @Data} would auto-generate {@code equals}/
+     * {@code hashCode}/{@code canEqual} that don't include the parent
+     * {@link RateLimitRule}'s fields, producing subtly wrong equality.
+     * The override is consumed only by Spring Boot configuration
+     * binding and the in-memory limiter — neither needs equality
+     * semantics — so omitting them is safer than half-implementing them.
      */
-    @Data
+    @lombok.Getter
+    @lombok.Setter
     public static class RateLimitOverride extends RateLimitRule {
         /** Tenant the rule applies to. Required. */
+        @NotBlank(message = "rate-limit override tenant is required")
         private String tenant;
 
         /**
