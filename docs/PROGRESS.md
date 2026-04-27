@@ -131,7 +131,7 @@ collaborator) can pick up where the last one left off.
         `DefaultNotificationServiceRateLimitTest` (4),
         `NotificationControllerRateLimitTest` (2)
   - [x] README — Features bullet, "Rate Limiting" section, admin row
-  - [ ] Branch pushed + PR opened + URL captured here
+  - [x] PR raised: [#29](https://github.com/iFrugal/notification-service/pull/29)
 
 ### Phase 7+ — Queued
 
@@ -146,7 +146,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| [#28](https://github.com/iFrugal/notification-service/pull/28) | feat(kafka): X-Service-Id header propagates into callerId | `feat/kafka-caller-identity` | **awaiting review/merge** | Phase 5 — extends DD-11 to Kafka transport |
+| [#29](https://github.com/iFrugal/notification-service/pull/29) | feat(dd-12): rate limiting per (tenant, caller, channel) | `feat/dd-12-rate-limiting` | **awaiting review/merge** | Phase 6 — opt-in Bucket4j token-bucket throttle |
 
 ---
 
