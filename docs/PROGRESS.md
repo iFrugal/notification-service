@@ -23,7 +23,7 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-04-27 (post-DD-11 merge)
+- **Last updated:** 2026-04-27 (Kafka X-Service-Id PR open)
 
 ---
 
@@ -101,9 +101,19 @@ collaborator) can pick up where the last one left off.
   - [x] README — "Caller Identity" section + Features bullet +
         admin-endpoints row
 
-### Phase 5+ — Queued (no DD yet)
+### Phase 5 — Kafka picks up `X-Service-Id` ← in flight
 
-- [ ] Kafka path picks up `X-Service-Id` analogously to `X-Tenant-Id`
+- [~] Single PR — extends DD-11 to the Kafka transport
+  - [x] `NotificationKafkaListener` reads `X-Service-Id` header,
+        stamps onto `request.callerId` (body wins per DD-11)
+  - [x] `NotificationKafkaListenerTest` — 6 tests covering both-headers,
+        body-wins-over-header, header-absent, blank-header,
+        default-tenant fallback, exception-still-resets-context
+  - [x] README — Kafka section explains both headers + admission semantics
+  - [x] PR raised: [#28](https://github.com/iFrugal/notification-service/pull/28)
+
+### Phase 6+ — Queued
+
 - [ ] Redis-backed `IdempotencyStore` (DD-10 mentions as foreseen SPI consumer)
 - [ ] Rate limiting (per tenant + per caller)
 - [ ] Retries / DLQ for transient provider failures
@@ -116,8 +126,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-
-_(none currently — flag here as soon as a PR is raised)_
+| [#28](https://github.com/iFrugal/notification-service/pull/28) | feat(kafka): X-Service-Id header propagates into callerId | `feat/kafka-caller-identity` | **awaiting review/merge** | Phase 5 — extends DD-11 to Kafka transport |
 
 ---
 
@@ -125,6 +134,7 @@ _(none currently — flag here as soon as a PR is raised)_
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#27](https://github.com/iFrugal/notification-service/pull/27) | docs(progress): mark Phase 4 / DD-11 done after PR #26 merge | 2026-04-27 |
 | [#26](https://github.com/iFrugal/notification-service/pull/26) | feat(dd-11): caller identity via X-Service-Id | 2026-04-27 |
 | #25 | docs(dd-10): mark DECIDED — full idempotency rollout shipped | 2026-04-27 |
 | #24 | feat(idempotency): X-Idempotent-Replay header + README REST API docs | 2026-04-27 |

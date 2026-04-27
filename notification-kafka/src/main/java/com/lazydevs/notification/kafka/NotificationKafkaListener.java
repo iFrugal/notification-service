@@ -12,9 +12,22 @@ import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /**
  * Kafka listener for notification requests.
+ *
+ * <p>Mirrors the REST path's tenant + caller-id wiring so Kafka-originated
+ * requests get the same treatment as REST ones:
+ * <ul>
+ *   <li>{@link #TENANT_HEADER} ({@code X-Tenant-Id}) — DD-03. Sets
+ *       {@link TenantContext} for the duration of {@code handleNotification}.</li>
+ *   <li>{@link #CALLER_HEADER} ({@code X-Service-Id}) — DD-11. Stamped onto
+ *       {@link NotificationRequest#setCallerId(String)} <em>only</em> if
+ *       the request payload didn't already set it (body wins, matching
+ *       DD-11 §request-precedence). Flows from there into the audit
+ *       record, the response, and the idempotency dedup tuple.</li>
+ * </ul>
  */
 @Slf4j
 @Component
@@ -22,6 +35,13 @@ import org.springframework.stereotype.Component;
 public class NotificationKafkaListener {
 
     public static final String TENANT_HEADER = "X-Tenant-Id";
+
+    /**
+     * Calling-service identifier header (DD-11). Same name as the REST
+     * filter's {@code X-Service-Id} so producers don't have to know which
+     * transport their consumer is using.
+     */
+    public static final String CALLER_HEADER = "X-Service-Id";
 
     private final NotificationService notificationService;
     private final NotificationProperties properties;
@@ -41,17 +61,26 @@ public class NotificationKafkaListener {
     public void handleNotification(
             @Payload NotificationRequest request,
             @Header(value = TENANT_HEADER, required = false) String tenantId,
+            @Header(value = CALLER_HEADER, required = false) String callerId,
             @Header(KafkaHeaders.RECEIVED_KEY) String key,
             @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
             @Header(KafkaHeaders.OFFSET) long offset) {
 
-        log.debug("Received notification from Kafka: key={}, partition={}, offset={}, tenantId={}",
-                key, partition, offset, tenantId);
+        log.debug("Received notification from Kafka: key={}, partition={}, offset={}, tenantId={}, callerId={}",
+                key, partition, offset, tenantId, callerId);
 
         try {
-            // Set tenant context
+            // Set tenant context (DD-03)
             String resolvedTenantId = tenantId != null ? tenantId : properties.getDefaultTenant();
             TenantContext.setTenantId(resolvedTenantId);
+
+            // Caller id (DD-11): the request body wins if it set callerId
+            // explicitly; otherwise the header value is stamped onto the
+            // request before dispatch so DefaultNotificationService sees it
+            // as if the REST filter had set it.
+            if (!StringUtils.hasText(request.getCallerId()) && StringUtils.hasText(callerId)) {
+                request.setCallerId(callerId);
+            }
 
             // Process notification
             NotificationResponse response = notificationService.send(request);
