@@ -23,7 +23,7 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-04-27
+- **Last updated:** 2026-04-27 (post-DD-11 merge)
 
 ---
 
@@ -80,9 +80,10 @@ collaborator) can pick up where the last one left off.
 - [x] JUnit 5 tests across SPI, service, and controller layers (19 tests)
 - [x] README REST API section + scope examples
 
-### Phase 4 — Caller Identity (DD-11) ← in flight
+### Phase 4 — Caller Identity (DD-11) ✅
 
-- [~] Single PR rolling everything up
+- [x] Single PR rolling everything up — merged as
+      [#26](https://github.com/iFrugal/notification-service/pull/26)
   - [x] DD-11 design doc + decision-log entry
   - [x] `callerId` on `NotificationRequest` (Lombok), `NotificationResponse`
         (record, 14th component), `NotificationAudit`
@@ -99,7 +100,6 @@ collaborator) can pick up where the last one left off.
         added to existing `DefaultNotificationServiceIdempotencyTest`
   - [x] README — "Caller Identity" section + Features bullet +
         admin-endpoints row
-  - [x] PR raised: [#26](https://github.com/iFrugal/notification-service/pull/26)
 
 ### Phase 5+ — Queued (no DD yet)
 
@@ -116,7 +116,8 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| [#26](https://github.com/iFrugal/notification-service/pull/26) | feat(dd-11): caller identity via X-Service-Id | `feat/dd-11-caller-identity` | **awaiting review/merge** | Ships DD-11 end-to-end + first version of `docs/PROGRESS.md` |
+
+_(none currently — flag here as soon as a PR is raised)_
 
 ---
 
@@ -124,6 +125,7 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#26](https://github.com/iFrugal/notification-service/pull/26) | feat(dd-11): caller identity via X-Service-Id | 2026-04-27 |
 | #25 | docs(dd-10): mark DECIDED — full idempotency rollout shipped | 2026-04-27 |
 | #24 | feat(idempotency): X-Idempotent-Replay header + README REST API docs | 2026-04-27 |
 | #23 | chore: SonarCloud configuration and README badges | 2026-04-27 |
