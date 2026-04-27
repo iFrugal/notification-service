@@ -1,5 +1,8 @@
 # Notification Service
 
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=iFrugal_notification-service&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=iFrugal_notification-service)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=iFrugal_notification-service&metric=coverage)](https://sonarcloud.io/summary/new_code?id=iFrugal_notification-service)
+[![SonarCloud](https://sonarcloud.io/images/project_badges/sonarcloud-white.svg)](https://sonarcloud.io/summary/new_code?id=iFrugal_notification-service)
 [![CI](https://github.com/iFrugal/notification-service/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/iFrugal/notification-service/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/iFrugal/notification-service/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/iFrugal/notification-service/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
