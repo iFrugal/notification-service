@@ -23,7 +23,7 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-04-27 (Kafka X-Service-Id PR open)
+- **Last updated:** 2026-04-27 (DD-12 rate-limiting PR open)
 
 ---
 
@@ -101,21 +101,41 @@ collaborator) can pick up where the last one left off.
   - [x] README — "Caller Identity" section + Features bullet +
         admin-endpoints row
 
-### Phase 5 — Kafka picks up `X-Service-Id` ← in flight
+### Phase 5 — Kafka picks up `X-Service-Id` ✅
 
-- [~] Single PR — extends DD-11 to the Kafka transport
+- [x] Single PR — extended DD-11 to the Kafka transport, merged as
+      [#28](https://github.com/iFrugal/notification-service/pull/28)
   - [x] `NotificationKafkaListener` reads `X-Service-Id` header,
         stamps onto `request.callerId` (body wins per DD-11)
-  - [x] `NotificationKafkaListenerTest` — 6 tests covering both-headers,
-        body-wins-over-header, header-absent, blank-header,
-        default-tenant fallback, exception-still-resets-context
+  - [x] `NotificationKafkaListenerTest` — 6 tests
   - [x] README — Kafka section explains both headers + admission semantics
-  - [x] PR raised: [#28](https://github.com/iFrugal/notification-service/pull/28)
 
-### Phase 6+ — Queued
+### Phase 6 — Rate limiting (DD-12) ← in flight
 
-- [ ] Redis-backed `IdempotencyStore` (DD-10 mentions as foreseen SPI consumer)
-- [ ] Rate limiting (per tenant + per caller)
+- [~] Single PR — token-bucket throttle per `(tenant, caller, channel)`
+  - [x] DD-12 design doc + decision-log entry
+  - [x] `RateLimiter` SPI + `RateLimitExceededException` in
+        `notification-api`
+  - [x] Bucket4j-backed default impl in `notification-core`
+        (`@ConditionalOnProperty + @ConditionalOnMissingBean` for future
+        Redis swap)
+  - [x] `RateLimitProperties` / `RateLimitRule` / `RateLimitOverride`
+        nested config; `default` + most-specific-wins overrides
+  - [x] `DefaultNotificationService.send()` calls limiter pre-idempotency;
+        anonymous traffic bucketed under literal `"anonymous"`
+  - [x] REST `GlobalExceptionHandler` maps `RateLimitExceededException`
+        → 429 + `Retry-After` (whole seconds per RFC 7231)
+  - [x] `AdminController` exposes `GET /admin/rate-limit` with config
+        + live bucket snapshot
+  - [x] Tests — `Bucket4jRateLimiterTest` (7),
+        `DefaultNotificationServiceRateLimitTest` (4),
+        `NotificationControllerRateLimitTest` (2)
+  - [x] README — Features bullet, "Rate Limiting" section, admin row
+  - [x] PR raised: [#29](https://github.com/iFrugal/notification-service/pull/29)
+
+### Phase 7+ — Queued
+
+- [ ] Distributed rate limit + Redis-backed `IdempotencyStore` (DD-13 — bundle the two)
 - [ ] Retries / DLQ for transient provider failures
 - [ ] Webhook callback for delivery status (where the provider supports it)
 - [ ] OpenAPI / Swagger schema generation in CI
@@ -126,7 +146,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| [#28](https://github.com/iFrugal/notification-service/pull/28) | feat(kafka): X-Service-Id header propagates into callerId | `feat/kafka-caller-identity` | **awaiting review/merge** | Phase 5 — extends DD-11 to Kafka transport |
+| [#29](https://github.com/iFrugal/notification-service/pull/29) | feat(dd-12): rate limiting per (tenant, caller, channel) | `feat/dd-12-rate-limiting` | **awaiting review/merge** | Phase 6 — opt-in Bucket4j token-bucket throttle |
 
 ---
 
@@ -134,6 +154,7 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#28](https://github.com/iFrugal/notification-service/pull/28) | feat(kafka): X-Service-Id header propagates into callerId | 2026-04-27 |
 | [#27](https://github.com/iFrugal/notification-service/pull/27) | docs(progress): mark Phase 4 / DD-11 done after PR #26 merge | 2026-04-27 |
 | [#26](https://github.com/iFrugal/notification-service/pull/26) | feat(dd-11): caller identity via X-Service-Id | 2026-04-27 |
 | #25 | docs(dd-10): mark DECIDED — full idempotency rollout shipped | 2026-04-27 |

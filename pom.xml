@@ -75,6 +75,12 @@
 
         <!-- Kafka -->
         <kafka.version>3.6.1</kafka.version>
+
+        <!-- Bucket4j — token-bucket rate limiting (DD-12). 8.10.x is the
+             current-stable line on Java 17+. A future Redis backend lives
+             in a separate artifact (bucket4j-redis) that the distributed
+             rate-limit DD will pull in alongside Redis-backed idempotency. -->
+        <bucket4j.version>8.10.1</bucket4j.version>
     </properties>
 
     <dependencyManagement>
@@ -247,6 +253,13 @@
                 <groupId>com.sun.mail</groupId>
                 <artifactId>jakarta.mail</artifactId>
                 <version>${jakarta-mail.version}</version>
+            </dependency>
+
+            <!-- Bucket4j (DD-12 rate limiting) -->
+            <dependency>
+                <groupId>com.bucket4j</groupId>
+                <artifactId>bucket4j-core</artifactId>
+                <version>${bucket4j.version}</version>
             </dependency>
 
             <!-- Testing -->

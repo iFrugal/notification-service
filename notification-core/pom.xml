@@ -75,6 +75,14 @@
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
         </dependency>
+
+        <!-- Bucket4j — token-bucket rate limiting (DD-12). The default
+             RateLimiter bean uses bucket4j-core for in-process buckets;
+             a Redis-backed bean will pull bucket4j-redis instead. -->
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j-core</artifactId>
+        </dependency>
     </dependencies>
 
 </project>

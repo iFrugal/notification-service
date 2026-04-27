@@ -1,7 +1,13 @@
 package com.lazydevs.notification.core.config;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -12,6 +18,7 @@ import java.util.Map;
  * Configuration properties for the notification service.
  */
 @Data
+@Validated
 @ConfigurationProperties(prefix = "notification")
 public class NotificationProperties {
 
@@ -51,6 +58,15 @@ public class NotificationProperties {
      * admission of {@code X-Service-Id} values.
      */
     private CallerRegistryProperties callerRegistry = new CallerRegistryProperties();
+
+    /**
+     * Rate-limit configuration (see DD-12). Off by default — turning it
+     * on activates the {@code Bucket4jRateLimiter} bean and engages the
+     * pre-dispatch token-bucket check inside
+     * {@code DefaultNotificationService.send()}.
+     */
+    @Valid
+    private RateLimitProperties rateLimit = new RateLimitProperties();
 
     /**
      * Tenant-specific configurations
@@ -141,6 +157,124 @@ public class NotificationProperties {
          * {@link #strict}).
          */
         private List<String> knownServices = new ArrayList<>();
+    }
+
+    /**
+     * Rate-limit handling. See {@code docs/design-decisions/12-rate-limiting.md}.
+     *
+     * <p>Off by default. When enabled, every request through
+     * {@code DefaultNotificationService.send()} consumes a token from the
+     * bucket matching the most-specific rule for its
+     * {@code (tenantId, callerId, channel)} triple. Buckets are
+     * Bucket4j-backed, in-process by default; a future Redis-backed bean
+     * will substitute via {@code @ConditionalOnMissingBean}.
+     */
+    @Data
+    public static class RateLimitProperties {
+        /** Master switch — false leaves the {@code RateLimiter} bean absent. */
+        private boolean enabled = false;
+
+        /**
+         * Default rule applied when no override matches the request's
+         * {@code (tenantId, callerId, channel)} triple. Generous defaults
+         * — operators almost always want to override per-tenant or
+         * per-caller; the default is just a backstop that prevents
+         * unbounded fan-out.
+         */
+        @Valid
+        @NotNull
+        private RateLimitRule defaultRule = new RateLimitRule(200, 100, java.time.Duration.ofSeconds(1));
+
+        /**
+         * Targeted rule overrides. Match precedence is most-specific-wins:
+         * {@code (tenant, caller, channel)} > {@code (tenant, caller)}
+         * > {@code (tenant)} > {@code defaultRule}. Within the same
+         * specificity, configuration order is the tiebreaker.
+         */
+        @Valid
+        private List<RateLimitOverride> overrides = new ArrayList<>();
+    }
+
+    /**
+     * A rate-limit rule: bucket capacity, refill amount, and refill period.
+     * Bucket4j semantics: at any time the bucket holds at most
+     * {@link #capacity} tokens; every {@link #refillPeriod}, up to
+     * {@link #refillTokens} are added (greedy refill — they're not held
+     * back for a fixed-window boundary).
+     */
+    @Data
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class RateLimitRule {
+        /** Maximum tokens in the bucket — the burst tolerance. */
+        @Min(value = 1, message = "rate-limit capacity must be at least 1")
+        private long capacity = 200;
+
+        /** Tokens added each refill period (must be {@code <= capacity}). */
+        @Min(value = 1, message = "rate-limit refillTokens must be at least 1")
+        private long refillTokens = 100;
+
+        /** How often the refill happens. ISO-8601 duration. Non-zero, positive. */
+        @NotNull
+        private java.time.Duration refillPeriod = java.time.Duration.ofSeconds(1);
+
+        /**
+         * Bean-validation predicate enforcing
+         * {@code refillTokens <= capacity}. Refill bigger than capacity
+         * means the bucket overflows on every refill, which is almost
+         * certainly a config typo. Custom {@code @AssertTrue} rather
+         * than a separate {@code @Constraint} so all the rule's
+         * invariants stay in one file.
+         */
+        @AssertTrue(message = "rate-limit refillTokens must not exceed capacity")
+        public boolean isRefillTokensWithinCapacity() {
+            return refillTokens <= capacity;
+        }
+
+        /**
+         * {@link #refillPeriod} must be strictly positive (not zero, not
+         * negative). {@code @NotNull} above only catches missing values.
+         */
+        @AssertTrue(message = "rate-limit refillPeriod must be positive")
+        public boolean isRefillPeriodPositive() {
+            return refillPeriod != null
+                    && !refillPeriod.isZero()
+                    && !refillPeriod.isNegative();
+        }
+    }
+
+    /**
+     * A targeted override on top of the default rate-limit rule. At least
+     * {@link #tenant} must be set; {@link #caller} and {@link #channel}
+     * narrow the match further.
+     *
+     * <p>Uses {@code @Getter}/{@code @Setter} (not {@code @Data}) on
+     * purpose: {@code @Data} would auto-generate {@code equals}/
+     * {@code hashCode}/{@code canEqual} that don't include the parent
+     * {@link RateLimitRule}'s fields, producing subtly wrong equality.
+     * The override is consumed only by Spring Boot configuration
+     * binding and the in-memory limiter — neither needs equality
+     * semantics — so omitting them is safer than half-implementing them.
+     */
+    @lombok.Getter
+    @lombok.Setter
+    public static class RateLimitOverride extends RateLimitRule {
+        /** Tenant the rule applies to. Required. */
+        @NotBlank(message = "rate-limit override tenant is required")
+        private String tenant;
+
+        /**
+         * Caller-id the rule narrows to. Optional — leave {@code null} to
+         * apply tenant-wide regardless of caller.
+         */
+        private String caller;
+
+        /**
+         * Channel the rule narrows to (e.g. {@code "email"}, {@code "sms"}).
+         * Optional — leave {@code null} to apply across all channels.
+         * Matched case-insensitively.
+         */
+        private String channel;
     }
 
     @Data

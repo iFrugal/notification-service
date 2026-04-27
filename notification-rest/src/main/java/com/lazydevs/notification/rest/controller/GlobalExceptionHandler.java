@@ -1,9 +1,11 @@
 package com.lazydevs.notification.rest.controller;
 
 import com.lazydevs.notification.api.exception.IdempotencyInProgressException;
+import com.lazydevs.notification.api.exception.RateLimitExceededException;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
 import lazydevs.services.basic.handler.RESTExceptionHandler;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -51,5 +53,33 @@ public class GlobalExceptionHandler extends RESTExceptionHandler {
         body.put("notificationId", e.getInProgressNotificationId());
         body.put("status", IdempotencyStatus.IN_PROGRESS.name());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    /**
+     * Render a rate-limit denial per DD-12:
+     * <pre>
+     * HTTP/1.1 429 Too Many Requests
+     * Retry-After: 3
+     * Content-Type: application/json
+     *
+     * { "error": "RATE_LIMIT_EXCEEDED", "retryAfterSeconds": 3, "message": "..." }
+     * </pre>
+     *
+     * <p>The exception itself rounds {@code retryAfter} up to whole
+     * seconds (RFC 7231 §7.1.3 doesn't allow sub-second precision) and
+     * uses that same value in its message text — so {@code Retry-After},
+     * {@code retryAfterSeconds}, and the {@code message} all agree.
+     */
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleRateLimit(RateLimitExceededException e) {
+        long retryAfterSeconds = e.getRetryAfterSeconds();
+        log.warn("Rate limit exceeded: {}", e.getMessage());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", "RATE_LIMIT_EXCEEDED");
+        body.put("retryAfterSeconds", retryAfterSeconds);
+        body.put("message", e.getMessage());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
+                .body(body);
     }
 }
