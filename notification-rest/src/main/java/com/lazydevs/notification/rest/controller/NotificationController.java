@@ -27,6 +27,15 @@ public class NotificationController {
     }
 
     /**
+     * HTTP response header set to {@code "true"} when the response was
+     * served from the idempotency cache rather than from a fresh provider
+     * call. Lets callers with side-effect-on-success flows distinguish
+     * "I just caused a send" from "I'm seeing the result of a past send"
+     * without parsing timestamps. See DD-10 §REST-API-behaviour.
+     */
+    static final String IDEMPOTENT_REPLAY_HEADER = "X-Idempotent-Replay";
+
+    /**
      * Send a single notification.
      */
     @PostMapping
@@ -35,7 +44,11 @@ public class NotificationController {
                 request.getChannel(), request.getNotificationType());
 
         NotificationResponse response = notificationService.send(request);
-        return ResponseEntity.ok(response);
+        ResponseEntity.BodyBuilder builder = ResponseEntity.ok();
+        if (Boolean.TRUE.equals(response.idempotentReplay())) {
+            builder = builder.header(IDEMPOTENT_REPLAY_HEADER, "true");
+        }
+        return builder.body(response);
     }
 
     /**

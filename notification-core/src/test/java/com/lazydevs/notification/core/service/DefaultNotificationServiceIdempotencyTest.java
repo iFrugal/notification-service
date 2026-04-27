@@ -112,7 +112,15 @@ class DefaultNotificationServiceIdempotencyTest {
 
         NotificationResponse response = service.send(req);
 
-        assertThat(response).isSameAs(cached);
+        // Replay returns an equivalent response — same requestId, status,
+        // timestamps — but stamped with idempotentReplay=true so the
+        // controller can surface the X-Idempotent-Replay header.
+        assertThat(response.idempotentReplay()).isTrue();
+        assertThat(response.requestId()).isEqualTo(cached.requestId());
+        assertThat(response.providerMessageId()).isEqualTo(cached.providerMessageId());
+        assertThat(response.status()).isEqualTo(cached.status());
+        assertThat(response.processedAt()).isEqualTo(cached.processedAt());
+        assertThat(response.sentAt()).isEqualTo(cached.sentAt());
         // No provider lookup, no template render, no audit recordReceived.
         verifyNoInteractions(providerRegistry, templateEngine);
         verify(auditService, never()).recordReceived(any());
@@ -237,7 +245,8 @@ class DefaultNotificationServiceIdempotencyTest {
                 requestId, "corr-" + requestId, "acme", Channel.EMAIL,
                 "smtp", NotificationStatus.SENT, "msg-" + requestId,
                 null, null,
-                Instant.now().minusSeconds(60), Instant.now().minusSeconds(60), Instant.now().minusSeconds(60));
+                Instant.now().minusSeconds(60), Instant.now().minusSeconds(60), Instant.now().minusSeconds(60),
+                null);
     }
 
     private static NotificationResponse failedResponse(String requestId) {
@@ -245,6 +254,7 @@ class DefaultNotificationServiceIdempotencyTest {
                 requestId, "corr-" + requestId, "acme", Channel.EMAIL,
                 "smtp", NotificationStatus.FAILED, null,
                 "PROVIDER_ERROR", "smtp 421 — try again later",
-                Instant.now().minusSeconds(120), Instant.now().minusSeconds(120), null);
+                Instant.now().minusSeconds(120), Instant.now().minusSeconds(120), null,
+                null);
     }
 }

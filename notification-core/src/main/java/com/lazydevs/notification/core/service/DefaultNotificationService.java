@@ -90,7 +90,9 @@ public class DefaultNotificationService implements NotificationService {
                     log.info("Idempotency replay: requestId={}, key={}, originalRequestId={}",
                             request.getRequestId(), request.getIdempotencyKey(), cached.requestId());
                     auditService.recordDuplicateHit(request, rec);
-                    return cached;
+                    // Stamp as a replay so the controller can surface
+                    // X-Idempotent-Replay: true (DD-10 §REST-API-behaviour).
+                    return NotificationResponse.replayedFrom(cached);
                 }
                 // FAILED / REJECTED — fall through, treat the new request as fresh.
                 log.debug("Idempotency key '{}' had a prior FAILED/REJECTED attempt; proceeding fresh.",
