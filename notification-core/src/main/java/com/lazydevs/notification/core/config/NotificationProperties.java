@@ -39,6 +39,11 @@ public class NotificationProperties {
     private TemplateProperties template = new TemplateProperties();
 
     /**
+     * Idempotency configuration (see DD-10).
+     */
+    private IdempotencyProperties idempotency = new IdempotencyProperties();
+
+    /**
      * Tenant-specific configurations
      */
     private Map<String, TenantConfig> tenants = new LinkedHashMap<>();
@@ -70,6 +75,31 @@ public class NotificationProperties {
         private String basePath = "classpath:/templates/";
         private boolean cacheEnabled = true;
         private int cacheTtlSeconds = 3600;
+    }
+
+    /**
+     * Idempotency-key handling. See {@code docs/design-decisions/10-idempotency.md}.
+     */
+    @Data
+    public static class IdempotencyProperties {
+        /** Master switch — false disables dedup entirely (the request field is silently ignored). */
+        private boolean enabled = true;
+
+        /** TTL after which a key is forgotten and treated as fresh. ISO-8601 duration. */
+        private java.time.Duration ttl = java.time.Duration.ofHours(24);
+
+        /**
+         * Caffeine bound. Once exceeded, least-recently-used entries are
+         * evicted before TTL — operators sizing for high-throughput
+         * deployments should raise this. Ignored by Redis-backed stores.
+         */
+        private long maxEntries = 100_000L;
+
+        /**
+         * Backing store. Currently only {@code caffeine} is implemented;
+         * a future {@code redis} option is foreseen by DD-10.
+         */
+        private String store = "caffeine";
     }
 
     @Data
