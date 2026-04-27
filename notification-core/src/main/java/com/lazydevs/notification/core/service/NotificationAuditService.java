@@ -1,6 +1,7 @@
 package com.lazydevs.notification.core.service;
 
 import com.lazydevs.notification.api.NotificationStatus;
+import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
 import com.lazydevs.notification.api.model.NotificationAudit;
 import com.lazydevs.notification.api.model.NotificationRequest;
 
@@ -48,4 +49,18 @@ public interface NotificationAuditService {
      * @return true if audit is enabled
      */
     boolean isEnabled();
+
+    /**
+     * Record that a request was deduplicated against a prior, completed
+     * idempotent send (DD-10). The first attempt's full audit record is
+     * preserved under the original {@code requestId}; this hook lets the
+     * implementation also note the replay attempt so operators can trace
+     * how often a key got hit.
+     *
+     * <p>Default implementation is a no-op so existing audit backends
+     * don't have to update.
+     */
+    default void recordDuplicateHit(NotificationRequest replayRequest, IdempotencyRecord originalRecord) {
+        // no-op
+    }
 }

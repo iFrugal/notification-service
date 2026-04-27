@@ -4,7 +4,12 @@ import com.lazydevs.notification.api.NotificationService;
 import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.channel.NotificationProvider;
 import com.lazydevs.notification.api.channel.RenderedContent;
+import com.lazydevs.notification.api.exception.IdempotencyInProgressException;
 import com.lazydevs.notification.api.exception.NotificationException;
+import com.lazydevs.notification.api.idempotency.IdempotencyKey;
+import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
+import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
+import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.model.SendResult;
@@ -20,6 +25,7 @@ import org.springframework.util.StringUtils;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -36,17 +42,22 @@ public class DefaultNotificationService implements NotificationService {
     private final ProviderRegistry providerRegistry;
     private final NotificationTemplateEngine templateEngine;
     private final NotificationAuditService auditService;
+    private final Optional<IdempotencyStore> idempotencyStore;
     private final Executor asyncExecutor;
 
     public DefaultNotificationService(
             NotificationProperties properties,
             ProviderRegistry providerRegistry,
             NotificationTemplateEngine templateEngine,
-            NotificationAuditService auditService) {
+            NotificationAuditService auditService,
+            Optional<IdempotencyStore> idempotencyStore) {
         this.properties = properties;
         this.providerRegistry = providerRegistry;
         this.templateEngine = templateEngine;
         this.auditService = auditService;
+        // Optional<IdempotencyStore>: empty when notification.idempotency.enabled=false
+        // (the CaffeineIdempotencyStore @ConditionalOnProperty drops out of the context).
+        this.idempotencyStore = idempotencyStore;
         this.asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
     }
 
@@ -54,12 +65,51 @@ public class DefaultNotificationService implements NotificationService {
     public NotificationResponse send(NotificationRequest request) {
         Instant receivedAt = Instant.now();
 
-        try {
-            // Enrich request with defaults
-            enrichRequest(request);
-            log.debug("Processing notification: requestId={}, channel={}, type={}",
-                    request.getRequestId(), request.getChannel(), request.getNotificationType());
+        // Enrich first so the idempotency check operates on the resolved
+        // requestId/tenantId — those are part of the dedup scope and the
+        // 409 response body.
+        enrichRequest(request);
+        log.debug("Processing notification: requestId={}, channel={}, type={}",
+                request.getRequestId(), request.getChannel(), request.getNotificationType());
 
+        // ============== Idempotency check (DD-10) ==============
+        // Run BEFORE the main try/catch so IdempotencyInProgressException
+        // (a NotificationException subclass) propagates as 409 rather than
+        // being converted into a FAILED response by the broader catch.
+        IdempotencyKey idemKey = idempotencyKeyFor(request);
+        if (idemKey != null) {
+            Optional<IdempotencyRecord> existing = idempotencyStore.get().findExisting(idemKey);
+            if (existing.isPresent()) {
+                IdempotencyRecord rec = existing.get();
+                if (rec.status() == IdempotencyStatus.IN_PROGRESS) {
+                    throw new IdempotencyInProgressException(rec.notificationId());
+                }
+                // status == COMPLETE
+                NotificationResponse cached = rec.response();
+                if (cached != null && isReplayable(cached.status())) {
+                    log.info("Idempotency replay: requestId={}, key={}, originalRequestId={}",
+                            request.getRequestId(), request.getIdempotencyKey(), cached.requestId());
+                    auditService.recordDuplicateHit(request, rec);
+                    return cached;
+                }
+                // FAILED / REJECTED — fall through, treat the new request as fresh.
+                log.debug("Idempotency key '{}' had a prior FAILED/REJECTED attempt; proceeding fresh.",
+                        request.getIdempotencyKey());
+            }
+            if (!idempotencyStore.get().markInProgress(idemKey, request.getRequestId())) {
+                // Race lost: another caller registered between our findExisting and markInProgress.
+                IdempotencyRecord concurrent = idempotencyStore.get().findExisting(idemKey)
+                        .orElseThrow(() -> new IllegalStateException(
+                                "Idempotency race lost but record not retrievable; should not happen"));
+                throw new IdempotencyInProgressException(concurrent.notificationId());
+            }
+        }
+
+        // ============== Dispatch ==============
+        // Held in 'response' for the finally block to close out the
+        // idempotency record on every exit path (success or failure).
+        NotificationResponse response = null;
+        try {
             // Record audit (received)
             auditService.recordReceived(request);
 
@@ -76,7 +126,6 @@ public class DefaultNotificationService implements NotificationService {
             SendResult result = provider.send(request, content);
 
             // Build response
-            NotificationResponse response;
             if (result.success()) {
                 response = NotificationResponse.sent(
                         request,
@@ -109,7 +158,7 @@ public class DefaultNotificationService implements NotificationService {
             log.error("Notification error: requestId={}, error={}: {}",
                     request.getRequestId(), e.getErrorCode(), e.getMessage());
 
-            NotificationResponse response = NotificationResponse.failed(
+            response = NotificationResponse.failed(
                     request,
                     null,
                     e.getErrorCode(),
@@ -124,7 +173,7 @@ public class DefaultNotificationService implements NotificationService {
         } catch (Exception e) {
             log.error("Unexpected error processing notification: requestId={}", request.getRequestId(), e);
 
-            NotificationResponse response = NotificationResponse.failed(
+            response = NotificationResponse.failed(
                     request,
                     null,
                     "INTERNAL_ERROR",
@@ -135,7 +184,44 @@ public class DefaultNotificationService implements NotificationService {
                     null, response.errorCode(), response.errorMessage());
 
             return response;
+
+        } finally {
+            // Always close the idempotency record. If 'response' is null we
+            // got here via an unexpected throw outside the catch coverage —
+            // build a synthetic FAILED response so the IN_PROGRESS lock
+            // doesn't linger until TTL.
+            if (idemKey != null) {
+                NotificationResponse toRecord = response != null ? response
+                        : NotificationResponse.failed(request, null,
+                                "INTERNAL_ERROR", "Dispatch terminated without a response", receivedAt);
+                idempotencyStore.get().markComplete(idemKey, toRecord);
+            }
         }
+    }
+
+    /**
+     * Build the {@link IdempotencyKey} for this request, or {@code null} if
+     * idempotency is disabled (no store bean) or the caller didn't supply
+     * an {@code idempotencyKey}.
+     *
+     * <p>{@code callerId} is intentionally hardcoded {@code null} pre-DD-11.
+     */
+    private IdempotencyKey idempotencyKeyFor(NotificationRequest request) {
+        if (idempotencyStore.isEmpty() || !StringUtils.hasText(request.getIdempotencyKey())) {
+            return null;
+        }
+        return new IdempotencyKey(request.getTenantId(), null, request.getIdempotencyKey());
+    }
+
+    /**
+     * Statuses that count as a successful prior outcome — replays for
+     * these statuses return the cached response (HTTP 200). FAILED and
+     * REJECTED fall through to fresh dispatch per DD-10 §Semantics.
+     */
+    private static boolean isReplayable(NotificationStatus status) {
+        return status == NotificationStatus.SENT
+                || status == NotificationStatus.DELIVERED
+                || status == NotificationStatus.ACCEPTED;
     }
 
     @Override
