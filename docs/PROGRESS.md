@@ -23,7 +23,7 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-04-27 (DD-12 rate-limiting PR open)
+- **Last updated:** 2026-04-28 (DD-13 retries + DLQ PR open)
 
 ---
 
@@ -110,34 +110,52 @@ collaborator) can pick up where the last one left off.
   - [x] `NotificationKafkaListenerTest` — 6 tests
   - [x] README — Kafka section explains both headers + admission semantics
 
-### Phase 6 — Rate limiting (DD-12) ← in flight
+### Phase 6 — Rate limiting (DD-12) ✅
 
-- [~] Single PR — token-bucket throttle per `(tenant, caller, channel)`
+- [x] Single PR — token-bucket throttle per `(tenant, caller, channel)`,
+      merged as [#29](https://github.com/iFrugal/notification-service/pull/29)
   - [x] DD-12 design doc + decision-log entry
-  - [x] `RateLimiter` SPI + `RateLimitExceededException` in
+  - [x] `RateLimiter` SPI + Bucket4j default impl + properties
+  - [x] Wired into `DefaultNotificationService.send()`
+  - [x] REST 429 + `Retry-After`, admin endpoint
+  - [x] Round-2 review fixes (sanitize-at-construction, Caffeine bucket
+        cache, `@Validated` config, deprecated-API migration)
+
+### Phase 7 — Retries + DLQ (DD-13) ← in flight
+
+- [~] Single PR — synchronous retry with classified failures + bounded
+      in-memory DLQ
+  - [x] DD-13 design doc + decision-log entry
+  - [x] `FailureType` enum + `SendResult.failureType` (backwards-compat
+        defaults to `UNKNOWN`); `RetryPredicate` SPI in
         `notification-api`
-  - [x] Bucket4j-backed default impl in `notification-core`
-        (`@ConditionalOnProperty + @ConditionalOnMissingBean` for future
-        Redis swap)
-  - [x] `RateLimitProperties` / `RateLimitRule` / `RateLimitOverride`
-        nested config; `default` + most-specific-wins overrides
-  - [x] `DefaultNotificationService.send()` calls limiter pre-idempotency;
-        anonymous traffic bucketed under literal `"anonymous"`
-  - [x] REST `GlobalExceptionHandler` maps `RateLimitExceededException`
-        → 429 + `Retry-After` (whole seconds per RFC 7231)
-  - [x] `AdminController` exposes `GET /admin/rate-limit` with config
-        + live bucket snapshot
-  - [x] Tests — `Bucket4jRateLimiterTest` (7),
-        `DefaultNotificationServiceRateLimitTest` (4),
-        `NotificationControllerRateLimitTest` (2)
-  - [x] README — Features bullet, "Rate Limiting" section, admin row
-  - [x] PR raised: [#29](https://github.com/iFrugal/notification-service/pull/29)
+  - [x] `RetryProperties` + `DeadLetterProperties` nested config (both
+        opt-in, validated)
+  - [x] `RetryExecutor` — exponential backoff with jitter, custom
+        helper rather than Resilience4j (DD-13 §"Why a custom helper")
+  - [x] `DeadLetterStore` SPI in `notification-api` +
+        `InMemoryDeadLetterStore` (Caffeine bounded LRU) in
+        `notification-core`
+  - [x] `DefaultNotificationService` wraps provider call in retry
+        executor; pushes exhausted/permanent failures to DLQ; rate-limit
+        + idempotency invariants preserved (one token, one lock per
+        logical send)
+  - [x] `AdminController` exposes `GET /admin/dead-letter` with config
+        + recent entries (PII-safe)
+  - [x] Tests — `RetryExecutorTest` (10),
+        `InMemoryDeadLetterStoreTest` (4),
+        `DefaultNotificationServiceRetryTest` (8). 82 total tests
+        across api/core/rest. Full reactor verify green
+  - [x] README — Features bullet, "Retries + Dead-Letter" section,
+        admin row
+  - [ ] Branch pushed + PR opened + URL captured here
 
-### Phase 7+ — Queued
+### Phase 8+ — Queued
 
-- [ ] Distributed rate limit + Redis-backed `IdempotencyStore` (DD-13 — bundle the two)
-- [ ] Retries / DLQ for transient provider failures
-- [ ] Webhook callback for delivery status (where the provider supports it)
+- [ ] Distributed rate limit + Redis-backed `IdempotencyStore` (DD-14 — bundle the two)
+- [ ] DLQ replay endpoint with auth (re-submit by request id, with `replay-of` reference)
+- [ ] Provider modules opt in to `FailureType` classification (Twilio 4xx mapping, SES throttling, etc.)
+- [ ] Webhook callbacks for async delivery status (SES, Twilio, FCM)
 - [ ] OpenAPI / Swagger schema generation in CI
 
 ---
@@ -146,7 +164,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| [#29](https://github.com/iFrugal/notification-service/pull/29) | feat(dd-12): rate limiting per (tenant, caller, channel) | `feat/dd-12-rate-limiting` | **awaiting review/merge** | Phase 6 — opt-in Bucket4j token-bucket throttle |
+_(none currently — flag here as soon as a PR is raised)_
 
 ---
 
@@ -154,6 +172,7 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#29](https://github.com/iFrugal/notification-service/pull/29) | feat(dd-12): rate limiting per (tenant, caller, channel) | 2026-04-28 |
 | [#28](https://github.com/iFrugal/notification-service/pull/28) | feat(kafka): X-Service-Id header propagates into callerId | 2026-04-27 |
 | [#27](https://github.com/iFrugal/notification-service/pull/27) | docs(progress): mark Phase 4 / DD-11 done after PR #26 merge | 2026-04-27 |
 | [#26](https://github.com/iFrugal/notification-service/pull/26) | feat(dd-11): caller identity via X-Service-Id | 2026-04-27 |

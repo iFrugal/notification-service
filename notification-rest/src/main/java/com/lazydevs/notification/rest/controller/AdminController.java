@@ -2,6 +2,8 @@ package com.lazydevs.notification.rest.controller;
 
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.channel.NotificationProvider;
+import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
+import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.config.NotificationProperties;
@@ -40,17 +42,20 @@ public class AdminController {
     private final NotificationTemplateEngine templateEngine;
     private final CallerRegistry callerRegistry;
     private final java.util.Optional<RateLimiter> rateLimiter;
+    private final java.util.Optional<DeadLetterStore> deadLetterStore;
 
     public AdminController(NotificationProperties properties,
                            ProviderRegistry providerRegistry,
                            NotificationTemplateEngine templateEngine,
                            CallerRegistry callerRegistry,
-                           java.util.Optional<RateLimiter> rateLimiter) {
+                           java.util.Optional<RateLimiter> rateLimiter,
+                           java.util.Optional<DeadLetterStore> deadLetterStore) {
         this.properties = properties;
         this.providerRegistry = providerRegistry;
         this.templateEngine = templateEngine;
         this.callerRegistry = callerRegistry;
         this.rateLimiter = rateLimiter;
+        this.deadLetterStore = deadLetterStore;
     }
 
     /**
@@ -200,6 +205,74 @@ public class AdminController {
         m.put("capacity", r.getCapacity());
         m.put("refillTokens", r.getRefillTokens());
         m.put("refillPeriod", r.getRefillPeriod().toString());
+        return m;
+    }
+
+    /**
+     * Dead-letter store snapshot (DD-13). Returns the configured cap +
+     * a summary of recent entries (most recent first).
+     *
+     * <p>Intentionally <strong>does not</strong> include the full
+     * {@code NotificationRequest} payload — template data may carry
+     * PII. Operators get the routing identifiers (tenant, caller,
+     * channel, requestId) plus the failure detail; full payload access
+     * is on a future replay endpoint with proper auth.
+     *
+     * <p>Returns {@code 503 Service Unavailable} when the DLQ bean is
+     * absent ({@code notification.dead-letter.enabled=false}) — the
+     * endpoint is meaningfully disabled, not just empty.
+     */
+    @GetMapping("/dead-letter")
+    public ResponseEntity<Map<String, Object>> getDeadLetter(
+            @RequestParam(defaultValue = "100") int limit) {
+        if (deadLetterStore.isEmpty()) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("enabled", false);
+            body.put("message", "Dead-letter store is disabled. "
+                    + "Enable with notification.dead-letter.enabled=true.");
+            return ResponseEntity.status(503).body(body);
+        }
+        DeadLetterStore store = deadLetterStore.get();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("enabled", true);
+        result.put("maxEntries", properties.getDeadLetter().getMaxEntries());
+        result.put("size", store.size());
+
+        // Snapshot returns Optional.empty() for backends that can't
+        // iterate cheaply (e.g. a future Redis-backed DLQ with 100k
+        // entries); the in-memory default always returns a list.
+        java.util.Optional<java.util.List<DeadLetterEntry>> snapshot = store.snapshot();
+        if (snapshot.isPresent()) {
+            int safeLimit = Math.max(1, Math.min(limit, 1000));
+            result.put("entries", snapshot.get().stream()
+                    .limit(safeLimit)
+                    .map(this::toAdminEntry)
+                    .toList());
+        } else {
+            result.put("entries", null);
+            result.put("message",
+                    "Backing store does not support snapshot iteration; query the store directly.");
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Map a {@link DeadLetterEntry} to the admin-endpoint shape — no
+     * template payload, no recipient detail (which may carry PII), just
+     * the routing identifiers and failure summary.
+     */
+    private Map<String, Object> toAdminEntry(DeadLetterEntry entry) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("timestamp", entry.timestamp().toString());
+        m.put("tenantId", entry.request().getTenantId());
+        m.put("callerId", entry.request().getCallerId());
+        m.put("channel", entry.request().getChannel() != null
+                ? entry.request().getChannel().name() : null);
+        m.put("requestId", entry.request().getRequestId());
+        m.put("attempts", entry.attempts());
+        m.put("failureType", entry.failureType().name());
+        m.put("errorCode", entry.response().errorCode());
+        m.put("errorMessage", entry.response().errorMessage());
         return m;
     }
 

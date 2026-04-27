@@ -71,9 +71,13 @@ class DefaultNotificationServiceIdempotencyTest {
         // Rate limiter not configured in this suite — DD-12 wires it as an
         // Optional that's empty when notification.rate-limit.enabled=false,
         // matching production behaviour for tests that don't exercise it.
+        // DD-13: retry + DLQ also wired as Optionals; this suite leaves
+        // both empty so existing assertions about single-attempt
+        // dispatch + no DLQ recording continue to hold.
         service = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
-                Optional.of(idempotencyStore), Optional.empty());
+                Optional.of(idempotencyStore), Optional.empty(),
+                Optional.empty(), Optional.empty());
     }
 
     @Test
@@ -231,7 +235,7 @@ class DefaultNotificationServiceIdempotencyTest {
     void send_storeAbsent_neverCallsAnyStoreMethod() {
         DefaultNotificationService noStoreService = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
-                Optional.empty(), Optional.empty());
+                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
         NotificationRequest req = baseRequest("idem-disabled");
         stubProviderHappyPath();
 

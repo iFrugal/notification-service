@@ -4,6 +4,8 @@ import com.lazydevs.notification.api.NotificationService;
 import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.channel.NotificationProvider;
 import com.lazydevs.notification.api.channel.RenderedContent;
+import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
+import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.exception.IdempotencyInProgressException;
 import com.lazydevs.notification.api.exception.NotificationException;
 import com.lazydevs.notification.api.exception.RateLimitExceededException;
@@ -11,12 +13,14 @@ import com.lazydevs.notification.api.idempotency.IdempotencyKey;
 import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
+import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.model.SendResult;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
+import com.lazydevs.notification.core.retry.RetryExecutor;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
 import lazydevs.persistence.connection.multitenant.TenantContext;
 import lazydevs.services.basic.filter.RequestContext;
@@ -46,6 +50,8 @@ public class DefaultNotificationService implements NotificationService {
     private final NotificationAuditService auditService;
     private final Optional<IdempotencyStore> idempotencyStore;
     private final Optional<RateLimiter> rateLimiter;
+    private final Optional<RetryExecutor> retryExecutor;
+    private final Optional<DeadLetterStore> deadLetterStore;
     private final Executor asyncExecutor;
 
     public DefaultNotificationService(
@@ -54,7 +60,9 @@ public class DefaultNotificationService implements NotificationService {
             NotificationTemplateEngine templateEngine,
             NotificationAuditService auditService,
             Optional<IdempotencyStore> idempotencyStore,
-            Optional<RateLimiter> rateLimiter) {
+            Optional<RateLimiter> rateLimiter,
+            Optional<RetryExecutor> retryExecutor,
+            Optional<DeadLetterStore> deadLetterStore) {
         this.properties = properties;
         this.providerRegistry = providerRegistry;
         this.templateEngine = templateEngine;
@@ -65,6 +73,11 @@ public class DefaultNotificationService implements NotificationService {
         // Optional<RateLimiter>: empty when notification.rate-limit.enabled=false
         // — same wiring shape as idempotency, see DD-12.
         this.rateLimiter = rateLimiter;
+        // Optional<RetryExecutor> + Optional<DeadLetterStore> follow the
+        // same opt-in pattern (DD-13). Empty Optionals → single-attempt
+        // dispatch, no DLQ recording — backwards-compatible default.
+        this.retryExecutor = retryExecutor;
+        this.deadLetterStore = deadLetterStore;
         this.asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
     }
 
@@ -145,8 +158,26 @@ public class DefaultNotificationService implements NotificationService {
                     request.getChannel(),
                     request.getProvider());
 
-            // Send notification
-            SendResult result = provider.send(request, content);
+            // Send notification — wrapped in RetryExecutor when configured
+            // (DD-13). The executor returns the final SendResult plus the
+            // attempt count so we can record both. When the executor is
+            // absent (notification.retry.enabled=false) we fall through
+            // to a single attempt — same behaviour as pre-DD-13.
+            SendResult result;
+            int attempts;
+            if (retryExecutor.isPresent()) {
+                RetryExecutor.Outcome outcome = retryExecutor.get()
+                        .execute(() -> provider.send(request, content));
+                result = outcome.result();
+                attempts = outcome.attempts();
+                if (attempts > 1) {
+                    log.info("Notification took {} attempt(s): requestId={}, provider={}, success={}",
+                            attempts, request.getRequestId(), provider.getProviderName(), result.success());
+                }
+            } else {
+                result = provider.send(request, content);
+                attempts = 1;
+            }
 
             // Build response
             if (result.success()) {
@@ -169,6 +200,13 @@ public class DefaultNotificationService implements NotificationService {
 
                 log.warn("Notification failed: requestId={}, error={}: {}",
                         request.getRequestId(), result.errorCode(), result.errorMessage());
+
+                // DD-13: push to DLQ when configured. We push regardless of
+                // attempts taken — both "permanent failure on first try" and
+                // "retries exhausted" land here. The entry's failureType +
+                // attempts let operators distinguish them.
+                recordDeadLetter(request, response, attempts,
+                        result.failureType() != null ? result.failureType() : FailureType.UNKNOWN);
             }
 
             // Update audit
@@ -191,6 +229,10 @@ public class DefaultNotificationService implements NotificationService {
             auditService.updateStatus(request.getRequestId(), response.status(),
                     null, response.errorCode(), response.errorMessage());
 
+            // DD-13: configuration / template / provider-resolution
+            // failures are PERMANENT — retrying won't help — but still
+            // worth recording so operators see them in /admin/dead-letter.
+            recordDeadLetter(request, response, 1, FailureType.PERMANENT);
             return response;
 
         } catch (Exception e) {
@@ -206,6 +248,9 @@ public class DefaultNotificationService implements NotificationService {
             auditService.updateStatus(request.getRequestId(), response.status(),
                     null, response.errorCode(), response.errorMessage());
 
+            // DD-13: unexpected throw — classify as UNKNOWN so operators
+            // can triage from the DLQ admin endpoint.
+            recordDeadLetter(request, response, 1, FailureType.UNKNOWN);
             return response;
 
         } finally {
@@ -219,6 +264,28 @@ public class DefaultNotificationService implements NotificationService {
                                 "INTERNAL_ERROR", "Dispatch terminated without a response", receivedAt);
                 idempotencyStore.get().markComplete(idemKey, toRecord);
             }
+        }
+    }
+
+    /**
+     * Push a failed notification to the DLQ if configured (DD-13). The
+     * store contract is "never throw" — wrap defensively just in case so
+     * a flaky DLQ doesn't double-fault the caller's already-failing
+     * dispatch path.
+     */
+    private void recordDeadLetter(NotificationRequest request,
+                                  NotificationResponse response,
+                                  int attempts,
+                                  FailureType failureType) {
+        if (deadLetterStore.isEmpty()) {
+            return;
+        }
+        try {
+            deadLetterStore.get().record(new DeadLetterEntry(
+                    Instant.now(), request, response, attempts, failureType));
+        } catch (RuntimeException e) {
+            log.warn("DLQ record failed for requestId={}: {}",
+                    request.getRequestId(), e.toString());
         }
     }
 

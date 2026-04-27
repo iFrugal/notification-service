@@ -69,7 +69,8 @@ class DefaultNotificationServiceRateLimitTest {
         service = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
                 Optional.empty(),
-                Optional.of(rateLimiter));
+                Optional.of(rateLimiter),
+                Optional.empty(), Optional.empty());
     }
 
     @Test
@@ -145,7 +146,8 @@ class DefaultNotificationServiceRateLimitTest {
         // is reachable.
         DefaultNotificationService serviceWithIdem = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
-                Optional.of(idempotencyStore), Optional.of(rateLimiter));
+                Optional.of(idempotencyStore), Optional.of(rateLimiter),
+                Optional.empty(), Optional.empty());
 
         NotificationRequest req = baseRequest("billing-svc", Channel.EMAIL);
         req.setIdempotencyKey("idem-replay");
@@ -169,7 +171,8 @@ class DefaultNotificationServiceRateLimitTest {
         // replays.
         DefaultNotificationService serviceWithIdem = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
-                Optional.of(idempotencyStore), Optional.of(rateLimiter));
+                Optional.of(idempotencyStore), Optional.of(rateLimiter),
+                Optional.empty(), Optional.empty());
 
         NotificationRequest req = baseRequest("billing-svc", Channel.EMAIL);
         req.setIdempotencyKey("idem-inflight");
@@ -191,7 +194,8 @@ class DefaultNotificationServiceRateLimitTest {
         // about to do real work (markInProgress + provider call).
         DefaultNotificationService serviceWithIdem = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
-                Optional.of(idempotencyStore), Optional.of(rateLimiter));
+                Optional.of(idempotencyStore), Optional.of(rateLimiter),
+                Optional.empty(), Optional.empty());
 
         when(idempotencyStore.findExisting(any())).thenReturn(Optional.empty());
         when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
@@ -209,6 +213,7 @@ class DefaultNotificationServiceRateLimitTest {
     void rateLimiterAbsent_neverCallsLimiter_proceedsToDispatch() {
         DefaultNotificationService noLimiterService = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
+                Optional.empty(), Optional.empty(),
                 Optional.empty(), Optional.empty());
         stubProviderHappyPath();
 
