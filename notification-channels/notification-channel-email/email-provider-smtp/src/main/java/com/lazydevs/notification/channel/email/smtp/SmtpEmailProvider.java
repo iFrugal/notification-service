@@ -3,6 +3,8 @@ package com.lazydevs.notification.channel.email.smtp;
 import com.lazydevs.notification.api.channel.EmailProvider;
 import com.lazydevs.notification.api.channel.RenderedContent;
 import com.lazydevs.notification.api.model.EmailRecipient;
+import com.lazydevs.notification.api.model.FailureType;
+import com.lazydevs.notification.api.model.FailureTypes;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.SendResult;
 import jakarta.mail.*;
@@ -197,8 +199,66 @@ public class SmtpEmailProvider implements EmailProvider {
         } catch (Exception e) {
             log.error("Failed to send email via SMTP: to={}, error={}",
                     recipient.to(), e.getMessage());
-            return SendResult.failure(e);
+            return SendResult.failure(
+                    e.getClass().getSimpleName(), e.getMessage(), classifySmtp(e));
         }
+    }
+
+    /**
+     * Map a Jakarta Mail exception to a {@link FailureType} for retry
+     * decisions (DD-13).
+     *
+     * <p>Permanent (no retry):
+     * <ul>
+     *   <li>{@link AuthenticationFailedException} — wrong creds; will
+     *       fail every retry until config changes.</li>
+     *   <li>{@link SendFailedException} that has invalid addresses
+     *       (rejected by the server) but no valid ones — bad input.</li>
+     *   <li>{@link AddressException} — caller-supplied address didn't
+     *       parse.</li>
+     * </ul>
+     *
+     * <p>Transient (retry-worthy):
+     * <ul>
+     *   <li>I/O errors anywhere in the cause chain (timeout, connection
+     *       refused, broken pipe). Detected via
+     *       {@link FailureTypes#fromException}.</li>
+     *   <li>Generic {@link MessagingException} that isn't one of the
+     *       PERMANENT subclasses — could be a temporary 4xx/5xx SMTP
+     *       reply from the server.</li>
+     * </ul>
+     *
+     * <p>{@link FailureType#UNKNOWN} for anything we can't reason
+     * about; the default {@code RetryPredicate} will retry it
+     * (best-effort).
+     */
+    static FailureType classifySmtp(Throwable t) {
+        if (t instanceof AuthenticationFailedException) {
+            return FailureType.PERMANENT;
+        }
+        if (t instanceof SendFailedException sfe
+                && sfe.getValidSentAddresses() == null
+                && sfe.getInvalidAddresses() != null
+                && sfe.getInvalidAddresses().length > 0) {
+            return FailureType.PERMANENT;
+        }
+        if (t instanceof AddressException) {
+            return FailureType.PERMANENT;
+        }
+        // I/O signal in the cause chain → transient.
+        FailureType ioGuess = FailureTypes.fromException(t);
+        if (ioGuess == FailureType.TRANSIENT) {
+            return FailureType.TRANSIENT;
+        }
+        // Generic MessagingException: most server-side rejections fall
+        // here. Treat as transient — Jakarta Mail wraps both 4xx and 5xx
+        // SMTP replies indistinguishably, and erring on retry is cheaper
+        // than under-retrying real outages. Operators who want stricter
+        // can plug a custom RetryPredicate.
+        if (t instanceof MessagingException) {
+            return FailureType.TRANSIENT;
+        }
+        return FailureType.UNKNOWN;
     }
 
     @Override

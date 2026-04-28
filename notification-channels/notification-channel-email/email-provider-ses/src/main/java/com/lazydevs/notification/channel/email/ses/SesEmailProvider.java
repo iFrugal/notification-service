@@ -3,9 +3,13 @@ package com.lazydevs.notification.channel.email.ses;
 import com.lazydevs.notification.api.channel.EmailProvider;
 import com.lazydevs.notification.api.channel.RenderedContent;
 import com.lazydevs.notification.api.model.EmailRecipient;
+import com.lazydevs.notification.api.model.FailureType;
+import com.lazydevs.notification.api.model.FailureTypes;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.SendResult;
 import lombok.extern.slf4j.Slf4j;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.sesv2.SesV2Client;
 import software.amazon.awssdk.services.sesv2.model.*;
@@ -126,8 +130,69 @@ public class SesEmailProvider implements EmailProvider {
         } catch (Exception e) {
             log.error("Failed to send email via SES: to={}, error={}",
                     recipient.to(), e.getMessage());
-            return SendResult.failure(e);
+            return SendResult.failure(
+                    e.getClass().getSimpleName(), e.getMessage(), classifySes(e));
         }
+    }
+
+    /**
+     * Map an AWS SES SDK exception to a {@link FailureType} for retry
+     * decisions (DD-13).
+     *
+     * <p>AWS SDK v2 throws three flavours we care about:
+     * <ul>
+     *   <li>{@link SdkClientException} — client-side networking
+     *       (timeout, broken connection). Always {@link FailureType#TRANSIENT}.</li>
+     *   <li>{@link AwsServiceException} — server returned an error
+     *       response. The HTTP status drives the classification via
+     *       {@link FailureTypes#fromHttpStatus}, with a few SES-specific
+     *       overrides for known permanent conditions.</li>
+     *   <li>Anything else — {@link FailureType#UNKNOWN}, defer to the
+     *       default predicate.</li>
+     * </ul>
+     *
+     * <p>SES v2-specific PERMANENT overrides:
+     * <ul>
+     *   <li>{@code AccountSuspendedException} — terminal account state;
+     *       no retry will succeed until ops re-enables the account.</li>
+     *   <li>{@code SendingPausedException} — operator paused sending
+     *       (account-wide or configuration-set-scoped). Same logic.</li>
+     *   <li>{@code MailFromDomainNotVerifiedException} — config issue.</li>
+     *   <li>{@code MessageRejectedException} — content / recipient
+     *       problem; SES rejected the payload.</li>
+     *   <li>{@code BadRequestException} — malformed call.</li>
+     * </ul>
+     *
+     * <p>{@code TooManyRequestsException} and
+     * {@code LimitExceededException} are throttling — fall through to
+     * the HTTP-status branch which already maps 429 / 503 to TRANSIENT.
+     */
+    static FailureType classifySes(Throwable t) {
+        if (t instanceof SdkClientException) {
+            return FailureType.TRANSIENT;
+        }
+        // SES v2-specific permanent conditions. These inherit
+        // AwsServiceException but always represent config / account-state
+        // issues rather than transient hiccups.
+        if (t instanceof AccountSuspendedException
+                || t instanceof SendingPausedException
+                || t instanceof MailFromDomainNotVerifiedException
+                || t instanceof MessageRejectedException
+                || t instanceof BadRequestException) {
+            return FailureType.PERMANENT;
+        }
+        if (t instanceof AwsServiceException ase) {
+            // Throttling / SlowDown gets 429 / 503 from AWS; the
+            // status-code path catches them as TRANSIENT. We don't
+            // need special-cases for TooManyRequests / LimitExceeded.
+            return FailureTypes.fromHttpStatus(ase.statusCode());
+        }
+        // I/O signal in cause chain → transient.
+        FailureType ioGuess = FailureTypes.fromException(t);
+        if (ioGuess == FailureType.TRANSIENT) {
+            return FailureType.TRANSIENT;
+        }
+        return FailureType.UNKNOWN;
     }
 
     @Override

@@ -506,10 +506,24 @@ notification:
     max-entries: 1000          # in-memory bound; older entries fall off
 ```
 
-**Failure classification:** providers can mark a `SendResult` failure
-as `TRANSIENT`, `PERMANENT`, or `UNKNOWN`. The default
-`RetryPredicate` retries TRANSIENT and UNKNOWN, skips PERMANENT —
-operators can plug a custom predicate as a Spring bean.
+**Failure classification:** providers mark a `SendResult` failure as
+`TRANSIENT`, `PERMANENT`, or `UNKNOWN`. The default `RetryPredicate`
+retries TRANSIENT and UNKNOWN, skips PERMANENT — operators can plug a
+custom predicate as a Spring bean.
+
+The bundled providers classify their native errors via
+`com.lazydevs.notification.api.model.FailureTypes`:
+
+| Provider | TRANSIENT (retry) | PERMANENT (skip retry, go to DLQ) |
+|---|---|---|
+| **SMTP** (Jakarta Mail) | I/O timeouts, connection errors, generic `MessagingException` (server 4xx/5xx replies) | `AuthenticationFailedException`, `AddressException`, `SendFailedException` with all-invalid recipients |
+| **AWS SES v2** | `SdkClientException` (network), HTTP 5xx / 408 / 425 / 429 from SES | `AccountSuspendedException`, `SendingPausedException`, `MailFromDomainNotVerifiedException`, `MessageRejectedException`, `BadRequestException`, other 4xx |
+| **Twilio SMS** | HTTP 5xx / 408 / 425 / 429, null status (network failure pre-response) | `AuthenticationException`, other HTTP 4xx (e.g. error code `21211 Invalid To Number` arrives as 400) |
+
+Anything outside these tables is `UNKNOWN` — the default predicate
+treats UNKNOWN as retry-worthy (best-effort) so the classifier can be
+expanded incrementally without changing behaviour. Custom predicates
+can opt out of retrying UNKNOWN if operators want strict-only retries.
 
 **Retry order in the pipeline:**
 
