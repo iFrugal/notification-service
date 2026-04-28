@@ -163,7 +163,7 @@ collaborator) can pick up where the last one left off.
         `TwilioFailureClassifierTest` (7). Direct unit tests on the
         package-private `classify*` methods, no real network needed
   - [x] README — table of TRANSIENT vs PERMANENT mappings per provider
-  - [ ] Branch pushed + PR opened + URL captured here
+  - [x] PR raised: [#31](https://github.com/iFrugal/notification-service/pull/31)
 
 ### Phase 9+ — Queued
 
@@ -178,7 +178,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-_(Phase 8 PR will be flagged here as soon as it's raised)_
+| [#31](https://github.com/iFrugal/notification-service/pull/31) | feat(channels): provider FailureType classification | `feat/provider-failure-classification` | **awaiting review/merge** | Phase 8 — DD-13 follow-up; SMTP/SES/Twilio classify their native errors |
 
 ---
 
