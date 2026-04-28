@@ -23,9 +23,9 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-04-28 IST (DD-13 retries + DLQ PR open). All
-  dates in this file are local IST (UTC+5:30) since that's where the
-  work is happening; UTC equivalents differ by ~5h30m.
+- **Last updated:** 2026-04-28 IST (provider FailureType classification
+  PR open). All dates in this file are local IST (UTC+5:30) since
+  that's where the work is happening; UTC equivalents differ by ~5h30m.
 
 ---
 
@@ -123,41 +123,53 @@ collaborator) can pick up where the last one left off.
   - [x] Round-2 review fixes (sanitize-at-construction, Caffeine bucket
         cache, `@Validated` config, deprecated-API migration)
 
-### Phase 7 — Retries + DLQ (DD-13) ← in flight
+### Phase 7 — Retries + DLQ (DD-13) ✅
 
-- [~] Single PR — synchronous retry with classified failures + bounded
-      in-memory DLQ
-  - [x] DD-13 design doc + decision-log entry
-  - [x] `FailureType` enum + `SendResult.failureType` (backwards-compat
-        defaults to `UNKNOWN`); `RetryPredicate` SPI in
-        `notification-api`
-  - [x] `RetryProperties` + `DeadLetterProperties` nested config (both
-        opt-in, validated)
-  - [x] `RetryExecutor` — exponential backoff with jitter, custom
-        helper rather than Resilience4j (DD-13 §"Why a custom helper")
-  - [x] `DeadLetterStore` SPI in `notification-api` +
-        `InMemoryDeadLetterStore` (Caffeine bounded LRU) in
-        `notification-core`
-  - [x] `DefaultNotificationService` wraps provider call in retry
-        executor; pushes exhausted/permanent failures to DLQ; rate-limit
-        + idempotency invariants preserved (one token, one lock per
-        logical send)
-  - [x] `AdminController` exposes `GET /admin/dead-letter` with config
-        + recent entries (PII-safe)
-  - [x] Tests — `RetryExecutorTest` (10),
-        `InMemoryDeadLetterStoreTest` (4),
-        `DefaultNotificationServiceRetryTest` (8). 82 total tests
-        across api/core/rest. Full reactor verify green
-  - [x] README — Features bullet, "Retries + Dead-Letter" section,
-        admin row
-  - [x] PR raised: [#30](https://github.com/iFrugal/notification-service/pull/30)
+- [x] Single PR — merged as
+      [#30](https://github.com/iFrugal/notification-service/pull/30)
+  - [x] DD-13 design doc + SPI + Bucket4j-style opt-in
+  - [x] `FailureType`, `SendResult.failureType`, `RetryPredicate` SPI
+  - [x] `RetryExecutor` (exponential backoff + jitter, no
+        Resilience4j dep)
+  - [x] `DeadLetterStore` SPI + `InMemoryDeadLetterStore`
+  - [x] Service integration; one rate-limit token / one idempotency
+        lock per logical send (not per attempt)
+  - [x] `GET /admin/dead-letter` (PII-safe)
+  - [x] Round-2 review fixes: log injection sanitization, validation
+        tightening, contextual-keyword rename, `Math.clamp`, etc.
 
-### Phase 8+ — Queued
+### Phase 8 — Provider FailureType classification ← in flight
+
+- [~] Single PR — every bundled provider classifies its native errors
+      so retries no longer fire blindly on every failure
+  - [x] `FailureTypes` shared helper in `notification-api`:
+        `fromHttpStatus(int)` (5xx/408/425/429 → TRANSIENT, other 4xx
+        → PERMANENT) and `fromException(Throwable)` (cause-chain walk
+        for `IOException`)
+  - [x] `SmtpEmailProvider.classifySmtp()` — `AuthenticationFailedException` +
+        `AddressException` + `SendFailedException`(all-invalid) →
+        PERMANENT; I/O + generic `MessagingException` → TRANSIENT
+  - [x] `SesEmailProvider.classifySes()` — `AccountSuspendedException`,
+        `SendingPausedException`, `MailFromDomainNotVerifiedException`,
+        `MessageRejectedException`, `BadRequestException` → PERMANENT;
+        `SdkClientException` + AWS HTTP-status mapping for everything
+        else
+  - [x] `TwilioSmsProvider.classifyTwilio()` —
+        `AuthenticationException` → PERMANENT; HTTP-status mapping on
+        `ApiException`; null status (network failure pre-response) →
+        TRANSIENT
+  - [x] Tests — `FailureTypesTest` (9), `SmtpFailureClassifierTest`
+        (7), `SesFailureClassifierTest` (11),
+        `TwilioFailureClassifierTest` (7). Direct unit tests on the
+        package-private `classify*` methods, no real network needed
+  - [x] README — table of TRANSIENT vs PERMANENT mappings per provider
+  - [ ] Branch pushed + PR opened + URL captured here
+
+### Phase 9+ — Queued
 
 - [ ] Distributed rate limit + Redis-backed `IdempotencyStore` (DD-14 — bundle the two)
 - [ ] DLQ replay endpoint with auth (re-submit by request id, with `replay-of` reference)
-- [ ] Provider modules opt in to `FailureType` classification (Twilio 4xx mapping, SES throttling, etc.)
-- [ ] Webhook callbacks for async delivery status (SES, Twilio, FCM)
+- [ ] Webhook callbacks for async delivery status (SES bounce / complaint, Twilio status callback, FCM delivery)
 - [ ] OpenAPI / Swagger schema generation in CI
 
 ---
@@ -166,7 +178,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| [#30](https://github.com/iFrugal/notification-service/pull/30) | feat(dd-13): retries + dead-letter queue | `feat/dd-13-retries-dlq` | **awaiting review/merge** | Phase 7 — opt-in retry with classified failures + bounded in-memory DLQ |
+_(Phase 8 PR will be flagged here as soon as it's raised)_
 
 ---
 
@@ -174,6 +186,7 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#30](https://github.com/iFrugal/notification-service/pull/30) | feat(dd-13): retries + dead-letter queue | 2026-04-28 |
 | [#29](https://github.com/iFrugal/notification-service/pull/29) | feat(dd-12): rate limiting per (tenant, caller, channel) | 2026-04-28 |
 | [#28](https://github.com/iFrugal/notification-service/pull/28) | feat(kafka): X-Service-Id header propagates into callerId | 2026-04-27 |
 | [#27](https://github.com/iFrugal/notification-service/pull/27) | docs(progress): mark Phase 4 / DD-11 done after PR #26 merge | 2026-04-27 |
