@@ -24,6 +24,7 @@ This document tracks all architectural and design decisions made during the deve
 | 10 | Idempotency Key (First-Class) | DECIDED | Optional `idempotencyKey` on request, scoped `(tenantId, callerId, key)`, Caffeine default store with Redis SPI | [10-idempotency.md](./10-idempotency.md) |
 | 11 | Caller Identity (`X-Service-Id`) | DECIDED | Optional `X-Service-Id` header → `callerId` on request/response/audit, closes DD-10 callerId gap, opt-in caller registry with `strict` rejection mode | [11-caller-identity.md](./11-caller-identity.md) |
 | 12 | Rate Limiting | DECIDED | Opt-in, per-`(tenant, caller, channel)` token bucket via Bucket4j; checked inside `DefaultNotificationService.send()` so REST + Kafka share enforcement; HTTP 429 + `Retry-After` on REST | [12-rate-limiting.md](./12-rate-limiting.md) |
+| 13 | Retries + DLQ | DECIDED | Opt-in in-process retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN), exponential backoff + jitter; pluggable `DeadLetterStore` SPI with bounded in-memory default; one rate-limit token + one idempotency lock per logical send (not per attempt) | [13-retries-and-dlq.md](./13-retries-and-dlq.md) |
 
 ---
 
@@ -62,6 +63,7 @@ This document tracks all architectural and design decisions made during the deve
 | 2026-04-27 | 10 | Decided: full rollout merged — SPI + Caffeine impl, service integration, 409 handler, X-Idempotent-Replay header, JUnit 5 tests, README docs | Abhijeet |
 | 2026-04-27 | 11 | Decided: optional `X-Service-Id` header → `callerId` on request/response/audit; closes DD-10 callerId gap; opt-in caller registry with `strict` rejection mode | Abhijeet |
 | 2026-04-27 | 12 | Decided: opt-in `(tenant, caller, channel)` token-bucket rate limiting via Bucket4j; enforced in `DefaultNotificationService.send()`; HTTP 429 + `Retry-After` on REST | Abhijeet |
+| 2026-04-27 | 13 | Decided: opt-in synchronous retry with classified failures + exponential backoff + jitter; pluggable DLQ SPI with bounded in-memory default; rate-limit / idempotency invariants hold per logical send not per attempt | Abhijeet |
 
 ---
 

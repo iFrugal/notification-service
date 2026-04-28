@@ -2,6 +2,8 @@ package com.lazydevs.notification.rest.controller;
 
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.channel.NotificationProvider;
+import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
+import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.config.NotificationProperties;
@@ -29,6 +31,17 @@ import java.util.*;
 @ConditionalOnProperty(prefix = "notification.rest", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class AdminController {
 
+    /**
+     * JSON field name for the channel identifier across admin responses.
+     * Pulled out as a constant so a typo in one place doesn't ship with
+     * an inconsistent envelope (and to satisfy Sonar's "duplicated
+     * literal" rule).
+     */
+    private static final String FIELD_CHANNEL = "channel";
+
+    /** JSON field name for human-readable status / explanation strings. */
+    private static final String FIELD_MESSAGE = "message";
+
     private static final Set<String> SENSITIVE_KEYS = Set.of(
             "password", "secret", "token", "api-key", "apikey", "auth-token", "authtoken",
             "credentials", "private-key", "privatekey", "account-sid", "accountsid",
@@ -40,17 +53,20 @@ public class AdminController {
     private final NotificationTemplateEngine templateEngine;
     private final CallerRegistry callerRegistry;
     private final java.util.Optional<RateLimiter> rateLimiter;
+    private final java.util.Optional<DeadLetterStore> deadLetterStore;
 
     public AdminController(NotificationProperties properties,
                            ProviderRegistry providerRegistry,
                            NotificationTemplateEngine templateEngine,
                            CallerRegistry callerRegistry,
-                           java.util.Optional<RateLimiter> rateLimiter) {
+                           java.util.Optional<RateLimiter> rateLimiter,
+                           java.util.Optional<DeadLetterStore> deadLetterStore) {
         this.properties = properties;
         this.providerRegistry = providerRegistry;
         this.templateEngine = templateEngine;
         this.callerRegistry = callerRegistry;
         this.rateLimiter = rateLimiter;
+        this.deadLetterStore = deadLetterStore;
     }
 
     /**
@@ -169,7 +185,7 @@ public class AdminController {
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("tenant", o.getTenant());
             if (o.getCaller() != null) entry.put("caller", o.getCaller());
-            if (o.getChannel() != null) entry.put("channel", o.getChannel());
+            if (o.getChannel() != null) entry.put(FIELD_CHANNEL, o.getChannel());
             entry.put("capacity", o.getCapacity());
             entry.put("refillTokens", o.getRefillTokens());
             entry.put("refillPeriod", o.getRefillPeriod().toString());
@@ -186,7 +202,7 @@ public class AdminController {
                 Map<String, Object> e = new LinkedHashMap<>();
                 e.put("tenant", key.tenantId());
                 e.put("caller", key.callerId());
-                e.put("channel", key.channel());
+                e.put(FIELD_CHANNEL, key.channel());
                 e.put("availableTokens", tokens);
                 active.add(e);
             });
@@ -204,6 +220,76 @@ public class AdminController {
     }
 
     /**
+     * Dead-letter store snapshot (DD-13). Returns the configured cap +
+     * a summary of recent entries (most recent first).
+     *
+     * <p>Intentionally <strong>does not</strong> include the full
+     * {@code NotificationRequest} payload — template data may carry
+     * PII. Operators get the routing identifiers (tenant, caller,
+     * channel, requestId) plus the failure detail; full payload access
+     * is on a future replay endpoint with proper auth.
+     *
+     * <p>Returns {@code 503 Service Unavailable} when the DLQ bean is
+     * absent ({@code notification.dead-letter.enabled=false}) — the
+     * endpoint is meaningfully disabled, not just empty.
+     */
+    @GetMapping("/dead-letter")
+    public ResponseEntity<Map<String, Object>> getDeadLetter(
+            @RequestParam(defaultValue = "100") int limit) {
+        if (deadLetterStore.isEmpty()) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("enabled", false);
+            body.put(FIELD_MESSAGE, "Dead-letter store is disabled. "
+                    + "Enable with notification.dead-letter.enabled=true.");
+            return ResponseEntity.status(503).body(body);
+        }
+        DeadLetterStore store = deadLetterStore.get();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("enabled", true);
+        result.put("maxEntries", properties.getDeadLetter().getMaxEntries());
+        result.put("size", store.size());
+
+        // Snapshot returns Optional.empty() for backends that can't
+        // iterate cheaply (e.g. a future Redis-backed DLQ with 100k
+        // entries); the in-memory default always returns a list.
+        java.util.Optional<java.util.List<DeadLetterEntry>> snapshot = store.snapshot();
+        if (snapshot.isPresent()) {
+            // Math.clamp arrived in Java 21 — clearer than the
+            // Math.max(min, Math.min(max, x)) idiom and Sonar prefers it.
+            int safeLimit = Math.clamp(limit, 1, 1000);
+            result.put("entries", snapshot.get().stream()
+                    .limit(safeLimit)
+                    .map(this::toAdminEntry)
+                    .toList());
+        } else {
+            result.put("entries", null);
+            result.put(FIELD_MESSAGE,
+                    "Backing store does not support snapshot iteration; query the store directly.");
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Map a {@link DeadLetterEntry} to the admin-endpoint shape — no
+     * template payload, no recipient detail (which may carry PII), just
+     * the routing identifiers and failure summary.
+     */
+    private Map<String, Object> toAdminEntry(DeadLetterEntry entry) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("timestamp", entry.timestamp().toString());
+        m.put("tenantId", entry.request().getTenantId());
+        m.put("callerId", entry.request().getCallerId());
+        m.put(FIELD_CHANNEL, entry.request().getChannel() != null
+                ? entry.request().getChannel().name() : null);
+        m.put("requestId", entry.request().getRequestId());
+        m.put("attempts", entry.attempts());
+        m.put("failureType", entry.failureType().name());
+        m.put("errorCode", entry.response().errorCode());
+        m.put("errorMessage", entry.response().errorMessage());
+        return m;
+    }
+
+    /**
      * Clear template cache for a tenant.
      */
     @PostMapping("/cache/templates/clear")
@@ -212,10 +298,10 @@ public class AdminController {
 
         if (tenantId != null) {
             templateEngine.clearCache(tenantId);
-            return ResponseEntity.ok(Map.of("message", "Template cache cleared for tenant: " + tenantId));
+            return ResponseEntity.ok(Map.of(FIELD_MESSAGE, "Template cache cleared for tenant: " + tenantId));
         } else {
             templateEngine.clearAllCache();
-            return ResponseEntity.ok(Map.of("message", "All template caches cleared"));
+            return ResponseEntity.ok(Map.of(FIELD_MESSAGE, "All template caches cleared"));
         }
     }
 

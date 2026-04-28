@@ -49,6 +49,7 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
 - **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)
 - **Rate Limiting**: Opt-in token-bucket throttle per `(tenant, caller, channel)` with `429 + Retry-After` (DD-12)
+- **Retries + DLQ**: Opt-in synchronous retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN) and exponential backoff with jitter; pluggable dead-letter store SPI (DD-13)
 - **Template Engine**: FreeMarker templates with tenant-specific overrides
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service
@@ -483,6 +484,93 @@ Content-Type: application/json
 offset is committed. At-least-once requeue would amplify the pressure
 the limiter is trying to relieve.
 
+### Retries + Dead-Letter
+
+Off by default. When enabled, transient provider failures retry with
+exponential backoff + jitter, and permanently-failed (or
+retry-exhausted) notifications land in a configurable dead-letter
+store. See [DD-13](docs/design-decisions/13-retries-and-dlq.md).
+
+```yaml
+notification:
+  retry:
+    enabled: true
+    max-attempts: 3            # total attempts including the first
+    initial-delay: PT1S
+    multiplier: 2.0
+    max-delay: PT30S
+    jitter: 0.5                # 0..1, fraction of delay randomised ±
+
+  dead-letter:
+    enabled: true
+    max-entries: 1000          # in-memory bound; older entries fall off
+```
+
+**Failure classification:** providers can mark a `SendResult` failure
+as `TRANSIENT`, `PERMANENT`, or `UNKNOWN`. The default
+`RetryPredicate` retries TRANSIENT and UNKNOWN, skips PERMANENT —
+operators can plug a custom predicate as a Spring bean.
+
+**Retry order in the pipeline:**
+
+```text
+enrichRequest → idempotency-replay short-circuit → rate-limit check
+              → markInProgress → [retry loop: render → provider.send]
+              → markComplete → if failed: push to DLQ → audit
+```
+
+Two invariants worth calling out:
+
+- **Rate-limit token consumed once per logical send**, not per retry —
+  a transient blip doesn't drain the caller's bucket.
+- **Idempotency lock held for the entire retry window** — concurrent
+  duplicates see the same `requestId` and 409, exactly as DD-10
+  specifies.
+
+**On the Kafka path**, retries happen on the consumer thread before
+the offset is committed. Operators with strict throughput SLAs should
+keep `max-attempts` low and rely on the DLQ for terminal failures.
+
+**Admin endpoint:** `GET /api/v1/admin/dead-letter` returns the
+configured cap + recent entries (most recent first):
+
+```json
+{
+  "enabled": true,
+  "maxEntries": 1000,
+  "size": 12,
+  "entries": [
+    {
+      "timestamp": "2026-04-28T10:42:01Z",
+      "tenantId": "acme",
+      "callerId": "billing-svc",
+      "channel": "EMAIL",
+      "requestId": "req-abc-123",
+      "attempts": 3,
+      "failureType": "TRANSIENT",
+      "errorCode": "PROVIDER_TIMEOUT",
+      "errorMessage": "smtp 421 — try again later"
+    }
+  ]
+}
+```
+
+The admin response intentionally omits the request payload (template
+data may carry PII). A future replay endpoint will re-submit by
+request id.
+
+When the DLQ is disabled (`notification.dead-letter.enabled=false`)
+the endpoint returns **HTTP 503 Service Unavailable** with a small
+explanatory body — the endpoint is meaningfully disabled, not just
+empty:
+
+```json
+{
+  "enabled": false,
+  "message": "Dead-letter store is disabled. Enable with notification.dead-letter.enabled=true."
+}
+```
+
 Live state — configured rules + currently-tracked buckets — exposed at
 `GET /api/v1/admin/rate-limit`:
 
@@ -523,6 +611,7 @@ Content-Type: application/json
 | `/api/v1/admin/configuration/tenants/{id}/channels/{ch}` | GET | Get channel config |
 | `/api/v1/admin/caller-registry` | GET | Caller-registry state (DD-11) |
 | `/api/v1/admin/rate-limit` | GET | Rate-limit config + live bucket snapshot (DD-12) |
+| `/api/v1/admin/dead-letter` | GET | Recent retry-exhausted / permanent failures (DD-13) |
 | `/api/v1/admin/health` | GET | Provider health status |
 | `/api/v1/admin/cache/templates/clear` | POST | Clear template cache |
 

@@ -2,6 +2,7 @@ package com.lazydevs.notification.core.config;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -67,6 +68,23 @@ public class NotificationProperties {
      */
     @Valid
     private RateLimitProperties rateLimit = new RateLimitProperties();
+
+    /**
+     * Retry configuration (see DD-13). Off by default — turning it on
+     * wraps the provider call in {@code RetryExecutor} with exponential
+     * backoff + jitter.
+     */
+    @Valid
+    private RetryProperties retry = new RetryProperties();
+
+    /**
+     * Dead-letter store configuration (see DD-13). Off by default. When
+     * enabled, retry-exhausted and permanent failures are recorded to
+     * the configured {@code DeadLetterStore} for operator inspection
+     * via {@code GET /admin/dead-letter}.
+     */
+    @Valid
+    private DeadLetterProperties deadLetter = new DeadLetterProperties();
 
     /**
      * Tenant-specific configurations
@@ -275,6 +293,92 @@ public class NotificationProperties {
          * Matched case-insensitively.
          */
         private String channel;
+    }
+
+    /**
+     * Retry handling. See {@code docs/design-decisions/13-retries-and-dlq.md}.
+     */
+    @Data
+    public static class RetryProperties {
+        /** Master switch — false leaves the {@code RetryExecutor} disabled (single attempt). */
+        private boolean enabled = false;
+
+        /**
+         * Total attempts including the first. {@code max-attempts: 1}
+         * means "no retries". Capped at 10 — anything higher should
+         * almost certainly be moved to async / DLQ instead. The cap is
+         * enforced at binding so a misconfigured deployment can't
+         * silently hang request threads on a 100-attempt backoff
+         * window.
+         */
+        @Min(value = 1, message = "retry max-attempts must be at least 1")
+        @Max(value = 10, message = "retry max-attempts must be at most 10 — use async + DLQ for higher")
+        private int maxAttempts = 3;
+
+        /** First backoff window. {@code Duration.ZERO} would defeat backoff. */
+        @NotNull
+        private java.time.Duration initialDelay = java.time.Duration.ofSeconds(1);
+
+        /**
+         * Exponential growth factor. {@code 2.0} doubles the delay each
+         * attempt. {@code 1.0} disables exponential growth (constant delay).
+         */
+        @jakarta.validation.constraints.DecimalMin(value = "1.0",
+                message = "retry multiplier must be >= 1.0")
+        private double multiplier = 2.0;
+
+        /** Cap on any single delay. Prevents runaway growth on long retry windows. */
+        @NotNull
+        private java.time.Duration maxDelay = java.time.Duration.ofSeconds(30);
+
+        /**
+         * Jitter fraction in {@code [0.0, 1.0]}. {@code 0.5} means the
+         * actual delay is sampled uniformly from {@code ±50%} of the
+         * computed value. Critical to avoid thundering-herd retries
+         * when many sends fail simultaneously.
+         */
+        @jakarta.validation.constraints.DecimalMin(value = "0.0",
+                message = "retry jitter must be in [0.0, 1.0]")
+        @jakarta.validation.constraints.DecimalMax(value = "1.0",
+                message = "retry jitter must be in [0.0, 1.0]")
+        private double jitter = 0.5;
+
+        @AssertTrue(message = "retry initialDelay must be positive (zero defeats backoff)")
+        public boolean isInitialDelayValid() {
+            // Class doc says "Duration.ZERO would defeat backoff" — a
+            // zero initial delay turns retries into a tight loop, which
+            // is almost always a config typo. Enforce strictly positive.
+            return initialDelay != null
+                    && !initialDelay.isNegative()
+                    && !initialDelay.isZero();
+        }
+
+        @AssertTrue(message = "retry maxDelay must be positive and >= initialDelay")
+        public boolean isMaxDelayValid() {
+            return maxDelay != null
+                    && !maxDelay.isNegative()
+                    && !maxDelay.isZero()
+                    && (initialDelay == null || maxDelay.compareTo(initialDelay) >= 0);
+        }
+    }
+
+    /**
+     * Dead-letter store configuration. See
+     * {@code docs/design-decisions/13-retries-and-dlq.md}.
+     */
+    @Data
+    public static class DeadLetterProperties {
+        /** Master switch — false leaves the {@code DeadLetterStore} bean absent. */
+        private boolean enabled = false;
+
+        /**
+         * Maximum entries the in-memory store retains (Caffeine LRU).
+         * Older entries fall off when this is exceeded. The DLQ is for
+         * operator inspection, not for production state-of-the-world,
+         * so the bound is intentionally modest.
+         */
+        @Min(value = 1, message = "dead-letter max-entries must be at least 1")
+        private int maxEntries = 1_000;
     }
 
     @Data
