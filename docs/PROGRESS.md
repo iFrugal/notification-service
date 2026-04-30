@@ -204,7 +204,7 @@ collaborator) can pick up where the last one left off.
         — `@Testcontainers(disabledWithoutDocker = true)` so they
         skip cleanly on Docker-less hosts; CI has Docker
   - [x] README — "Distributed deployment" section + Features bullet
-  - [ ] Branch pushed + PR opened + URL captured here
+  - [x] PR raised: [#33](https://github.com/iFrugal/notification-service/pull/33)
 
 ### Phase 11+ — Queued
 
@@ -219,7 +219,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-_(Phase 10 PR will be flagged here once raised)_
+| [#33](https://github.com/iFrugal/notification-service/pull/33) | feat(dd-14): distributed Redis backends | `feat/dd-14-redis-backends` | **awaiting review/merge** | Phase 10 — Redis-backed idempotency / rate-limit / DLQ |
 
 ---
 
