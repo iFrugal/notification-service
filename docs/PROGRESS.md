@@ -179,7 +179,7 @@ collaborator) can pick up where the last one left off.
         of injecting one (the bean isn't always available depending on
         which jackson-autoconfig path runs)
   - [x] README — Live API documentation subsection, Features bullet
-  - [ ] Branch pushed + PR opened + URL captured here
+  - [x] PR raised: [#32](https://github.com/iFrugal/notification-service/pull/32)
 
 ### Phase 10+ — Queued
 
@@ -194,7 +194,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-_(Phase 9 PR — see notes below; will be flagged here once raised)_
+| [#32](https://github.com/iFrugal/notification-service/pull/32) | feat(openapi): springdoc 3 schema + Swagger UI | `feat/openapi-springdoc` | **awaiting review/merge** | Phase 9 — `/v3/api-docs` + `/swagger-ui` + smoke test |
 
 ---
 
