@@ -26,6 +26,7 @@ This document tracks all architectural and design decisions made during the deve
 | 12 | Rate Limiting | DECIDED | Opt-in, per-`(tenant, caller, channel)` token bucket via Bucket4j; checked inside `DefaultNotificationService.send()` so REST + Kafka share enforcement; HTTP 429 + `Retry-After` on REST | [12-rate-limiting.md](./12-rate-limiting.md) |
 | 13 | Retries + DLQ | DECIDED | Opt-in in-process retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN), exponential backoff + jitter; pluggable `DeadLetterStore` SPI with bounded in-memory default; one rate-limit token + one idempotency lock per logical send (not per attempt) | [13-retries-and-dlq.md](./13-retries-and-dlq.md) |
 | 14 | Distributed Redis backends | DECIDED | New opt-in `notification-redis` module providing Redis-backed implementations of the DD-10 `IdempotencyStore`, DD-12 `RateLimiter`, and DD-13 `DeadLetterStore` SPIs. Spring Data Redis + Lettuce + bucket4j-redis. Each backend independently toggleable. | [14-distributed-redis-backends.md](./14-distributed-redis-backends.md) |
+| 15 | DLQ Replay | DECIDED | `POST /admin/dead-letter/{requestId}/replay` re-submits a dead-lettered notification with a fresh `requestId` + `idempotencyKey` and a server-set `replayOf` reference back to the original; entry removed from DLQ on successful send, kept on failure. SPI extended with `findByRequestId` + `remove`. | [15-dlq-replay.md](./15-dlq-replay.md) |
 
 ---
 
