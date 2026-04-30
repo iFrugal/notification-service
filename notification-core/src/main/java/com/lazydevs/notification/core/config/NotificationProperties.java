@@ -87,6 +87,17 @@ public class NotificationProperties {
     private DeadLetterProperties deadLetter = new DeadLetterProperties();
 
     /**
+     * Redis-backed distributed-state configuration (see DD-14). Lives
+     * in the parent properties so it's bound by the same
+     * {@code ConfigurationProperties} processor whether or not
+     * {@code notification-redis} is on the classpath. The Redis bean
+     * implementations themselves are gated on {@code @ConditionalOnClass}
+     * so unused configuration on a no-Redis deployment is harmless.
+     */
+    @Valid
+    private RedisProperties redis = new RedisProperties();
+
+    /**
      * Tenant-specific configurations
      */
     private Map<String, TenantConfig> tenants = new LinkedHashMap<>();
@@ -379,6 +390,65 @@ public class NotificationProperties {
          */
         @Min(value = 1, message = "dead-letter max-entries must be at least 1")
         private int maxEntries = 1_000;
+    }
+
+    /**
+     * Redis-backed distributed-state config (DD-14). All flags off by
+     * default — the in-memory implementations from notification-core
+     * keep working unchanged.
+     *
+     * <p>Connection details default to {@code localhost:6379} so a
+     * developer Docker Redis just works; production deployments
+     * override via env vars or {@code spring.data.redis.*} which
+     * Spring Data Redis honours alongside this config.
+     */
+    @Data
+    public static class RedisProperties {
+        /**
+         * Master switch. When {@code true}, all per-feature flags
+         * default to true (operators can still flip individual ones
+         * back off). When {@code false}, only explicitly-enabled
+         * features activate.
+         */
+        private boolean enabled = false;
+
+        /**
+         * Namespace prefix for every key the module writes. Lets
+         * multiple services share a Redis instance without collisions.
+         */
+        @NotBlank
+        private String keyPrefix = "notification-svc";
+
+        /** Idempotency-store distribution toggle (closes DD-10's foreseen-Redis SPI). */
+        @Valid
+        private FeatureToggle idempotency = new FeatureToggle();
+
+        /** Rate-limit distribution toggle (closes DD-12's foreseen-Redis SPI). */
+        @Valid
+        private FeatureToggle rateLimit = new FeatureToggle();
+
+        /** Dead-letter distribution toggle (closes DD-13's foreseen-Redis SPI). */
+        @Valid
+        private DeadLetterToggle deadLetter = new DeadLetterToggle();
+
+        @Data
+        public static class FeatureToggle {
+            private boolean enabled = false;
+        }
+
+        @Data
+        public static class DeadLetterToggle {
+            private boolean enabled = false;
+
+            /**
+             * Maximum entries retained in the Redis LIST. Older
+             * entries are LTRIM'd on every write. Mirrors the
+             * in-memory {@code DeadLetterProperties.maxEntries}
+             * semantics — a debug surface, not a long-term archive.
+             */
+            @Min(value = 1, message = "redis.dead-letter max-entries must be at least 1")
+            private int maxEntries = 1_000;
+        }
     }
 
     @Data

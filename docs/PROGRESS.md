@@ -23,9 +23,9 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-04-30 IST (OpenAPI + Swagger PR open). All
-  dates in this file are local IST (UTC+5:30) since that's where the
-  work is happening; UTC equivalents differ by ~5h30m.
+- **Last updated:** 2026-04-30 IST (DD-14 Redis backends PR open).
+  All dates in this file are local IST (UTC+5:30) since that's where
+  the work is happening; UTC equivalents differ by ~5h30m.
 
 ---
 
@@ -146,7 +146,7 @@ collaborator) can pick up where the last one left off.
         (SMTP / SES / Twilio); 34 unit tests
   - [x] README per-provider TRANSIENT/PERMANENT table
 
-### Phase 9 — OpenAPI / Swagger generation ← in flight
+### Phase 9 — OpenAPI / Swagger generation ✅ (CI artifact upload still pending)
 
 - [~] Single PR — runtime schema + CI artifact
   - [x] springdoc 3.0.3 (matches Spring Boot 4.0.5) wired into
@@ -181,12 +181,37 @@ collaborator) can pick up where the last one left off.
   - [x] README — Live API documentation subsection, Features bullet
   - [x] PR raised: [#32](https://github.com/iFrugal/notification-service/pull/32)
 
-### Phase 10+ — Queued
+### Phase 10 — Distributed Redis backends (DD-14) ← in flight
 
-- [ ] Distributed rate limit + Redis-backed `IdempotencyStore` (DD-14 — bundle the two)
+- [~] Single PR — new `notification-redis` module with Redis-backed
+      implementations of all three SPIs
+  - [x] DD-14 design doc + decision-log entry
+  - [x] `notification-redis` module (Spring Data Redis + Lettuce +
+        bucket4j-redis); `RedisProperties` nested config in
+        `NotificationProperties`; per-feature toggles + master switch
+  - [x] `RedisIdempotencyStore` — `SET NX EX` atomic claim,
+        JSON-serialised `IdempotencyRecord`, TTL via Redis `EX`
+  - [x] `RedisRateLimiter` — bucket4j-redis Lettuce ProxyManager,
+        same override-resolution logic as the in-memory limiter
+  - [x] `RedisDeadLetterStore` — `LPUSH` + `LTRIM` for bounded
+        recent-N list, JSON-serialised `DeadLetterEntry` (operators
+        can `redis-cli LRANGE` to debug)
+  - [x] All three impls gated triple-conditionally
+        (`@ConditionalOnProperty` for opt-in, `@ConditionalOnClass`
+        for Spring Data Redis presence, `@ConditionalOnMissingBean`
+        for custom-impl override)
+  - [x] Testcontainers integration tests (13 cases across 3 classes)
+        — `@Testcontainers(disabledWithoutDocker = true)` so they
+        skip cleanly on Docker-less hosts; CI has Docker
+  - [x] README — "Distributed deployment" section + Features bullet
+  - [x] PR raised: [#33](https://github.com/iFrugal/notification-service/pull/33)
+
+### Phase 11+ — Queued
+
 - [ ] DLQ replay endpoint with auth (re-submit by request id, with `replay-of` reference)
 - [ ] Webhook callbacks for async delivery status (SES bounce / complaint, Twilio status callback, FCM delivery)
 - [ ] Jackson 2 → Jackson 3 migration (Boot 4's autoconfig defaults are Jackson 3; we still pin Jackson 2 in the parent POM)
+- [ ] CI workflow upload of `openapi.json` (12-line edit deferred from Phase 9 due to PAT scope)
 
 ---
 
@@ -194,7 +219,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| [#32](https://github.com/iFrugal/notification-service/pull/32) | feat(openapi): springdoc 3 schema + Swagger UI | `feat/openapi-springdoc` | **awaiting review/merge** | Phase 9 — `/v3/api-docs` + `/swagger-ui` + smoke test |
+| [#33](https://github.com/iFrugal/notification-service/pull/33) | feat(dd-14): distributed Redis backends | `feat/dd-14-redis-backends` | **awaiting review/merge** | Phase 10 — Redis-backed idempotency / rate-limit / DLQ |
 
 ---
 
@@ -202,6 +227,7 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#32](https://github.com/iFrugal/notification-service/pull/32) | feat(openapi): springdoc 3 schema + Swagger UI | 2026-04-30 |
 | [#31](https://github.com/iFrugal/notification-service/pull/31) | feat(channels): provider FailureType classification | 2026-04-30 |
 | [#30](https://github.com/iFrugal/notification-service/pull/30) | feat(dd-13): retries + dead-letter queue | 2026-04-28 |
 | [#29](https://github.com/iFrugal/notification-service/pull/29) | feat(dd-12): rate limiting per (tenant, caller, channel) | 2026-04-28 |
