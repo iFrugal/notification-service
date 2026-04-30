@@ -39,11 +39,18 @@ import java.util.Map;
 public class CallerAdmissionFilter extends OncePerRequestFilter {
 
     private final CallerRegistry registry;
-    private final ObjectMapper objectMapper;
+    /**
+     * Built once at construction rather than autowired — Spring Boot 4
+     * split {@code JacksonAutoConfiguration} into its own module
+     * ({@code spring-boot-jackson}) and the bean isn't always available
+     * at filter-creation time depending on which starter is in use. The
+     * 403 body is a tiny constant-shape map; a self-built mapper has
+     * negligible cost and removes the dependency.
+     */
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public CallerAdmissionFilter(CallerRegistry registry, ObjectMapper objectMapper) {
+    public CallerAdmissionFilter(CallerRegistry registry) {
         this.registry = registry;
-        this.objectMapper = objectMapper;
     }
 
     @Override

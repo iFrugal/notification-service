@@ -6,6 +6,8 @@ import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.core.caller.CallerRegistry;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import com.lazydevs.notification.core.config.NotificationProperties.ChannelConfig;
 import com.lazydevs.notification.core.config.NotificationProperties.ProviderConfig;
@@ -29,6 +31,11 @@ import java.util.*;
 @RestController
 @RequestMapping("${notification.rest.base-path:/api/v1}/admin")
 @ConditionalOnProperty(prefix = "notification.rest", name = "enabled", havingValue = "true", matchIfMissing = true)
+@Tag(name = "Admin",
+        description = "Operator-facing introspection endpoints — current "
+                + "tenant configuration, caller registry state, rate-limit "
+                + "buckets, dead-letter snapshot, and template-cache "
+                + "controls. Sensitive config values are masked.")
 public class AdminController {
 
     /**
@@ -158,6 +165,9 @@ public class AdminController {
      * deployed pod sees the expected list and mode.
      */
     @GetMapping("/caller-registry")
+    @Operation(summary = "Caller-registry state (DD-11)",
+            description = "Whether the registry is enabled, whether strict-mode "
+                    + "rejection is on, and the configured `known-services` list.")
     public ResponseEntity<Map<String, Object>> getCallerRegistry() {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("enabled", callerRegistry.isEnabled());
@@ -174,6 +184,11 @@ public class AdminController {
      * Bucket4j impl is active) the per-bucket available-token counts.
      */
     @GetMapping("/rate-limit")
+    @Operation(summary = "Rate-limit configuration + live snapshot (DD-12)",
+            description = "Returns the configured default rule, all overrides "
+                    + "(in match-precedence order), and — when the in-memory "
+                    + "Bucket4j impl is active — a snapshot of currently-tracked "
+                    + "buckets with available-token counts.")
     public ResponseEntity<Map<String, Object>> getRateLimit() {
         Map<String, Object> result = new LinkedHashMap<>();
         RateLimitProperties cfg = properties.getRateLimit();
@@ -234,6 +249,13 @@ public class AdminController {
      * endpoint is meaningfully disabled, not just empty.
      */
     @GetMapping("/dead-letter")
+    @Operation(summary = "Dead-letter snapshot (DD-13)",
+            description = "Recent retry-exhausted and permanent-failure entries, "
+                    + "most recent first. Returns `503` when the DLQ is disabled "
+                    + "(`notification.dead-letter.enabled=false`). Request payload "
+                    + "is intentionally omitted from the response — template data "
+                    + "may carry PII; full payload access is on a future replay "
+                    + "endpoint with proper auth.")
     public ResponseEntity<Map<String, Object>> getDeadLetter(
             @RequestParam(defaultValue = "100") int limit) {
         if (deadLetterStore.isEmpty()) {

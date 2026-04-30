@@ -23,9 +23,9 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-04-28 IST (provider FailureType classification
-  PR open). All dates in this file are local IST (UTC+5:30) since
-  that's where the work is happening; UTC equivalents differ by ~5h30m.
+- **Last updated:** 2026-04-30 IST (OpenAPI + Swagger PR open). All
+  dates in this file are local IST (UTC+5:30) since that's where the
+  work is happening; UTC equivalents differ by ~5h30m.
 
 ---
 
@@ -138,39 +138,55 @@ collaborator) can pick up where the last one left off.
   - [x] Round-2 review fixes: log injection sanitization, validation
         tightening, contextual-keyword rename, `Math.clamp`, etc.
 
-### Phase 8 — Provider FailureType classification ← in flight
+### Phase 8 — Provider FailureType classification ✅
 
-- [~] Single PR — every bundled provider classifies its native errors
-      so retries no longer fire blindly on every failure
-  - [x] `FailureTypes` shared helper in `notification-api`:
-        `fromHttpStatus(int)` (5xx/408/425/429 → TRANSIENT, other 4xx
-        → PERMANENT) and `fromException(Throwable)` (cause-chain walk
-        for `IOException`)
-  - [x] `SmtpEmailProvider.classifySmtp()` — `AuthenticationFailedException` +
-        `AddressException` + `SendFailedException`(all-invalid) →
-        PERMANENT; I/O + generic `MessagingException` → TRANSIENT
-  - [x] `SesEmailProvider.classifySes()` — `AccountSuspendedException`,
-        `SendingPausedException`, `MailFromDomainNotVerifiedException`,
-        `MessageRejectedException`, `BadRequestException` → PERMANENT;
-        `SdkClientException` + AWS HTTP-status mapping for everything
-        else
-  - [x] `TwilioSmsProvider.classifyTwilio()` —
-        `AuthenticationException` → PERMANENT; HTTP-status mapping on
-        `ApiException`; null status (network failure pre-response) →
-        TRANSIENT
-  - [x] Tests — `FailureTypesTest` (9), `SmtpFailureClassifierTest`
-        (7), `SesFailureClassifierTest` (11),
-        `TwilioFailureClassifierTest` (7). Direct unit tests on the
-        package-private `classify*` methods, no real network needed
-  - [x] README — table of TRANSIENT vs PERMANENT mappings per provider
-  - [x] PR raised: [#31](https://github.com/iFrugal/notification-service/pull/31)
+- [x] Single PR — merged as
+      [#31](https://github.com/iFrugal/notification-service/pull/31)
+  - [x] `FailureTypes` shared helper + per-provider classifiers
+        (SMTP / SES / Twilio); 34 unit tests
+  - [x] README per-provider TRANSIENT/PERMANENT table
 
-### Phase 9+ — Queued
+### Phase 9 — OpenAPI / Swagger generation ← in flight
+
+- [~] Single PR — runtime schema + CI artifact
+  - [x] springdoc 3.0.3 (matches Spring Boot 4.0.5) wired into
+        `notification-rest`
+  - [x] `OpenApiConfig` — service-level metadata (title, description
+        documenting the four cross-cutting headers and DD-specific
+        status codes), reusable header parameter / response schemas
+  - [x] `@Tag` on `NotificationController` and `AdminController`;
+        `@Operation` + `@ApiResponse` on the headline endpoints
+        (`/notifications`, `/notifications/batch`, `/notifications/async`,
+        `/admin/caller-registry`, `/admin/rate-limit`,
+        `/admin/dead-letter`)
+  - [x] `OpenApiSmokeTest` — boots full Spring context, hits
+        `/v3/api-docs`, asserts schema validity + key paths, persists
+        `target/openapi.json` for CI to upload
+  - [~] CI workflow upload of the persisted schema as the
+        `openapi-schema` build artifact — change is staged locally but
+        the PAT used in this sandbox lacks `workflow` scope, so the
+        `.github/workflows/ci.yml` edit needs a separate PR raised
+        from a workflow-enabled token (or manually committed via the
+        GitHub UI). The smoke test still produces
+        `notification-server/target/openapi.json` on every build,
+        ready for whichever upload step lands
+  - [x] Boot-4 housekeeping found along the way:
+        `@EnableConfigurationProperties` on `NotificationServerApplication`
+        (server doesn't depend on the starter), removed Jackson 2 /
+        Jackson 3 conflict in `application.yml` (Boot 4's split jackson
+        autoconfig binds against Jackson 3 enum types),
+        `CallerAdmissionFilter` builds its own `ObjectMapper` instead
+        of injecting one (the bean isn't always available depending on
+        which jackson-autoconfig path runs)
+  - [x] README — Live API documentation subsection, Features bullet
+  - [x] PR raised: [#32](https://github.com/iFrugal/notification-service/pull/32)
+
+### Phase 10+ — Queued
 
 - [ ] Distributed rate limit + Redis-backed `IdempotencyStore` (DD-14 — bundle the two)
 - [ ] DLQ replay endpoint with auth (re-submit by request id, with `replay-of` reference)
 - [ ] Webhook callbacks for async delivery status (SES bounce / complaint, Twilio status callback, FCM delivery)
-- [ ] OpenAPI / Swagger schema generation in CI
+- [ ] Jackson 2 → Jackson 3 migration (Boot 4's autoconfig defaults are Jackson 3; we still pin Jackson 2 in the parent POM)
 
 ---
 
@@ -178,7 +194,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| [#31](https://github.com/iFrugal/notification-service/pull/31) | feat(channels): provider FailureType classification | `feat/provider-failure-classification` | **awaiting review/merge** | Phase 8 — DD-13 follow-up; SMTP/SES/Twilio classify their native errors |
+| [#32](https://github.com/iFrugal/notification-service/pull/32) | feat(openapi): springdoc 3 schema + Swagger UI | `feat/openapi-springdoc` | **awaiting review/merge** | Phase 9 — `/v3/api-docs` + `/swagger-ui` + smoke test |
 
 ---
 
@@ -186,6 +202,7 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#31](https://github.com/iFrugal/notification-service/pull/31) | feat(channels): provider FailureType classification | 2026-04-30 |
 | [#30](https://github.com/iFrugal/notification-service/pull/30) | feat(dd-13): retries + dead-letter queue | 2026-04-28 |
 | [#29](https://github.com/iFrugal/notification-service/pull/29) | feat(dd-12): rate limiting per (tenant, caller, channel) | 2026-04-28 |
 | [#28](https://github.com/iFrugal/notification-service/pull/28) | feat(kafka): X-Service-Id header propagates into callerId | 2026-04-27 |
