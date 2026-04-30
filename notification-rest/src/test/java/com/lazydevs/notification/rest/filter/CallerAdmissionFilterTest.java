@@ -1,6 +1,5 @@
 package com.lazydevs.notification.rest.filter;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.caller.CallerRegistry.Decision;
 import jakarta.servlet.FilterChain;
@@ -32,13 +31,13 @@ class CallerAdmissionFilterTest {
 
     private CallerRegistry registry;
     private CallerAdmissionFilter filter;
-    private ObjectMapper objectMapper;
-
     @BeforeEach
     void setUp() {
         registry = mock(CallerRegistry.class);
-        objectMapper = new ObjectMapper();
-        filter = new CallerAdmissionFilter(registry, objectMapper);
+        // Filter builds its own ObjectMapper internally — the
+        // dependency-injection variant was simplified after Spring Boot 4
+        // split JacksonAutoConfiguration into its own module.
+        filter = new CallerAdmissionFilter(registry);
         // Per-test RequestContext, cleared in @AfterEach.
         RequestContext.current().set(TenantFilter.CALLER_ID_ATTRIBUTE, "billing-svc");
     }

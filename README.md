@@ -50,6 +50,7 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)
 - **Rate Limiting**: Opt-in token-bucket throttle per `(tenant, caller, channel)` with `429 + Retry-After` (DD-12)
 - **Retries + DLQ**: Opt-in synchronous retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN) and exponential backoff with jitter; pluggable dead-letter store SPI (DD-13)
+- **OpenAPI / Swagger**: Self-documenting via `/v3/api-docs` + `/swagger-ui` (springdoc 3.0.3); schema published as a CI build artifact for client codegen
 - **Template Engine**: FreeMarker templates with tenant-specific overrides
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service
@@ -282,6 +283,34 @@ notification:
 ---
 
 ## REST API
+
+### Live API documentation
+
+The service exposes its OpenAPI 3.1 schema and an interactive Swagger UI
+out of the box (springdoc 3.0.3, Phase 9):
+
+| Path | What |
+|------|------|
+| `/v3/api-docs` | OpenAPI 3.1 schema as JSON. The build also persists it to `notification-server/target/openapi.json` for CI to upload as a release artifact. |
+| `/swagger-ui.html` (redirects to `/swagger-ui/index.html`) | Interactive UI — try the endpoints from a browser. |
+
+Disable in production with:
+
+```yaml
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+```
+
+The schema includes all the cross-cutting headers documented above
+(`X-Tenant-Id`, `X-Service-Id`, `X-Idempotent-Replay`, `Retry-After`),
+the four DD-specific status codes (`409 / 429 / 403 / 503`), and the
+admin endpoints. A regression test (`OpenApiSmokeTest`) asserts that
+`/v3/api-docs` returns a valid schema with the expected paths so a
+future Spring Boot or springdoc upgrade can't silently break client
+codegen.
 
 ### Send Notification
 

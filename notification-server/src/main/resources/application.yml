@@ -13,11 +13,12 @@ spring:
       enable-auto-commit: true
 
   # Jackson configuration
-  jackson:
-    serialization:
-      write-dates-as-timestamps: false
-    deserialization:
-      fail-on-unknown-properties: false
+  # Boot 4's spring-boot-jackson auto-config binds these maps against
+  # Jackson 3 enum types (tools.jackson.databind.*), but this codebase
+  # still pins Jackson 2 in the parent POM. Until that migration is
+  # tackled separately, leave the customisation off — Boot's defaults
+  # are sensible (ISO-8601 dates, lenient unknown-properties handling
+  # via NotificationRequest's own config).
 
 # Notification service configuration
 notification:
@@ -118,6 +119,21 @@ notification:
     #           default: true  # SES is the default for acme-corp
     #           properties:
     #             region: us-west-2
+
+# OpenAPI / Swagger UI (Phase 9 — springdoc 3.0.3 with Spring Boot 4)
+# Default: schema served at /v3/api-docs, UI at /swagger-ui/index.html.
+# Operators that don't want runtime introspection can flip both off:
+#   springdoc.api-docs.enabled: false
+#   springdoc.swagger-ui.enabled: false
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+    tags-sorter: alpha
+  # Show only our own paths — keep actuator endpoints out of the schema.
+  paths-to-match: /api/v1/**
 
 # Actuator endpoints
 management:

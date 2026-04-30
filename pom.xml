@@ -81,6 +81,12 @@
              in a separate artifact (bucket4j-redis) that the distributed
              rate-limit DD will pull in alongside Redis-backed idempotency. -->
         <bucket4j.version>8.10.1</bucket4j.version>
+
+        <!-- Springdoc OpenAPI — runtime schema generation + Swagger UI.
+             The 3.x line targets Spring Boot 4 / Spring Framework 7 (the
+             POM extends spring-boot-starter-parent:4.0.5 directly), so
+             3.0.3 is the right pin for this codebase. -->
+        <springdoc.version>3.0.3</springdoc.version>
     </properties>
 
     <dependencyManagement>
@@ -260,6 +266,16 @@
                 <groupId>com.bucket4j</groupId>
                 <artifactId>bucket4j-core</artifactId>
                 <version>${bucket4j.version}</version>
+            </dependency>
+
+            <!-- Springdoc OpenAPI starter — exposes /v3/api-docs and
+                 /swagger-ui out of the box on top of Spring MVC. Pulled
+                 into notification-rest only; keeps the schema generator
+                 inert in deployments that don't expose REST. -->
+            <dependency>
+                <groupId>org.springdoc</groupId>
+                <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+                <version>${springdoc.version}</version>
             </dependency>
 
             <!-- Testing -->
