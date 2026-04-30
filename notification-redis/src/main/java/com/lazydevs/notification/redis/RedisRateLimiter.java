@@ -18,8 +18,6 @@ import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.codec.ByteArrayCodec;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
@@ -49,24 +47,46 @@ import java.util.function.Supplier;
  */
 @Slf4j
 @Component
-@ConditionalOnClass(LettuceConnectionFactory.class)
 @ConditionalOnProperty(prefix = "notification.redis.rate-limit",
         name = "enabled", havingValue = "true")
-@ConditionalOnMissingBean(RateLimiter.class)
 public class RedisRateLimiter implements RateLimiter {
 
     private final RateLimitProperties config;
     private final List<RateLimitOverride> sortedOverrides;
     private final String keyPrefix;
-    private final RedisClient redisClient;
-    private final StatefulRedisConnection<byte[], byte[]> connection;
-    private final ProxyManager<byte[]> proxyManager;
+    private final LettuceConnectionFactory connectionFactory;
     private final ConcurrentHashMap<RateLimitKey, BucketProxy> bucketHandles = new ConcurrentHashMap<>();
+
+    /**
+     * Lazily-initialised Lettuce client + connection + ProxyManager.
+     *
+     * <p>Originally these were constructor-initialised, but
+     * {@code RedisClient.connect()} is <strong>eager</strong> — it
+     * actually opens a TCP connection synchronously. That made the
+     * bean fail to instantiate during Spring context refresh on any
+     * environment where Redis wasn't reachable at the exact instant
+     * of bean creation: Testcontainers ramp-up windows, network
+     * blips during pod start, even local builds without a Redis
+     * running.
+     *
+     * <p>{@link RedisIdempotencyStore} and {@link RedisDeadLetterStore}
+     * don't have this problem because they use Spring Data Redis's
+     * {@code StringRedisTemplate} which itself lazy-connects. Bucket4j
+     * needs a Lettuce-native connection (Spring Data's
+     * {@code RedisConnection} doesn't satisfy the
+     * {@code LettuceBasedProxyManager} contract), so we have to manage
+     * our own Lettuce client — but we can defer opening it until the
+     * first {@link #tryConsume} call.
+     */
+    private volatile RedisClient redisClient;
+    private volatile StatefulRedisConnection<byte[], byte[]> connection;
+    private volatile ProxyManager<byte[]> proxyManager;
 
     public RedisRateLimiter(NotificationProperties properties,
                             LettuceConnectionFactory connectionFactory) {
         this.config = properties.getRateLimit();
         this.keyPrefix = properties.getRedis().getKeyPrefix();
+        this.connectionFactory = connectionFactory;
 
         // Same precedence sort the in-memory limiter uses — keep one
         // copy of the rule resolution semantics, just two backing
@@ -77,36 +97,42 @@ public class RedisRateLimiter implements RateLimiter {
                         .sorted(Comparator.comparingInt(RedisRateLimiter::specificity).reversed())
                         .toList();
 
-        // bucket4j's LettuceBasedProxyManager wants a Lettuce
-        // StatefulRedisConnection<byte[], byte[]>. We build our own
-        // off the connection coordinates Spring Data already resolved,
-        // using ByteArrayCodec so keys + values are raw bytes.
-        // Sharing the underlying connection-factory's RedisClient
-        // would be tighter but harder to test in isolation; one
-        // extra connection is acceptable for the first cut.
-        RedisStandaloneConfiguration sa = (RedisStandaloneConfiguration)
-                connectionFactory.getStandaloneConfiguration();
-        RedisURI.Builder uriBuilder = RedisURI.builder()
-                .withHost(sa.getHostName())
-                .withPort(sa.getPort())
-                .withDatabase(sa.getDatabase());
-        if (sa.getPassword() != null && sa.getPassword().isPresent()) {
-            uriBuilder.withPassword(sa.getPassword().get());
-        }
-        this.redisClient = RedisClient.create(uriBuilder.build());
-        this.connection = redisClient.connect(ByteArrayCodec.INSTANCE);
-        this.proxyManager = LettuceBasedProxyManager.builderFor(connection)
-                // Tell Bucket4j to expire idle bucket state — same idea
-                // as the Caffeine cache's expireAfterAccess in the
-                // in-memory impl, but enforced server-side so the same
-                // bucket on another pod sees a fresh start.
-                .withExpirationStrategy(
-                        ExpirationAfterWriteStrategy.basedOnTimeForRefillingBucketUpToMax(
-                                Duration.ofHours(1)))
-                .build();
-
-        log.info("RedisRateLimiter initialized: keyPrefix={}, default={}, {} override(s)",
+        log.info("RedisRateLimiter registered (lazy-connect): keyPrefix={}, default={}, {} override(s)",
                 keyPrefix, config.getDefaultRule(), sortedOverrides.size());
+    }
+
+    /**
+     * Build the Lettuce client + connection + ProxyManager on first
+     * use. Double-checked locking guards the field assignment so
+     * concurrent first-callers don't each open their own client.
+     */
+    private ProxyManager<byte[]> proxyManager() {
+        ProxyManager<byte[]> p = proxyManager;
+        if (p != null) {
+            return p;
+        }
+        synchronized (this) {
+            if (proxyManager == null) {
+                RedisStandaloneConfiguration sa = (RedisStandaloneConfiguration)
+                        connectionFactory.getStandaloneConfiguration();
+                RedisURI.Builder uriBuilder = RedisURI.builder()
+                        .withHost(sa.getHostName())
+                        .withPort(sa.getPort())
+                        .withDatabase(sa.getDatabase());
+                if (sa.getPassword() != null && sa.getPassword().isPresent()) {
+                    uriBuilder.withPassword(sa.getPassword().get());
+                }
+                this.redisClient = RedisClient.create(uriBuilder.build());
+                this.connection = redisClient.connect(ByteArrayCodec.INSTANCE);
+                this.proxyManager = LettuceBasedProxyManager.builderFor(connection)
+                        .withExpirationStrategy(
+                                ExpirationAfterWriteStrategy.basedOnTimeForRefillingBucketUpToMax(
+                                        Duration.ofHours(1)))
+                        .build();
+                log.info("RedisRateLimiter Lettuce connection opened on first use");
+            }
+            return proxyManager;
+        }
     }
 
     @Override
@@ -134,7 +160,7 @@ public class RedisRateLimiter implements RateLimiter {
                         .refillGreedy(rule.getRefillTokens(), rule.getRefillPeriod())
                         .build())
                 .build();
-        return proxyManager.builder().build(
+        return proxyManager().builder().build(
                 redisKey(key).getBytes(StandardCharsets.UTF_8),
                 configSupplier);
     }
@@ -187,15 +213,21 @@ public class RedisRateLimiter implements RateLimiter {
      */
     @PreDestroy
     public void shutdown() {
-        try {
-            connection.close();
-        } catch (RuntimeException e) {
-            log.debug("Lettuce connection close failed: {}", e.toString());
+        // Lazy init means these may still be null if the bean was
+        // never used — skip cleanly in that case.
+        if (connection != null) {
+            try {
+                connection.close();
+            } catch (RuntimeException e) {
+                log.debug("Lettuce connection close failed: {}", e.toString());
+            }
         }
-        try {
-            redisClient.shutdown();
-        } catch (RuntimeException e) {
-            log.debug("Lettuce client shutdown failed: {}", e.toString());
+        if (redisClient != null) {
+            try {
+                redisClient.shutdown();
+            } catch (RuntimeException e) {
+                log.debug("Lettuce client shutdown failed: {}", e.toString());
+            }
         }
     }
 }

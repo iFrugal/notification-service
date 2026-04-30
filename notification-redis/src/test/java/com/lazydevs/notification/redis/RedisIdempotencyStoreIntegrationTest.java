@@ -6,13 +6,10 @@ import com.lazydevs.notification.api.idempotency.IdempotencyKey;
 import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
 import com.lazydevs.notification.api.model.NotificationResponse;
-import com.lazydevs.notification.core.config.NotificationProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.TestPropertySource;
 
@@ -29,11 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>{@code FLUSHDB} is run before each test so test methods can't
  * pollute each other.
  */
-@SpringBootTest(classes = {
-        RedisIdempotencyStoreIntegrationTest.TestApp.class,
-        NotificationProperties.class,
-        RedisIdempotencyStore.class
-})
+@SpringBootTest(classes = TestRedisApp.class)
 @TestPropertySource(properties = {
         "notification.redis.idempotency.enabled=true",
         "notification.idempotency.ttl=PT60S",
@@ -138,7 +131,4 @@ class RedisIdempotencyStoreIntegrationTest extends AbstractRedisIntegrationTest 
                 null);
     }
 
-    @SpringBootApplication
-    @Import({NotificationProperties.class})
-    static class TestApp {}
 }

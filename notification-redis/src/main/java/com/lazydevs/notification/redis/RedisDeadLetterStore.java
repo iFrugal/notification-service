@@ -7,10 +7,7 @@ import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -42,10 +39,8 @@ import java.util.Optional;
  */
 @Slf4j
 @Component
-@ConditionalOnClass(LettuceConnectionFactory.class)
 @ConditionalOnProperty(prefix = "notification.redis.dead-letter",
         name = "enabled", havingValue = "true")
-@ConditionalOnMissingBean(DeadLetterStore.class)
 public class RedisDeadLetterStore implements DeadLetterStore {
 
     private final StringRedisTemplate redis;

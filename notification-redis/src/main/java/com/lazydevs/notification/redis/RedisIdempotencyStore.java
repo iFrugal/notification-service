@@ -10,13 +10,10 @@ import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.connection.RedisStringCommands.SetOption;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.types.Expiration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -31,20 +28,17 @@ import java.util.Optional;
  * {@code SET NX EX} which Redis guarantees as one operation — no Lua
  * script needed.
  *
- * <p>Bean is gated three ways:
- * <ul>
- *   <li>{@code @ConditionalOnProperty} — explicit opt-in.</li>
- *   <li>{@code @ConditionalOnMissingBean} — a custom impl wins.</li>
- *   <li>{@code @ConditionalOnClass} — only loads if Spring Data Redis
- *       is on the classpath (i.e. {@code notification-redis} is pulled).</li>
- * </ul>
+ * <p>Bean is opt-in via {@code @ConditionalOnProperty}. Operators who
+ * want a custom {@link IdempotencyStore} should register their own
+ * bean and leave {@code notification.redis.idempotency.enabled=false}
+ * — co-existing {@code @ConditionalOnMissingBean} on a {@code @Component}
+ * is unreliable in Spring (the condition evaluates before the bean
+ * itself registers, so the bean filters itself out).
  */
 @Slf4j
 @Component
-@ConditionalOnClass(LettuceConnectionFactory.class)
 @ConditionalOnProperty(prefix = "notification.redis.idempotency",
         name = "enabled", havingValue = "true")
-@ConditionalOnMissingBean(IdempotencyStore.class)
 public class RedisIdempotencyStore implements IdempotencyStore {
 
     private final StringRedisTemplate redis;

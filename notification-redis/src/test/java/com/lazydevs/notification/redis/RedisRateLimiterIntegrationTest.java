@@ -2,13 +2,10 @@ package com.lazydevs.notification.redis;
 
 import com.lazydevs.notification.api.ratelimit.RateLimiter.Decision;
 import com.lazydevs.notification.api.ratelimit.RateLimiter.RateLimitKey;
-import com.lazydevs.notification.core.config.NotificationProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.TestPropertySource;
 
@@ -21,11 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * cross-pod-style state sharing (we run two limiter instances against
  * the same Redis to simulate a multi-pod deployment).
  */
-@SpringBootTest(classes = {
-        RedisRateLimiterIntegrationTest.TestApp.class,
-        NotificationProperties.class,
-        RedisRateLimiter.class
-})
+@SpringBootTest(classes = TestRedisApp.class)
 @TestPropertySource(properties = {
         "notification.redis.rate-limit.enabled=true",
         "notification.redis.key-prefix=test-rl",
@@ -38,7 +31,6 @@ class RedisRateLimiterIntegrationTest extends AbstractRedisIntegrationTest {
 
     @Autowired RedisRateLimiter limiter;
     @Autowired StringRedisTemplate redis;
-    @Autowired NotificationProperties properties;
 
     @BeforeEach
     void flushRedis() {
@@ -80,7 +72,4 @@ class RedisRateLimiterIntegrationTest extends AbstractRedisIntegrationTest {
                 .startsWith("test-rl:ratelimit:");
     }
 
-    @SpringBootApplication
-    @Import({NotificationProperties.class})
-    static class TestApp {}
 }

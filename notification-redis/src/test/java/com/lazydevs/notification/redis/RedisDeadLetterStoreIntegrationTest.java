@@ -7,13 +7,10 @@ import com.lazydevs.notification.api.model.EmailRecipient;
 import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
-import com.lazydevs.notification.core.config.NotificationProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.TestPropertySource;
 
@@ -28,11 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * the in-memory one — same insertion order (most recent first), same
  * bounded eviction, same never-throw safety on serialisation issues.
  */
-@SpringBootTest(classes = {
-        RedisDeadLetterStoreIntegrationTest.TestApp.class,
-        NotificationProperties.class,
-        RedisDeadLetterStore.class
-})
+@SpringBootTest(classes = TestRedisApp.class)
 @TestPropertySource(properties = {
         "notification.redis.dead-letter.enabled=true",
         "notification.redis.dead-letter.max-entries=3",
@@ -119,7 +112,4 @@ class RedisDeadLetterStoreIntegrationTest extends AbstractRedisIntegrationTest {
         return new DeadLetterEntry(Instant.now(), req, resp, 3, FailureType.TRANSIENT);
     }
 
-    @SpringBootApplication
-    @Import({NotificationProperties.class})
-    static class TestApp {}
 }
