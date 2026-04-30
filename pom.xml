@@ -31,6 +31,7 @@
         <module>notification-audit</module>
         <module>notification-kafka</module>
         <module>notification-rest</module>
+        <module>notification-redis</module>
         <module>notification-spring-boot-starter</module>
         <module>notification-server</module>
     </modules>
@@ -266,6 +267,21 @@
                 <groupId>com.bucket4j</groupId>
                 <artifactId>bucket4j-core</artifactId>
                 <version>${bucket4j.version}</version>
+            </dependency>
+
+            <!-- Bucket4j Redis adapter — used by RedisRateLimiter
+                 (DD-14). Brings Lettuce as a transitive dep. -->
+            <dependency>
+                <groupId>com.bucket4j</groupId>
+                <artifactId>bucket4j-redis</artifactId>
+                <version>${bucket4j.version}</version>
+            </dependency>
+
+            <!-- Internal: notification-redis module -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>notification-redis</artifactId>
+                <version>${project.version}</version>
             </dependency>
 
             <!-- Springdoc OpenAPI starter — exposes /v3/api-docs and

@@ -51,6 +51,7 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - **Rate Limiting**: Opt-in token-bucket throttle per `(tenant, caller, channel)` with `429 + Retry-After` (DD-12)
 - **Retries + DLQ**: Opt-in synchronous retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN) and exponential backoff with jitter; pluggable dead-letter store SPI (DD-13)
 - **OpenAPI / Swagger**: Self-documenting via `/v3/api-docs` + `/swagger-ui` (springdoc 3.0.3); schema published as a CI build artifact for client codegen
+- **Distributed mode**: Optional `notification-redis` module providing Redis-backed implementations of the idempotency, rate-limit, and DLQ SPIs for multi-pod deployments (DD-14)
 - **Template Engine**: FreeMarker templates with tenant-specific overrides
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service
@@ -847,6 +848,68 @@ Audit records include:
 - Provider message IDs
 - Error information
 - Timestamps
+
+---
+
+## Distributed deployment (Redis backends)
+
+The default `notification-core` implementations of idempotency,
+rate-limit, and DLQ are in-memory — correct for single-pod deployments
+but wrong for multi-pod ones (each pod gets its own state). For
+multi-pod / horizontally-scaled setups, pull the
+`notification-redis` module which provides Redis-backed
+implementations of all three SPIs. See
+[DD-14](docs/design-decisions/14-distributed-redis-backends.md).
+
+```xml
+<dependency>
+  <groupId>com.github.ifrugal</groupId>
+  <artifactId>notification-redis</artifactId>
+  <version>${notification-service.version}</version>
+</dependency>
+```
+
+Each backend is independently toggleable so operators can migrate one
+at a time:
+
+```yaml
+notification:
+  redis:
+    key-prefix: "notification-svc"     # avoids collisions on shared Redis
+    idempotency:
+      enabled: true                    # closes DD-10's foreseen-Redis SPI
+    rate-limit:
+      enabled: true                    # closes DD-12's foreseen-Redis SPI
+    dead-letter:
+      enabled: true                    # closes DD-13's foreseen-Redis SPI
+      max-entries: 1000
+
+# Connection details — Spring Data Redis honours these
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+```
+
+The Redis-backed beans use `@ConditionalOnMissingBean` so a future
+custom impl (Hazelcast, DynamoDB, etc.) wins automatically. They use
+`@ConditionalOnClass(LettuceConnectionFactory.class)` so deployments
+that don't pull `notification-redis` aren't affected.
+
+**Key namespacing.** All keys are prefixed with
+`notification.redis.key-prefix` (default `notification-svc`). Multiple
+services sharing one Redis instance should set distinct prefixes.
+
+| Concern | Redis structure |
+|---------|-----------------|
+| Idempotency record | `String` at `<prefix>:idempotency:<tenant>:<caller>:<key>` (JSON, TTL via `EX`) |
+| Rate-limit bucket | bucket4j-redis CAS state at `<prefix>:ratelimit:<tenant>:<caller>:<channel>` |
+| Dead-letter list | `LIST` at `<prefix>:dlq` (LPUSH + LTRIM-bounded) |
+
+Operators can read DLQ entries with `redis-cli LRANGE
+<prefix>:dlq 0 -1` — entries are JSON, human-readable.
 
 ---
 

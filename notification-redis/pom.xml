@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.ifrugal</groupId>
+        <artifactId>notification-service</artifactId>
+        <version>1.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>notification-redis</artifactId>
+    <packaging>jar</packaging>
+
+    <name>${project.artifactId}</name>
+    <description>Notification Service Redis - Distributed Redis-backed implementations of DD-10 IdempotencyStore, DD-12 RateLimiter, and DD-13 DeadLetterStore. Opt-in module for multi-pod deployments.</description>
+
+    <dependencies>
+        <!-- Internal: depend on core for the SPI interfaces and the
+             config-properties shape. Also pulls notification-api. -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>notification-core</artifactId>
+        </dependency>
+
+        <!-- Spring Data Redis — provides LettuceConnectionFactory and
+             RedisTemplate auto-configuration, plus the spring.data.redis.*
+             property surface operators already know. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- Bucket4j Redis adapter — backs RedisRateLimiter. Lettuce
+             is pulled transitively by spring-boot-starter-data-redis,
+             so we use bucket4j-redis with the Lettuce-based
+             ProxyManager rather than Redisson or Jedis. -->
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j-redis</artifactId>
+        </dependency>
+
+        <!-- Jackson — JSON-serialise IdempotencyRecord and DeadLetterEntry
+             so operators can debug with redis-cli GET. Already on the
+             classpath via spring-boot-data-redis transitives, but
+             declared explicitly so the dep relationship is obvious. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+
+        <!-- Testing: Testcontainers spins up a real Redis for the
+             integration tests so the SPI contracts are exercised against
+             actual Redis behaviour, not a mock. -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Testcontainers 2.x renamed this artifact from
+                 'junit-jupiter' to 'testcontainers-junit-jupiter'. -->
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+</project>
