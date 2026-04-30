@@ -1,9 +1,13 @@
 package com.lazydevs.notification.rest.controller;
 
 import com.lazydevs.notification.api.Channel;
+import com.lazydevs.notification.api.NotificationService;
+import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.channel.NotificationProvider;
 import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
+import com.lazydevs.notification.api.model.NotificationRequest;
+import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.core.caller.CallerRegistry;
 import io.swagger.v3.oas.annotations.Operation;
@@ -61,19 +65,22 @@ public class AdminController {
     private final CallerRegistry callerRegistry;
     private final java.util.Optional<RateLimiter> rateLimiter;
     private final java.util.Optional<DeadLetterStore> deadLetterStore;
+    private final NotificationService notificationService;
 
     public AdminController(NotificationProperties properties,
                            ProviderRegistry providerRegistry,
                            NotificationTemplateEngine templateEngine,
                            CallerRegistry callerRegistry,
                            java.util.Optional<RateLimiter> rateLimiter,
-                           java.util.Optional<DeadLetterStore> deadLetterStore) {
+                           java.util.Optional<DeadLetterStore> deadLetterStore,
+                           NotificationService notificationService) {
         this.properties = properties;
         this.providerRegistry = providerRegistry;
         this.templateEngine = templateEngine;
         this.callerRegistry = callerRegistry;
         this.rateLimiter = rateLimiter;
         this.deadLetterStore = deadLetterStore;
+        this.notificationService = notificationService;
     }
 
     /**
@@ -289,6 +296,154 @@ public class AdminController {
                     "Backing store does not support snapshot iteration; query the store directly.");
         }
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Replay a dead-lettered notification (DD-15). Looks up the entry
+     * by its original {@code requestId}, builds a fresh
+     * {@link NotificationRequest} from the captured payload (new
+     * {@code requestId}, fresh {@code idempotencyKey}, {@code replayOf}
+     * pointing at the original), and re-submits it through
+     * {@link NotificationService#send(NotificationRequest)}.
+     *
+     * <p>Lifecycle:
+     * <ul>
+     *   <li>Successful replay (non-{@code FAILED}) — original entry is
+     *       removed from the DLQ. The new send may produce its own DLQ
+     *       entry if it ends up failing further down the line, but
+     *       that's a fresh record with its own {@code replayOf}.</li>
+     *   <li>Replay failure (still {@code FAILED}) — original entry stays
+     *       in the DLQ; HTTP 502 surfaces the new error to the operator
+     *       so the failure is loud rather than silent.</li>
+     * </ul>
+     *
+     * <p>The requesting tenant is taken from the path-resolved entry
+     * (not from {@code X-Tenant-Id}) — admin operators replay across
+     * tenants. RequestIds are tenant-unique by DD-13 §audit semantics
+     * but not globally unique; the lookup is therefore tenant-scoped to
+     * prevent cross-tenant replay collisions.
+     */
+    @PostMapping("/dead-letter/{requestId}/replay")
+    @Operation(summary = "Replay a dead-lettered notification (DD-15)",
+            description = "Re-submit a dead-lettered request by its original "
+                    + "requestId. The replay gets a fresh requestId + idempotencyKey "
+                    + "and a `replayOf` field pointing at the original. On success "
+                    + "the original entry is removed from the DLQ; on failure it "
+                    + "stays and the response is 502.")
+    public ResponseEntity<Map<String, Object>> replayDeadLetter(
+            @PathVariable("requestId") String requestId,
+            @RequestParam(name = "tenantId", required = false) String tenantId) {
+        if (deadLetterStore.isEmpty()) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("enabled", false);
+            body.put(FIELD_MESSAGE, "Dead-letter store is disabled. "
+                    + "Enable with notification.dead-letter.enabled=true.");
+            return ResponseEntity.status(503).body(body);
+        }
+        if (requestId == null || requestId.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of(FIELD_MESSAGE, "requestId is required"));
+        }
+
+        // Tenant defaults to the configured default-tenant when omitted —
+        // matches the rest of the admin surface.
+        String resolvedTenantId = (tenantId == null || tenantId.isBlank())
+                ? properties.getDefaultTenant()
+                : tenantId;
+
+        DeadLetterStore store = deadLetterStore.get();
+        Optional<DeadLetterEntry> opt = store.findByRequestId(resolvedTenantId, requestId);
+        if (opt.isEmpty()) {
+            return ResponseEntity.status(404)
+                    .body(Map.of(FIELD_MESSAGE,
+                            "No dead-letter entry for tenant=" + sanitizeForLog(resolvedTenantId)
+                                    + ", requestId=" + sanitizeForLog(requestId)));
+        }
+
+        DeadLetterEntry entry = opt.get();
+        NotificationRequest replay = buildReplayRequest(entry);
+
+        NotificationResponse response;
+        try {
+            response = notificationService.send(replay);
+        } catch (RuntimeException e) {
+            log.error("Replay failed for tenant={}, requestId={}: {}",
+                    sanitizeForLog(resolvedTenantId), sanitizeForLog(requestId), e.toString());
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("originalRequestId", requestId);
+            body.put("replayOf", requestId);
+            body.put(FIELD_MESSAGE, "Replay errored before reaching provider; entry kept.");
+            return ResponseEntity.status(500).body(body);
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("originalRequestId", requestId);
+        body.put("newRequestId", response.requestId());
+        body.put("replayOf", requestId);
+        body.put("tenantId", entry.request().getTenantId());
+        body.put("callerId", entry.request().getCallerId());
+        body.put(FIELD_CHANNEL, entry.request().getChannel() != null
+                ? entry.request().getChannel().name() : null);
+        body.put("status", response.status().name());
+
+        if (response.status() == NotificationStatus.FAILED
+                || response.status() == NotificationStatus.REJECTED) {
+            // Replay reached the provider but the provider failed again —
+            // entry stays. 502 makes "this didn't work" loud in operator
+            // tooling rather than buried in a 200 body.
+            body.put("errorCode", response.errorCode());
+            body.put("errorMessage", response.errorMessage());
+            body.put(FIELD_MESSAGE, "Replay failed; entry kept in DLQ.");
+            return ResponseEntity.status(502).body(body);
+        }
+
+        // Successful replay → drop the original from the DLQ. remove()
+        // is documented to never throw and to return false on a missing
+        // entry, so the worst case is a stale entry remains visible
+        // until size pressure or a subsequent replay attempt.
+        boolean removed = store.remove(resolvedTenantId, requestId);
+        body.put("removedFromDlq", removed);
+        body.put(FIELD_MESSAGE, "Replay submitted; entry removed from DLQ on successful send.");
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * Build a fresh {@link NotificationRequest} from a DLQ entry, with
+     * a new request id + idempotency key and {@code replayOf} pointing
+     * at the original. The captured payload's mutable fields (template
+     * data, attachments, recipient) are reused as-is — the original
+     * intent of the send is what we want to replay, not a redacted
+     * version of it.
+     */
+    private NotificationRequest buildReplayRequest(DeadLetterEntry entry) {
+        NotificationRequest original = entry.request();
+        String newRequestId = UUID.randomUUID().toString();
+        return NotificationRequest.builder()
+                .requestId(newRequestId)
+                .correlationId(original.getCorrelationId())
+                .tenantId(original.getTenantId())
+                // Fresh idempotency key tied to the new request id so DD-10's
+                // dedup window doesn't short-circuit straight to the cached
+                // FAILED response from the original send.
+                .idempotencyKey("replay-" + newRequestId)
+                .callerId(original.getCallerId())
+                .replayOf(original.getRequestId())
+                .notificationType(original.getNotificationType())
+                .channel(original.getChannel())
+                .provider(original.getProvider())
+                .recipient(original.getRecipient())
+                .templateData(original.getTemplateData())
+                .templateId(original.getTemplateId())
+                .metadata(original.getMetadata())
+                .priority(original.getPriority())
+                .scheduledAt(null) // Replays are immediate by definition
+                .attachments(original.getAttachments())
+                .build();
+    }
+
+    /** Strip ASCII control characters from a value before logging. */
+    private static String sanitizeForLog(String s) {
+        return s == null ? "null" : s.replaceAll("[\\p{Cntrl}]", "_");
     }
 
     /**

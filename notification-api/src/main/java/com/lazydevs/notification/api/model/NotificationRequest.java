@@ -71,6 +71,27 @@ public class NotificationRequest {
     @Size(max = 128, message = "callerId must be at most 128 characters")
     private String callerId;
 
+    /**
+     * Server-set reference back to the original {@code requestId} when
+     * this request is the result of a {@code POST
+     * /admin/dead-letter/{requestId}/replay} (DD-15). Null on fresh
+     * requests.
+     *
+     * <p>Callers cannot set this themselves — the field is populated
+     * by the admin replay path only. If a caller submits a value, it
+     * is ignored at admission time (logged at WARN, not rejected, so
+     * older clients keep working). Same server-set discipline applies
+     * as DD-11 takes with {@code callerId} when a registry is configured.
+     *
+     * <p>Replays of replays still point at the very first request id
+     * — so the replay chain is reconstructable in O(1) from any
+     * later entry, no graph traversal needed.
+     *
+     * <p>Maximum 128 characters; same shape as {@code requestId}.
+     */
+    @Size(max = 128, message = "replayOf must be at most 128 characters")
+    private String replayOf;
+
     // ========== Routing ==========
 
     /**

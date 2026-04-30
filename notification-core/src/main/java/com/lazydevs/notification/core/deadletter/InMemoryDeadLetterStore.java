@@ -79,6 +79,52 @@ public class InMemoryDeadLetterStore implements DeadLetterStore {
         return Math.toIntExact(entries.estimatedSize());
     }
 
+    @Override
+    public Optional<DeadLetterEntry> findByRequestId(String tenantId, String requestId) {
+        if (tenantId == null || requestId == null) {
+            return Optional.empty();
+        }
+        // Linear scan over the bounded map. With max-entries default
+        // 1000 and replay being operator-driven (i.e. RPS << 1), this
+        // is not a hot path. Keeping a secondary index would just
+        // double the memory + sync cost for no real win.
+        return entries.asMap().values().stream()
+                .filter(e -> tenantId.equals(e.request().getTenantId())
+                        && requestId.equals(e.request().getRequestId()))
+                .findFirst();
+    }
+
+    @Override
+    public boolean remove(String tenantId, String requestId) {
+        if (tenantId == null || requestId == null) {
+            return false;
+        }
+        // Find the storage key (sequence id) whose value matches —
+        // the public requestId isn't the cache key, so we have to
+        // walk the entries. Same scan cost as findByRequestId, see
+        // its rationale.
+        try {
+            Long key = entries.asMap().entrySet().stream()
+                    .filter(en -> tenantId.equals(en.getValue().request().getTenantId())
+                            && requestId.equals(en.getValue().request().getRequestId()))
+                    .map(java.util.Map.Entry::getKey)
+                    .findFirst()
+                    .orElse(null);
+            if (key == null) {
+                return false;
+            }
+            entries.invalidate(key);
+            return true;
+        } catch (RuntimeException e) {
+            // SPI contract: never throw. A flaky removal mustn't
+            // cascade into the replay endpoint returning 500 when the
+            // replay itself succeeded.
+            log.warn("Failed to remove dead-letter entry [tenant={}, requestId={}]: {}",
+                    tenantId, requestId, e.toString());
+            return false;
+        }
+    }
+
     /**
      * Force Caffeine's pending size-based evictions to run synchronously.
      * Used by tests that need deterministic post-bound state. Production
