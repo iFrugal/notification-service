@@ -68,7 +68,7 @@
 
         <!-- Channel Provider Dependencies -->
 
-        <aws-sdk.version>2.42.39</aws-sdk.version>
+        <aws-sdk.version>2.44.0</aws-sdk.version>
         <twilio.version>12.0.0</twilio.version>
         <firebase-admin.version>9.8.0</firebase-admin.version>
         <jakarta-mail.version>2.0.2</jakarta-mail.version>
