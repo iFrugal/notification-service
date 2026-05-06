@@ -46,6 +46,15 @@ public class NotificationAudit {
      */
     private String callerId;
 
+    /**
+     * Reference back to the original request id when this audit row
+     * captures a DLQ replay (DD-15). {@code null} on fresh sends.
+     * Mirrors {@link NotificationRequest#getReplayOf()} so log search
+     * for "everything that happened to this customer" can join the
+     * original and the replay records.
+     */
+    private String replayOf;
+
     // ========== Request Details ==========
 
     /**

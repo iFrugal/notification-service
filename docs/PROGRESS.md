@@ -23,7 +23,7 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-04-30 IST (DD-14 Redis backends merged; Phase 11 ready to start).
+- **Last updated:** 2026-04-30 IST (DD-15 DLQ replay PR open).
   All dates in this file are local IST (UTC+5:30) since that's where
   the work is happening; UTC equivalents differ by ~5h30m.
 
@@ -213,18 +213,47 @@ collaborator) can pick up where the last one left off.
         even when Testcontainers all skip
   - [x] README — "Distributed deployment" section + Features bullet
 
-### Phase 11+ — Queued
+### Phase 11 — DLQ replay (DD-15) ← in flight
 
-- [ ] DLQ replay endpoint with auth (re-submit by request id, with `replay-of` reference)
+- [~] Single PR — operator-driven replay endpoint that closes the loop
+      DD-13 §"Out of scope" promised
+  - [x] DD-15 design doc + decision-log entry
+  - [x] `DeadLetterStore` SPI extended with `findByRequestId(tenantId,
+        requestId)` + `remove(tenantId, requestId)` — default no-op
+        impls so existing custom backends compile unchanged
+  - [x] Both default impls (`InMemoryDeadLetterStore`,
+        `RedisDeadLetterStore`) implement the new methods. Redis uses
+        `LRANGE` + `LREM` against the bounded list; in-memory walks the
+        Caffeine map (replay is operator-driven, not a hot path)
+  - [x] `replayOf` field on `NotificationRequest` and
+        `NotificationAudit` — server-set only; REST controller and
+        Kafka listener scrub client-submitted values with a WARN
+  - [x] `POST /admin/dead-letter/{requestId}/replay` —
+        builds a fresh request from the captured payload (new
+        `requestId` + `replay-` idempotency key, `replayOf` set), calls
+        `NotificationService.send()`, removes the entry on success.
+        404 on unknown id; 502 when the replay reaches a provider but
+        fails again; 503 when the DLQ is disabled
+  - [x] Tests — `AdminControllerReplayTest` (6),
+        `NotificationControllerReplayOfScrubbingTest` (2),
+        `InMemoryDeadLetterStoreTest` extended (6 new cases)
+  - [x] README — replay subsection under DD-13 + admin-endpoints
+        row + Features bullet update
+
+### Phase 12+ — Queued
+
 - [ ] Webhook callbacks for async delivery status (SES bounce / complaint, Twilio status callback, FCM delivery)
 - [ ] Jackson 2 → Jackson 3 migration (Boot 4's autoconfig defaults are Jackson 3; we still pin Jackson 2 in the parent POM)
 - [ ] CI workflow upload of `openapi.json` (12-line edit deferred from Phase 9 due to PAT scope)
+- [ ] Bulk DLQ replay (replay all entries for a tenant; needs confirm-before-action shape)
 
 ---
 
 ## Open PRs
 
-_None._
+| # | Title | Branch | Status | Notes |
+|---|-------|--------|--------|-------|
+| (pending) | feat(dd-15): DLQ replay endpoint | `feat/dd-15-dlq-replay` | **awaiting CI/review** | Phase 11 — closes DD-13's foreseen replay endpoint |
 
 ---
 

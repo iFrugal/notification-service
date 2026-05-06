@@ -82,6 +82,18 @@ public class NotificationKafkaListener {
                 request.setCallerId(callerId);
             }
 
+            // replayOf is server-set only (DD-15). Producers shouldn't set
+            // it; if they do, scrub before dispatch so audit traces stay
+            // honest. Same forgiving stance as the REST entry point —
+            // log + null, don't reject.
+            String submittedReplayOf = request.getReplayOf();
+            if (submittedReplayOf != null && !submittedReplayOf.isBlank()) {
+                log.warn("Ignoring producer-submitted replayOf={} on Kafka request — "
+                        + "replayOf is server-set (DD-15).",
+                        submittedReplayOf.replaceAll("[\\p{Cntrl}]", "_"));
+                request.setReplayOf(null);
+            }
+
             // Process notification
             NotificationResponse response = notificationService.send(request);
 

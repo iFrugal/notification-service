@@ -49,7 +49,7 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
 - **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)
 - **Rate Limiting**: Opt-in token-bucket throttle per `(tenant, caller, channel)` with `429 + Retry-After` (DD-12)
-- **Retries + DLQ**: Opt-in synchronous retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN) and exponential backoff with jitter; pluggable dead-letter store SPI (DD-13)
+- **Retries + DLQ**: Opt-in synchronous retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN) and exponential backoff with jitter; pluggable dead-letter store SPI (DD-13); operator replay endpoint with `replayOf` chain (DD-15)
 - **OpenAPI / Swagger**: Self-documenting via `/v3/api-docs` + `/swagger-ui` (springdoc 3.0.3); schema published as a CI build artifact for client codegen
 - **Distributed mode**: Optional `notification-redis` module providing Redis-backed implementations of the idempotency, rate-limit, and DLQ SPIs for multi-pod deployments (DD-14)
 - **Template Engine**: FreeMarker templates with tenant-specific overrides
@@ -600,8 +600,8 @@ configured cap + recent entries (most recent first):
 ```
 
 The admin response intentionally omits the request payload (template
-data may carry PII). A future replay endpoint will re-submit by
-request id.
+data may carry PII). To re-send a dead-lettered notification by id,
+use the **replay endpoint** (DD-15) below.
 
 When the DLQ is disabled (`notification.dead-letter.enabled=false`)
 the endpoint returns **HTTP 503 Service Unavailable** with a small
@@ -614,6 +614,44 @@ empty:
   "message": "Dead-letter store is disabled. Enable with notification.dead-letter.enabled=true."
 }
 ```
+
+#### Replaying a dead-lettered notification (DD-15)
+
+```http
+POST /api/v1/admin/dead-letter/{requestId}/replay?tenantId=acme
+```
+
+The replay path looks up the entry by `(tenantId, requestId)`, builds a
+fresh request from the captured payload (new `requestId`, new
+`idempotencyKey`, `replayOf` set to the original), and re-submits it
+through `NotificationService.send()`. On success the original entry is
+**removed** from the DLQ; the chain stays reconstructable through the
+audit log via `replayOf`.
+
+Successful replay (`200 OK`):
+
+```json
+{
+  "originalRequestId": "req-abc-123",
+  "newRequestId": "req-def-456",
+  "replayOf": "req-abc-123",
+  "tenantId": "acme",
+  "callerId": "billing-svc",
+  "channel": "EMAIL",
+  "status": "SENT",
+  "removedFromDlq": true,
+  "message": "Replay submitted; entry removed from DLQ on successful send."
+}
+```
+
+Status codes: `404` when the request id isn't in the DLQ; `502` when
+the replay reaches a provider but fails again (entry kept); `503` when
+the DLQ is disabled.
+
+The `replayOf` field on `NotificationRequest` is **server-set only** —
+clients submitting it via `POST /api/v1/notifications` get a WARN log
+and the value nulled before dispatch. Replays of replays still point
+at the very first request id, so reconstruction is O(1).
 
 Live state — configured rules + currently-tracked buckets — exposed at
 `GET /api/v1/admin/rate-limit`:
@@ -656,6 +694,7 @@ Content-Type: application/json
 | `/api/v1/admin/caller-registry` | GET | Caller-registry state (DD-11) |
 | `/api/v1/admin/rate-limit` | GET | Rate-limit config + live bucket snapshot (DD-12) |
 | `/api/v1/admin/dead-letter` | GET | Recent retry-exhausted / permanent failures (DD-13) |
+| `/api/v1/admin/dead-letter/{requestId}/replay` | POST | Re-submit a dead-lettered request with `replayOf` chain (DD-15) |
 | `/api/v1/admin/health` | GET | Provider health status |
 | `/api/v1/admin/cache/templates/clear` | POST | Clear template cache |
 

@@ -97,4 +97,68 @@ public class RedisDeadLetterStore implements DeadLetterStore {
         Long len = redis.opsForList().size(key);
         return len == null ? 0 : len.intValue();
     }
+
+    @Override
+    public Optional<DeadLetterEntry> findByRequestId(String tenantId, String requestId) {
+        if (tenantId == null || requestId == null) {
+            return Optional.empty();
+        }
+        // Scan the bounded list (capped at maxEntries, default 1000).
+        // Replay is operator-driven so this isn't a hot path; the
+        // alternative — keeping a secondary index — would double the
+        // write cost on every add() for no measurable replay gain.
+        List<String> raws = redis.opsForList().range(key, 0, maxEntries - 1L);
+        if (raws == null) {
+            return Optional.empty();
+        }
+        for (String raw : raws) {
+            try {
+                DeadLetterEntry candidate = json.readValue(raw, DeadLetterEntry.class);
+                if (tenantId.equals(candidate.request().getTenantId())
+                        && requestId.equals(candidate.request().getRequestId())) {
+                    return Optional.of(candidate);
+                }
+            } catch (JsonProcessingException e) {
+                log.warn("Skipping malformed DLQ entry during findByRequestId: {}", e.getMessage());
+            }
+        }
+        return Optional.empty();
+    }
+
+    @Override
+    public boolean remove(String tenantId, String requestId) {
+        if (tenantId == null || requestId == null) {
+            return false;
+        }
+        // Locate the exact serialised payload so we can LREM it. Doing
+        // a "by-value" remove (rather than by-index) sidesteps the
+        // race where another writer LPUSHes between our scan and our
+        // remove — Redis LREM is atomic against the list.
+        try {
+            List<String> raws = redis.opsForList().range(key, 0, maxEntries - 1L);
+            if (raws == null) {
+                return false;
+            }
+            for (String raw : raws) {
+                try {
+                    DeadLetterEntry candidate = json.readValue(raw, DeadLetterEntry.class);
+                    if (tenantId.equals(candidate.request().getTenantId())
+                            && requestId.equals(candidate.request().getRequestId())) {
+                        Long removed = redis.opsForList().remove(key, 1, raw);
+                        return removed != null && removed > 0;
+                    }
+                } catch (JsonProcessingException e) {
+                    log.warn("Skipping malformed DLQ entry during remove: {}", e.getMessage());
+                }
+            }
+            return false;
+        } catch (RuntimeException e) {
+            // SPI contract: never throw. A flaky removal mustn't cascade
+            // into the replay endpoint returning 500 when the replay
+            // itself succeeded.
+            log.warn("Failed to remove DLQ entry [tenant={}, requestId={}]: {}",
+                    tenantId, requestId, e.toString());
+            return false;
+        }
+    }
 }

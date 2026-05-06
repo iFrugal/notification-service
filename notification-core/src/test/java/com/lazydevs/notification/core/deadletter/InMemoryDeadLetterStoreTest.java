@@ -132,20 +132,110 @@ class InMemoryDeadLetterStoreTest {
     }
 
     // -----------------------------------------------------------------
+    //  DD-15 — findByRequestId / remove
+    // -----------------------------------------------------------------
+
+    @Test
+    void findByRequestId_returnsEntryWhenPresent() {
+        InMemoryDeadLetterStore store = new InMemoryDeadLetterStore(properties);
+        store.add(entry("req-1", FailureType.TRANSIENT, 3));
+        store.add(entry("req-2", FailureType.PERMANENT, 1));
+
+        Optional<DeadLetterEntry> found = store.findByRequestId("acme", "req-2");
+        assertThat(found).isPresent();
+        assertThat(found.get().request().getRequestId()).isEqualTo("req-2");
+    }
+
+    @Test
+    void findByRequestId_isTenantScoped() {
+        // Two tenants both submit "req-1" — DD-15 §"Why tenant in the
+        // key": requestIds are caller-generated, only unique within a
+        // tenant. Cross-tenant collision must NOT leak.
+        InMemoryDeadLetterStore store = new InMemoryDeadLetterStore(properties);
+        store.add(entryFor("req-1", "acme"));
+        store.add(entryFor("req-1", "globex"));
+
+        assertThat(store.findByRequestId("acme", "req-1"))
+                .isPresent()
+                .get()
+                .satisfies(e -> assertThat(e.request().getTenantId()).isEqualTo("acme"));
+        assertThat(store.findByRequestId("globex", "req-1"))
+                .isPresent()
+                .get()
+                .satisfies(e -> assertThat(e.request().getTenantId()).isEqualTo("globex"));
+        assertThat(store.findByRequestId("widgets", "req-1")).isEmpty();
+    }
+
+    @Test
+    void findByRequestId_returnsEmptyForUnknownRequestId() {
+        InMemoryDeadLetterStore store = new InMemoryDeadLetterStore(properties);
+        store.add(entry("req-1", FailureType.TRANSIENT, 3));
+
+        assertThat(store.findByRequestId("acme", "nope")).isEmpty();
+        assertThat(store.findByRequestId(null, "req-1")).isEmpty();
+        assertThat(store.findByRequestId("acme", null)).isEmpty();
+    }
+
+    @Test
+    void remove_deletesEntryAndReturnsTrue() {
+        InMemoryDeadLetterStore store = new InMemoryDeadLetterStore(properties);
+        store.add(entry("req-1", FailureType.TRANSIENT, 3));
+        store.add(entry("req-2", FailureType.PERMANENT, 1));
+
+        assertThat(store.remove("acme", "req-1")).isTrue();
+        assertThat(store.findByRequestId("acme", "req-1")).isEmpty();
+        // The other entry stays intact.
+        assertThat(store.findByRequestId("acme", "req-2")).isPresent();
+        assertThat(store.size()).isEqualTo(1);
+    }
+
+    @Test
+    void remove_isIdempotentAgainstRepeatedCalls() {
+        InMemoryDeadLetterStore store = new InMemoryDeadLetterStore(properties);
+        store.add(entry("req-1", FailureType.TRANSIENT, 3));
+
+        assertThat(store.remove("acme", "req-1")).isTrue();
+        assertThat(store.remove("acme", "req-1"))
+                .as("second remove() of the same key should be a no-op returning false")
+                .isFalse();
+    }
+
+    @Test
+    void remove_isTenantScoped() {
+        InMemoryDeadLetterStore store = new InMemoryDeadLetterStore(properties);
+        store.add(entryFor("req-1", "acme"));
+        store.add(entryFor("req-1", "globex"));
+
+        assertThat(store.remove("globex", "req-1")).isTrue();
+        // acme's req-1 untouched.
+        assertThat(store.findByRequestId("acme", "req-1")).isPresent();
+        assertThat(store.findByRequestId("globex", "req-1")).isEmpty();
+    }
+
+    // -----------------------------------------------------------------
     //  Helpers
     // -----------------------------------------------------------------
 
     private static DeadLetterEntry entry(String requestId, FailureType ft, int attempts) {
+        return entryWith(requestId, "acme", ft, attempts);
+    }
+
+    private static DeadLetterEntry entryFor(String requestId, String tenantId) {
+        return entryWith(requestId, tenantId, FailureType.TRANSIENT, 1);
+    }
+
+    private static DeadLetterEntry entryWith(String requestId, String tenantId,
+                                             FailureType ft, int attempts) {
         NotificationRequest req = NotificationRequest.builder()
                 .requestId(requestId)
-                .tenantId("acme")
+                .tenantId(tenantId)
                 .callerId("billing")
                 .notificationType("TEST")
                 .channel(Channel.EMAIL)
                 .recipient(new EmailRecipient(null, "user@example.com", null, null, null, null))
                 .build();
         NotificationResponse resp = new NotificationResponse(
-                requestId, null, "acme", "billing", Channel.EMAIL,
+                requestId, null, tenantId, "billing", Channel.EMAIL,
                 "smtp", NotificationStatus.FAILED, null,
                 "ERR", "boom",
                 Instant.now(), Instant.now(), null, null);

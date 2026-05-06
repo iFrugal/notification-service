@@ -44,4 +44,46 @@ public interface DeadLetterStore {
      * empty case).
      */
     int size();
+
+    /**
+     * Look up a single dead-letter entry by its tenant + original
+     * request id. Used by the DD-15 replay endpoint to reconstruct the
+     * original {@link com.lazydevs.notification.api.model.NotificationRequest}
+     * before re-submitting it.
+     *
+     * <p>Returns {@link Optional#empty()} when no matching entry exists
+     * — including the case where the backend can't answer the lookup
+     * cheaply (e.g. a future Redis-backed store would have to scan, but
+     * since the DLQ is bounded the scan cost is small enough that we
+     * don't bother distinguishing "not found" from "lookup unsupported"
+     * yet).
+     *
+     * <p>{@code tenantId} is part of the key because requestIds are
+     * caller-generated and only unique <em>within</em> a tenant; two
+     * tenants can both submit "req-001". Cross-tenant collision would
+     * silently leak one tenant's payload to another's replay otherwise.
+     *
+     * <p>Default is {@code Optional.empty()} so existing impls compile
+     * unchanged (DD-15 was added after the SPI's initial release).
+     */
+    default Optional<DeadLetterEntry> findByRequestId(String tenantId, String requestId) {
+        return Optional.empty();
+    }
+
+    /**
+     * Remove a single dead-letter entry by its tenant + original
+     * request id. Used by the DD-15 replay endpoint after a successful
+     * replay to keep the DLQ as "the things still broken".
+     *
+     * <p>Returns {@code true} only if an entry was actually removed —
+     * idempotent against repeated calls. Implementations should never
+     * throw; like {@link #add}, a flaky removal must not cascade into
+     * a caller-visible error.
+     *
+     * <p>Default is {@code false} (no-op) so existing impls compile
+     * unchanged.
+     */
+    default boolean remove(String tenantId, String requestId) {
+        return false;
+    }
 }

@@ -79,6 +79,7 @@ public class NotificationController {
         log.debug("Received notification request: channel={}, type={}",
                 request.getChannel(), request.getNotificationType());
 
+        clearServerSetFields(request);
         NotificationResponse response = notificationService.send(request);
         ResponseEntity.BodyBuilder builder = ResponseEntity.ok();
         if (Boolean.TRUE.equals(response.idempotentReplay())) {
@@ -100,6 +101,7 @@ public class NotificationController {
             @Valid @RequestBody List<NotificationRequest> requests) {
         log.debug("Received batch notification request: count={}", requests.size());
 
+        requests.forEach(NotificationController::clearServerSetFields);
         List<NotificationResponse> responses = notificationService.sendBatch(requests);
         return ResponseEntity.ok(responses);
     }
@@ -121,10 +123,35 @@ public class NotificationController {
         log.debug("Received async notification request: channel={}, type={}",
                 request.getChannel(), request.getNotificationType());
 
+        clearServerSetFields(request);
         // Trigger async send
         notificationService.sendAsync(request);
 
         // Return accepted response
         return ResponseEntity.accepted().body(NotificationResponse.accepted(request));
+    }
+
+    /**
+     * Strip fields that are <strong>server-set only</strong> from
+     * incoming client traffic. Callers that submit values for these
+     * fields aren't rejected (older clients should keep working) — the
+     * value is logged at WARN and nulled.
+     *
+     * <p>Currently scrubs:
+     * <ul>
+     *   <li>{@code replayOf} — set only by the DD-15 admin replay path.</li>
+     * </ul>
+     */
+    private static void clearServerSetFields(NotificationRequest request) {
+        if (request == null) {
+            return;
+        }
+        String submittedReplayOf = request.getReplayOf();
+        if (submittedReplayOf != null && !submittedReplayOf.isBlank()) {
+            log.warn("Ignoring caller-submitted replayOf={} — replayOf is server-set "
+                    + "(DD-15); use POST /admin/dead-letter/{{id}}/replay instead.",
+                    submittedReplayOf.replaceAll("[\\p{Cntrl}]", "_"));
+            request.setReplayOf(null);
+        }
     }
 }
