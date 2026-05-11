@@ -12,6 +12,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -41,7 +42,7 @@ class WebhookControllerTest {
         properties = new NotificationProperties();
         properties.getWebhooks().setEnabled(true);
         listener = new RecordingListener();
-        controller = new WebhookController(properties, List.of(listener));
+        controller = new WebhookController(properties, List.of(listener), Optional.empty());
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 
@@ -352,7 +353,7 @@ class WebhookControllerTest {
         // shouldn't make us return 500 to the provider (which would
         // then retry forever).
         ThrowingListener throwing = new ThrowingListener();
-        controller = new WebhookController(properties, List.of(throwing, listener));
+        controller = new WebhookController(properties, List.of(throwing, listener), Optional.empty());
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         mockMvc.perform(post("/api/v1/webhooks/twilio/status")

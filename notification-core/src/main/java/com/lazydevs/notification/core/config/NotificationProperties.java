@@ -115,6 +115,14 @@ public class NotificationProperties {
     private DeliveryEventProperties deliveryEvents = new DeliveryEventProperties();
 
     /**
+     * Actuator health indicator config (see DD-21). Each indicator
+     * registers automatically when its backing SPI bean is present;
+     * the only knob is the DLQ near-full threshold.
+     */
+    @Valid
+    private HealthProperties health = new HealthProperties();
+
+    /**
      * Tenant-specific configurations
      */
     private Map<String, TenantConfig> tenants = new LinkedHashMap<>();
@@ -407,6 +415,25 @@ public class NotificationProperties {
          */
         @Min(value = 1, message = "dead-letter max-entries must be at least 1")
         private int maxEntries = 1_000;
+    }
+
+    /**
+     * Actuator health-indicator config (DD-21).
+     */
+    @Data
+    public static class HealthProperties {
+        /**
+         * Percentage of {@code maxEntries} at which the DLQ health
+         * indicator flips from {@code UP} to {@code OUT_OF_SERVICE}.
+         * Default 80%. The indicator is still answering (DLQ isn't
+         * "broken") — but operators want their monitoring to alert
+         * here, and {@code OUT_OF_SERVICE} is the actuator-side
+         * signal for "drainable, not broken."
+         *
+         * <p>Set to {@code 0} to never flip (useful in dev).
+         */
+        @Min(value = 0, message = "dlq-near-full-percent must be 0-100")
+        private int dlqNearFullPercent = 80;
     }
 
     /**

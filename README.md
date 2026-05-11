@@ -54,6 +54,7 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - **Distributed mode**: Optional `notification-redis` module providing Redis-backed implementations of the idempotency, rate-limit, and DLQ SPIs for multi-pod deployments (DD-14)
 - **Webhook delivery callbacks**: Opt-in `/webhooks/{provider}/...` surface ingests Twilio status (HMAC-SHA1) and SES via SNS (X.509) callbacks; parsed events flow to a `DeliveryEventListener` SPI (DD-16)
 - **Delivery event store**: Opt-in bounded `DeliveryEventStore` SPI for `GET /admin/delivery-events` queryable history; in-memory Caffeine default + Redis backend (DD-17); `?requestId=…` joins via audit so operators query by the id they already know (DD-18)
+- **Observability**: Per-SPI actuator health indicators with near-full DLQ alerting via `OUT_OF_SERVICE` (DD-21); Micrometer metrics across the send path (sends/retries/rate-limit/DLQ/delivery) for Prometheus or any Micrometer-compatible registry (DD-22)
 - **Template Engine**: FreeMarker templates with tenant-specific overrides
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service

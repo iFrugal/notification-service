@@ -83,6 +83,30 @@
             <groupId>com.bucket4j</groupId>
             <artifactId>bucket4j-core</artifactId>
         </dependency>
+
+        <!-- spring-boot-health — used by DD-21 health indicators.
+             Boot 4 moved HealthIndicator out of spring-boot-actuator
+             into a dedicated module under
+             org.springframework.boot.health.contributor.
+             Optional so consumers who don't pull actuator don't
+             transitively inherit it; the @ConditionalOnClass on the
+             indicator beans skips them cleanly when HealthIndicator
+             isn't present. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-health</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Micrometer core — used by DD-22 NotificationMetrics helper.
+             Same optional discipline as actuator: present on the
+             notification-server classpath (which pulls actuator
+             transitively), absent on pure library consumers. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+            <optional>true</optional>
+        </dependency>
     </dependencies>
 
 </project>

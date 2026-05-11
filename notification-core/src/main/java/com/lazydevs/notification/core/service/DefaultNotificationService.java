@@ -52,6 +52,7 @@ public class DefaultNotificationService implements NotificationService {
     private final Optional<RateLimiter> rateLimiter;
     private final Optional<RetryExecutor> retryExecutor;
     private final Optional<DeadLetterStore> deadLetterStore;
+    private final Optional<com.lazydevs.notification.core.metrics.NotificationMetrics> metrics;
     private final Executor asyncExecutor;
 
     public DefaultNotificationService(
@@ -62,7 +63,8 @@ public class DefaultNotificationService implements NotificationService {
             Optional<IdempotencyStore> idempotencyStore,
             Optional<RateLimiter> rateLimiter,
             Optional<RetryExecutor> retryExecutor,
-            Optional<DeadLetterStore> deadLetterStore) {
+            Optional<DeadLetterStore> deadLetterStore,
+            Optional<com.lazydevs.notification.core.metrics.NotificationMetrics> metrics) {
         this.properties = properties;
         this.providerRegistry = providerRegistry;
         this.templateEngine = templateEngine;
@@ -78,6 +80,11 @@ public class DefaultNotificationService implements NotificationService {
         // dispatch, no DLQ recording — backwards-compatible default.
         this.retryExecutor = retryExecutor;
         this.deadLetterStore = deadLetterStore;
+        // Optional<NotificationMetrics>: empty when Micrometer isn't on
+        // the classpath (DD-22 §"Why Optional<NotificationMetrics>").
+        // Send-path methods call metrics.ifPresent(...) — hot-path-skips
+        // a single method call when metrics are disabled.
+        this.metrics = metrics;
         this.asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
     }
 
@@ -116,6 +123,7 @@ public class DefaultNotificationService implements NotificationService {
                     log.info("Idempotency replay: requestId={}, key={}, originalRequestId={}",
                             request.getRequestId(), request.getIdempotencyKey(), cached.requestId());
                     auditService.recordDuplicateHit(request, rec);
+                    metrics.ifPresent(m -> m.recordIdempotencyReplay(request.getTenantId()));
                     // Stamp as a replay so the controller can surface
                     // X-Idempotent-Replay: true (DD-10 §REST-API-behaviour).
                     return NotificationResponse.replayedFrom(cached);
@@ -177,6 +185,8 @@ public class DefaultNotificationService implements NotificationService {
                     log.info("Notification took {} attempt(s): requestId={}, provider={}, success={}",
                             attempts, sanitizeForLog(request.getRequestId()),
                             sanitizeForLog(provider.getProviderName()), result.success());
+                    int totalAttempts = attempts;
+                    metrics.ifPresent(m -> m.recordRetry(request.getChannel(), totalAttempts));
                 }
             } else {
                 result = provider.send(request, content);
@@ -217,6 +227,7 @@ public class DefaultNotificationService implements NotificationService {
             auditService.updateStatus(request.getRequestId(), response.status(),
                     response.providerMessageId(), response.errorCode(), response.errorMessage());
 
+            recordSendMetric(request.getChannel(), response.status(), receivedAt);
             return response;
 
         } catch (NotificationException e) {
@@ -237,6 +248,7 @@ public class DefaultNotificationService implements NotificationService {
             // failures are PERMANENT — retrying won't help — but still
             // worth recording so operators see them in /admin/dead-letter.
             recordDeadLetter(request, response, 1, FailureType.PERMANENT);
+            recordSendMetric(request.getChannel(), response.status(), receivedAt);
             return response;
 
         } catch (Exception e) {
@@ -255,6 +267,7 @@ public class DefaultNotificationService implements NotificationService {
             // DD-13: unexpected throw — classify as UNKNOWN so operators
             // can triage from the DLQ admin endpoint.
             recordDeadLetter(request, response, 1, FailureType.UNKNOWN);
+            recordSendMetric(request.getChannel(), response.status(), receivedAt);
             return response;
 
         } finally {
@@ -287,12 +300,26 @@ public class DefaultNotificationService implements NotificationService {
         try {
             deadLetterStore.get().add(new DeadLetterEntry(
                     Instant.now(), request, response, attempts, failureType));
+            metrics.ifPresent(m -> m.recordDlqAdded(request.getChannel(), failureType));
         } catch (RuntimeException e) {
             // Same sanitization rationale as above — requestId may
             // carry caller-supplied control chars (CodeQL log injection).
             log.warn("DLQ record failed for requestId={}: {}",
                     sanitizeForLog(request.getRequestId()), e.toString());
         }
+    }
+
+    /**
+     * Record the DD-22 send counter + timer at every return path
+     * from {@link #send(NotificationRequest)}. Pulled out as a helper
+     * so the three return sites (success, NotificationException,
+     * generic catch) all emit the metric uniformly.
+     */
+    private void recordSendMetric(com.lazydevs.notification.api.Channel channel,
+                                  com.lazydevs.notification.api.NotificationStatus status,
+                                  Instant receivedAt) {
+        metrics.ifPresent(m -> m.recordSend(channel, status,
+                java.time.Duration.between(receivedAt, Instant.now())));
     }
 
     /**
@@ -321,6 +348,7 @@ public class DefaultNotificationService implements NotificationService {
                 request.getTenantId(), callerForBucket, channel);
         RateLimiter.Decision decision = rateLimiter.get().tryConsume(rlKey);
         if (!decision.allowed()) {
+            metrics.ifPresent(m -> m.recordRateLimitDenied(request.getChannel()));
             throw new RateLimitExceededException(
                     request.getTenantId(), callerForBucket, channel,
                     decision.retryAfter());

@@ -23,7 +23,7 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-05-11 IST (DD-18 merged; DD-19 + DD-20 operator-surface bundle PR open).
+- **Last updated:** 2026-05-11 IST (DD-19 + DD-20 merged; DD-21 + DD-22 observability bundle PR open).
   All dates in this file are local IST (UTC+5:30) since that's where
   the work is happening; UTC equivalents differ by ~5h30m.
 
@@ -325,7 +325,7 @@ collaborator) can pick up where the last one left off.
   - [x] README — "Did this notification deliver?" prose under the
         existing delivery-events section + Features bullet update
 
-### Phase 15 — Operator-surface bundle (DD-19 + DD-20) ← in flight
+### Phase 15 — Operator-surface bundle (DD-19 + DD-20) ✅ (merged as #42)
 
 - [~] Bundled PR — two coherent operator-facing surfaces ship
       together because both are low-risk extensions of existing
@@ -353,11 +353,50 @@ collaborator) can pick up where the last one left off.
   - [x] README — admin-endpoints table rows for all three new
         endpoints
 
-### Phase 16+ — Queued
+### Phase 16 — Observability bundle (DD-21 + DD-22) ← in flight
+
+- [~] Bundled PR — per-SPI health indicators + Micrometer metrics
+      ship together. Both touch actuator, both low-risk, both
+      operator-loved
+  - [x] DD-21 design doc + decision-log entry
+  - [x] DD-22 design doc + decision-log entry
+  - [x] `spring-boot-health` + `micrometer-core` added as optional
+        deps on `notification-core` (transitive only when consumers
+        pull actuator)
+  - [x] Four `HealthIndicator` beans under
+        `notification-core.health` package — DLQ, idempotency,
+        rate-limit, delivery-events. Each `@ConditionalOnClass(HealthIndicator)`
+        + `@ConditionalOnProperty` matching its SPI's enable flag
+        (avoids the `@ConditionalOnBean` ordering antipattern that
+        bit us on DD-14)
+  - [x] DLQ indicator flips to `Status.OUT_OF_SERVICE` at configurable
+        threshold (default 80% of `max-entries`) — not `DOWN`, so
+        K8s liveness probes don't restart the pod
+  - [x] `NotificationMetrics` helper wraps `MeterRegistry`. Eight
+        counters (sends, retries, rate-limit denied, idempotency
+        replay, DLQ added, delivery received, webhook signature
+        failed), two gauges (DLQ size, delivery-events size), one
+        timer (send duration)
+  - [x] Wired into `DefaultNotificationService` (replay /
+        rate-limit / DLQ / send paths) and `WebhookController`
+        (delivery event + signature-failed)
+  - [x] Tag cardinality bounded — `tenant` only on
+        `idempotency.replay` per DD-22 §"Tag cardinality"
+  - [x] `HealthProperties.dlqNearFullPercent` config knob (default 80)
+  - [x] Tests — `HealthIndicatorsTest` (9 cases across all four
+        indicators), `NotificationMetricsTest` (11 cases covering
+        every meter type)
+  - [x] Existing test constructor sites updated for new
+        `Optional<NotificationMetrics>` arg on `DefaultNotificationService`
+        and `WebhookController`
+
+### Phase 17+ — Queued
 
 - [ ] Jackson 2 → Jackson 3 migration (Boot 4's autoconfig defaults are Jackson 3; we still pin Jackson 2 in the parent POM)
 - [ ] CI workflow upload of `openapi.json` (12-line edit deferred from Phase 9 due to PAT scope)
 - [ ] FCM delivery callbacks (Firebase doesn't ship per-message webhooks today; revisit if pull-based BigQuery export is in scope)
+- [ ] Per-channel retry/rate-limit differentiation (DD-12 §"Out of scope")
+- [ ] Outbound delivery webhooks (push our state to upstream callers — inverse of DD-16)
 
 ---
 
@@ -365,7 +404,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| (pending) | feat(dd-19+dd-20): bulk DLQ replay + admin audit browse | `feat/dd-19-20-operator-surface` | **awaiting CI/review** | Phase 15 — bundled operator-surface PR |
+| (pending) | feat(dd-21+dd-22): actuator health + Micrometer metrics | `feat/dd-21-22-observability` | **awaiting CI/review** | Phase 16 — observability foundation |
 
 ---
 
@@ -373,6 +412,7 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#42](https://github.com/iFrugal/notification-service/pull/42) | feat(dd-19+dd-20): bulk DLQ replay + admin audit browse | 2026-05-11 |
 | [#41](https://github.com/iFrugal/notification-service/pull/41) | feat(dd-18): GET /admin/delivery-events?requestId — audit↔delivery join | 2026-05-11 |
 | [#40](https://github.com/iFrugal/notification-service/pull/40) | feat(dd-17): persistent DeliveryEventStore + GET /admin/delivery-events | 2026-05-11 |
 | [#38](https://github.com/iFrugal/notification-service/pull/38) | feat(dd-16): webhook delivery callbacks (Twilio + SES via SNS) | 2026-05-11 |
