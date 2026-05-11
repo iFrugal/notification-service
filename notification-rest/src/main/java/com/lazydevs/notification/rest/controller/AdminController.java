@@ -418,6 +418,146 @@ public class AdminController {
     }
 
     /**
+     * Bulk DLQ replay (DD-19). One operator action that revisits every
+     * matching DLQ entry — most-recent-first, up to {@code limit} —
+     * either as a dry-run preview or live execution.
+     *
+     * <p>Mandatory {@code tenantId} (blast-radius safety: a typo
+     * scoped to one tenant is recoverable; the same typo without a
+     * scope would touch the entire DLQ).
+     *
+     * <p>Live mode: per entry, builds a fresh request the same way
+     * {@link #buildReplayRequest(DeadLetterEntry)} does, calls
+     * {@link NotificationService#send(NotificationRequest)}, removes
+     * the entry on success, leaves it on failure. The HTTP response
+     * is always {@code 200} — per-entry failures appear in the
+     * {@code entries} array so an operator running this for recovery
+     * sees every individual outcome rather than a single status code.
+     *
+     * <p>Dry-run: returns the same preview list but skips both the
+     * {@code send} and the {@code remove} — useful before pulling
+     * the trigger on a 1000-entry recovery.
+     */
+    @PostMapping("/dead-letter/replay-batch")
+    @Operation(summary = "Bulk DLQ replay (DD-19)",
+            description = "Replay many DLQ entries in one call. Mandatory "
+                    + "tenantId for blast-radius safety. limit defaults to 100, "
+                    + "capped at 1000. dryRun=true returns the preview without "
+                    + "side effects. Per-entry results in the response — HTTP "
+                    + "200 even when some entries fail.")
+    public ResponseEntity<Map<String, Object>> replayDeadLetterBatch(
+            @RequestParam(name = "tenantId", required = false) String tenantId,
+            @RequestParam(name = "limit", defaultValue = "100") int limit,
+            @RequestParam(name = "dryRun", defaultValue = "false") boolean dryRun) {
+
+        if (deadLetterStore.isEmpty()) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("enabled", false);
+            body.put(FIELD_MESSAGE, "Dead-letter store is disabled. "
+                    + "Enable with notification.dead-letter.enabled=true.");
+            return ResponseEntity.status(503).body(body);
+        }
+        if (tenantId == null || tenantId.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of(FIELD_MESSAGE, "tenantId is required"));
+        }
+
+        DeadLetterStore store = deadLetterStore.get();
+        Optional<List<DeadLetterEntry>> snapshotOpt = store.snapshot();
+        if (snapshotOpt.isEmpty()) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("mode", dryRun ? "dry-run" : "live");
+            body.put("tenantId", tenantId);
+            body.put(FIELD_MESSAGE,
+                    "Backing store does not support snapshot iteration; "
+                            + "use single-entry replay against known request ids.");
+            return ResponseEntity.ok(body);
+        }
+
+        int safeLimit = Math.clamp(limit, 1, 1_000);
+        List<DeadLetterEntry> matching = snapshotOpt.get().stream()
+                .filter(e -> tenantId.equals(e.request().getTenantId()))
+                .limit(safeLimit)
+                .toList();
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("mode", dryRun ? "dry-run" : "live");
+        body.put("tenantId", tenantId);
+        body.put("requested", matching.size());
+
+        if (dryRun) {
+            body.put("entries", matching.stream()
+                    .map(this::toDryRunPreviewEntry)
+                    .toList());
+            body.put(FIELD_MESSAGE,
+                    "Dry-run only — no replays were submitted, no DLQ entries removed.");
+            return ResponseEntity.ok(body);
+        }
+
+        int replayed = 0;
+        int stillDeadLettered = 0;
+        List<Map<String, Object>> resultEntries = new ArrayList<>(matching.size());
+        for (DeadLetterEntry entry : matching) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            String originalRequestId = entry.request().getRequestId();
+            row.put("originalRequestId", originalRequestId);
+
+            NotificationRequest replay = buildReplayRequest(entry);
+            try {
+                NotificationResponse response = notificationService.send(replay);
+                row.put("newRequestId", response.requestId());
+                row.put("status", response.status().name());
+                boolean succeeded = response.status() != NotificationStatus.FAILED
+                        && response.status() != NotificationStatus.REJECTED;
+                if (succeeded) {
+                    boolean removed = store.remove(tenantId, originalRequestId);
+                    row.put("removedFromDlq", removed);
+                    replayed++;
+                } else {
+                    row.put("errorCode", response.errorCode());
+                    row.put("errorMessage", response.errorMessage());
+                    row.put("removedFromDlq", false);
+                    stillDeadLettered++;
+                }
+            } catch (RuntimeException e) {
+                // Per-entry failures don't fail the batch — caller sees
+                // each row's outcome via the entries array.
+                row.put("status", "FAILED");
+                row.put("errorMessage", e.getClass().getSimpleName() + ": " + e.getMessage());
+                row.put("removedFromDlq", false);
+                stillDeadLettered++;
+                log.warn("Bulk replay entry failed [tenant={}, requestId={}]: {}",
+                        sanitizeForLog(tenantId), sanitizeForLog(originalRequestId), e.toString());
+            }
+            resultEntries.add(row);
+        }
+
+        body.put("replayed", replayed);
+        body.put("stillDeadLettered", stillDeadLettered);
+        body.put("entries", resultEntries);
+        body.put(FIELD_MESSAGE, "Bulk replay completed. Successful entries removed from DLQ; "
+                + "failed entries kept for inspection.");
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * Build the dry-run preview row for a DLQ entry — same routing
+     * identifiers as {@link #toAdminEntry(DeadLetterEntry)} but
+     * keyed under {@code originalRequestId} to match the live-mode
+     * response shape.
+     */
+    private Map<String, Object> toDryRunPreviewEntry(DeadLetterEntry entry) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("originalRequestId", entry.request().getRequestId());
+        m.put("callerId", entry.request().getCallerId());
+        m.put(FIELD_CHANNEL, entry.request().getChannel() != null
+                ? entry.request().getChannel().name() : null);
+        m.put("failureType", entry.failureType().name());
+        m.put("attempts", entry.attempts());
+        return m;
+    }
+
+    /**
      * Build a fresh {@link NotificationRequest} from a DLQ entry, with
      * a new request id + idempotency key and {@code replayOf} pointing
      * at the original. The captured payload's mutable fields (template
@@ -644,6 +784,114 @@ public class AdminController {
         if (includeRaw) {
             m.put("attributes", event.attributes());
         }
+        return m;
+    }
+
+    /**
+     * Look up a single audit record by request id (DD-20). Returns
+     * the audit row as stored — {@link NotificationAudit} already
+     * holds a PII-masked recipient summary via DD-07, so no further
+     * redaction is applied.
+     *
+     * <p>{@code 404} on miss covers both "requestId truly unknown"
+     * and "no real audit backend wired" — same overload DD-18 uses
+     * on the joined endpoint.
+     */
+    @GetMapping("/audit/{requestId}")
+    @Operation(summary = "Look up an audit record (DD-20)",
+            description = "Returns the NotificationAudit row for a given "
+                    + "requestId. Recipient is PII-masked at write time "
+                    + "(DD-07). 404 when not found (or when the default "
+                    + "NoOpAuditService is the configured backend).")
+    public ResponseEntity<Map<String, Object>> getAudit(
+            @PathVariable("requestId") String requestId) {
+        if (requestId == null || requestId.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of(FIELD_MESSAGE, "requestId is required"));
+        }
+        Optional<NotificationAudit> auditOpt = auditService.findByRequestId(requestId);
+        if (auditOpt.isEmpty()) {
+            return ResponseEntity.status(404)
+                    .body(Map.of(FIELD_MESSAGE,
+                            "No audit record for requestId=" + sanitizeForLog(requestId)
+                                    + ". (NoOpAuditService is the default; wire a real "
+                                    + "audit backend to populate this endpoint.)"));
+        }
+        return ResponseEntity.ok(toAdminAuditEntry(auditOpt.get()));
+    }
+
+    /**
+     * List the most-recent audit rows for a tenant (DD-20).
+     *
+     * <p>{@code tenantId} is required — cross-tenant recent is
+     * rejected for the same blast-radius reasoning bulk DLQ replay
+     * uses (DD-19).
+     *
+     * <p>When the backend returns {@code Optional.empty()} (the
+     * default {@code NoOpAuditService} does this, as does any
+     * backend that can't iterate cheaply), the response is {@code 200}
+     * with {@code entries: null} and an explanatory message — same
+     * shape {@code DeadLetterStore.snapshot()} and
+     * {@code DeliveryEventStore.snapshot()} use.
+     */
+    @GetMapping("/audit/recent")
+    @Operation(summary = "Recent audit rows (DD-20)",
+            description = "Returns the most recent N audit rows for a "
+                    + "given tenant, ordered most-recent-first. limit defaults "
+                    + "to 50, capped at 200. Returns 200 with entries=null "
+                    + "when the audit backend doesn't support listing.")
+    public ResponseEntity<Map<String, Object>> getRecentAudit(
+            @RequestParam(name = "tenantId", required = false) String tenantId,
+            @RequestParam(name = "limit", defaultValue = "50") int limit) {
+
+        if (tenantId == null || tenantId.isBlank()) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of(FIELD_MESSAGE, "tenantId is required"));
+        }
+        int safeLimit = Math.clamp(limit, 1, 200);
+        Optional<List<NotificationAudit>> recent = auditService.findRecent(tenantId, safeLimit);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("tenantId", tenantId);
+        body.put("limit", safeLimit);
+        if (recent.isEmpty()) {
+            body.put("entries", null);
+            body.put(FIELD_MESSAGE,
+                    "Audit backend does not support recent listing; "
+                            + "query the backend directly or look up by requestId.");
+            return ResponseEntity.ok(body);
+        }
+        body.put("entries", recent.get().stream()
+                .map(this::toAdminAuditEntry)
+                .toList());
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * Map a {@link NotificationAudit} to the admin-endpoint shape.
+     * Recipient is already masked at write time (DD-07) so the audit
+     * record can be surfaced as-is.
+     */
+    private Map<String, Object> toAdminAuditEntry(NotificationAudit audit) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("requestId", audit.getRequestId());
+        m.put("correlationId", audit.getCorrelationId());
+        m.put("tenantId", audit.getTenantId());
+        m.put("callerId", audit.getCallerId());
+        m.put("replayOf", audit.getReplayOf());
+        m.put("notificationType", audit.getNotificationType());
+        m.put(FIELD_CHANNEL, audit.getChannel() != null ? audit.getChannel().name() : null);
+        m.put("provider", audit.getProvider());
+        m.put("recipientSummary", audit.getRecipientSummary());
+        m.put("status", audit.getStatus() != null ? audit.getStatus().name() : null);
+        m.put("providerMessageId", audit.getProviderMessageId());
+        m.put("errorCode", audit.getErrorCode());
+        m.put("errorMessage", audit.getErrorMessage());
+        m.put("receivedAt", audit.getReceivedAt() != null ? audit.getReceivedAt().toString() : null);
+        m.put("processedAt", audit.getProcessedAt() != null ? audit.getProcessedAt().toString() : null);
+        m.put("sentAt", audit.getSentAt() != null ? audit.getSentAt().toString() : null);
+        m.put("deliveredAt", audit.getDeliveredAt() != null ? audit.getDeliveredAt().toString() : null);
+        m.put("templateId", audit.getTemplateId());
         return m;
     }
 
