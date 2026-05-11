@@ -57,7 +57,8 @@ class AdminControllerDeliveryEventsTest {
                 Optional.<RateLimiter>empty(),
                 Optional.<DeadLetterStore>empty(),
                 Optional.of(deliveryEventStore),
-                mock(NotificationService.class));
+                mock(NotificationService.class),
+                mock(com.lazydevs.notification.core.service.NotificationAuditService.class));
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 
@@ -136,7 +137,8 @@ class AdminControllerDeliveryEventsTest {
                 Optional.<RateLimiter>empty(),
                 Optional.<DeadLetterStore>empty(),
                 Optional.<DeliveryEventStore>empty(),
-                mock(NotificationService.class));
+                mock(NotificationService.class),
+                mock(com.lazydevs.notification.core.service.NotificationAuditService.class));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         mvc.perform(get("/api/v1/admin/delivery-events"))

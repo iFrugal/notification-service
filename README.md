@@ -53,7 +53,7 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - **OpenAPI / Swagger**: Self-documenting via `/v3/api-docs` + `/swagger-ui` (springdoc 3.0.3); schema published as a CI build artifact for client codegen
 - **Distributed mode**: Optional `notification-redis` module providing Redis-backed implementations of the idempotency, rate-limit, and DLQ SPIs for multi-pod deployments (DD-14)
 - **Webhook delivery callbacks**: Opt-in `/webhooks/{provider}/...` surface ingests Twilio status (HMAC-SHA1) and SES via SNS (X.509) callbacks; parsed events flow to a `DeliveryEventListener` SPI (DD-16)
-- **Delivery event store**: Opt-in bounded `DeliveryEventStore` SPI for `GET /admin/delivery-events` queryable history; in-memory Caffeine default + Redis backend (DD-17)
+- **Delivery event store**: Opt-in bounded `DeliveryEventStore` SPI for `GET /admin/delivery-events` queryable history; in-memory Caffeine default + Redis backend (DD-17); `?requestId=…` joins via audit so operators query by the id they already know (DD-18)
 - **Template Engine**: FreeMarker templates with tenant-specific overrides
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service
@@ -799,12 +799,29 @@ Query with `GET /admin/delivery-events`:
 ```http
 GET /api/v1/admin/delivery-events?limit=100
 GET /api/v1/admin/delivery-events?providerName=ses&providerMessageId=ses-msg-1
+GET /api/v1/admin/delivery-events?requestId=req-abc-123    # DD-18 audit join
 ```
 
 The raw provider attributes map (recipient phone numbers, email
 addresses) is **excluded by default** — opt in with `?includeRaw=true`.
 Returns `503` when the store is disabled (matches the DLQ admin
 endpoint convention).
+
+The `?requestId=…` form (DD-18) is the answer to "did *this* notification
+deliver?" — the controller walks
+`NotificationAuditService.findByRequestId` to recover the
+`providerMessageId`, then queries the store. Returns one of four
+shapes:
+
+- `404` — no audit record (often because the `NoOpAuditService` is the
+  default; wire a real audit backend to populate it)
+- `200 auditState: incomplete` — the send hasn't completed yet
+- `200 auditState: complete` with `entries: []` — send completed,
+  no callbacks have arrived yet
+- `200 auditState: complete` with events — full join result
+
+`?requestId` wins over `?providerName + ?providerMessageId` when both
+are supplied — the audit-supplied tuple is the stricter scope.
 
 Both stores are inspection surfaces, not archives. For 90-day delivery
 history wire a custom `DeliveryEventListener` that writes to S3 / a
