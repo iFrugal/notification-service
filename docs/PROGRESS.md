@@ -23,7 +23,7 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-04-30 IST (DD-15 DLQ replay PR open).
+- **Last updated:** 2026-05-06 IST (DD-15 merged; DD-16 webhook callbacks PR open).
   All dates in this file are local IST (UTC+5:30) since that's where
   the work is happening; UTC equivalents differ by ~5h30m.
 
@@ -213,10 +213,11 @@ collaborator) can pick up where the last one left off.
         even when Testcontainers all skip
   - [x] README — "Distributed deployment" section + Features bullet
 
-### Phase 11 — DLQ replay (DD-15) ← in flight
+### Phase 11 — DLQ replay (DD-15) ✅
 
-- [~] Single PR — operator-driven replay endpoint that closes the loop
-      DD-13 §"Out of scope" promised
+- [x] Single PR — operator-driven replay endpoint that closes the loop
+      DD-13 §"Out of scope" promised, merged as
+      [#35](https://github.com/iFrugal/notification-service/pull/35)
   - [x] DD-15 design doc + decision-log entry
   - [x] `DeadLetterStore` SPI extended with `findByRequestId(tenantId,
         requestId)` + `remove(tenantId, requestId)` — default no-op
@@ -240,12 +241,42 @@ collaborator) can pick up where the last one left off.
   - [x] README — replay subsection under DD-13 + admin-endpoints
         row + Features bullet update
 
-### Phase 12+ — Queued
+### Phase 12 — Webhook delivery callbacks (DD-16) ← in flight
 
-- [ ] Webhook callbacks for async delivery status (SES bounce / complaint, Twilio status callback, FCM delivery)
+- [~] Single PR — opt-in `/webhooks/{provider}/...` ingestion of
+      provider delivery callbacks; closes the "sent ≠ delivered"
+      visibility gap
+  - [x] DD-16 design doc + decision-log entry
+  - [x] `DeliveryStatus` enum (DELIVERED / BOUNCED / COMPLAINED /
+        FAILED_AT_PROVIDER / UNKNOWN) and `DeliveryEvent` record on
+        `notification-api`
+  - [x] `DeliveryEventListener` SPI; default `LoggingDeliveryEventListener`
+        registered when no other listener is on the classpath
+  - [x] `WebhookProperties` nested config (master switch +
+        per-provider toggles + signature-verification flags)
+  - [x] `TwilioSignatureVerifier` — HMAC-SHA1 over URL + sorted form
+        params, constant-time comparison
+  - [x] `SnsSignatureVerifier` — stdlib X.509 (SHA1withRSA + SHA256withRSA),
+        cert URL host pinned to `*.amazonaws.com`, signing-cert cached
+        with Caffeine
+  - [x] `WebhookController` — `POST /webhooks/twilio/status` (form),
+        `POST /webhooks/ses/sns` (JSON envelope, handles
+        SubscriptionConfirmation by logging the SubscribeURL for
+        operator confirmation)
+  - [x] Tests — `WebhookControllerTest` (16),
+        `TwilioSignatureVerifierTest` (9),
+        `SnsSignatureVerifierTest` (6)
+  - [x] README — "Webhook delivery callbacks" section + Features bullet
+
+### Phase 13+ — Queued
+
+- [ ] Persistent `DeliveryEventStore` SPI (Redis / SQL backings) so
+      operators can query historical delivery state (DD-16
+      §"Out of scope")
 - [ ] Jackson 2 → Jackson 3 migration (Boot 4's autoconfig defaults are Jackson 3; we still pin Jackson 2 in the parent POM)
 - [ ] CI workflow upload of `openapi.json` (12-line edit deferred from Phase 9 due to PAT scope)
 - [ ] Bulk DLQ replay (replay all entries for a tenant; needs confirm-before-action shape)
+- [ ] FCM delivery callbacks (Firebase doesn't ship per-message webhooks today; revisit if pull-based BigQuery export is in scope)
 
 ---
 
@@ -253,7 +284,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| (pending) | feat(dd-15): DLQ replay endpoint | `feat/dd-15-dlq-replay` | **awaiting CI/review** | Phase 11 — closes DD-13's foreseen replay endpoint |
+| (pending) | feat(dd-16): webhook delivery callbacks | `feat/dd-16-webhook-callbacks` | **awaiting CI/review** | Phase 12 — Twilio + SES via SNS |
 
 ---
 
@@ -261,6 +292,8 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#35](https://github.com/iFrugal/notification-service/pull/35) | feat(dd-15): DLQ replay endpoint with replayOf chain | 2026-05-06 |
+| [#34](https://github.com/iFrugal/notification-service/pull/34) | docs(progress): mark Phase 10 / DD-14 done after PR #33 merge | 2026-04-30 |
 | [#33](https://github.com/iFrugal/notification-service/pull/33) | feat(dd-14): distributed Redis backends | 2026-04-30 |
 | [#32](https://github.com/iFrugal/notification-service/pull/32) | feat(openapi): springdoc 3 schema + Swagger UI | 2026-04-30 |
 | [#31](https://github.com/iFrugal/notification-service/pull/31) | feat(channels): provider FailureType classification | 2026-04-30 |

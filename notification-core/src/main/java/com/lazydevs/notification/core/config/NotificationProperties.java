@@ -98,6 +98,14 @@ public class NotificationProperties {
     private RedisProperties redis = new RedisProperties();
 
     /**
+     * Webhook ingestion configuration (see DD-16). Off by default —
+     * turning it on activates {@code POST /webhooks/{provider}/...}
+     * handlers for provider-side delivery callbacks.
+     */
+    @Valid
+    private WebhookProperties webhooks = new WebhookProperties();
+
+    /**
      * Tenant-specific configurations
      */
     private Map<String, TenantConfig> tenants = new LinkedHashMap<>();
@@ -448,6 +456,95 @@ public class NotificationProperties {
              */
             @Min(value = 1, message = "redis.dead-letter max-entries must be at least 1")
             private int maxEntries = 1_000;
+        }
+    }
+
+    /**
+     * Webhook callback configuration (DD-16). Master switch off by
+     * default; each provider section has its own enabled flag so an
+     * SES-only deployment doesn't have to provide Twilio's auth token
+     * to satisfy startup validation.
+     */
+    @Data
+    public static class WebhookProperties {
+        /**
+         * Master switch. When {@code false}, the webhook controller is
+         * not registered — the {@code /webhooks/*} paths return 404
+         * (Spring just doesn't route them). When {@code true}, each
+         * per-provider sub-section governs whether that provider's
+         * handler is wired up.
+         */
+        private boolean enabled = false;
+
+        /**
+         * Path-prefix for the webhook surface, joined with
+         * {@code notification.rest.base-path}. The default
+         * {@code /api/v1/webhooks/{provider}/{path}} is what most
+         * deployments will end up with; operators changing this should
+         * remember to update the URLs registered with each provider.
+         */
+        @NotBlank
+        private String basePath = "/webhooks";
+
+        /** Twilio SMS status-callback handler config. */
+        @Valid
+        private TwilioWebhook twilio = new TwilioWebhook();
+
+        /** SES delivery / bounce / complaint via SNS handler config. */
+        @Valid
+        private SesWebhook ses = new SesWebhook();
+
+        @Data
+        public static class TwilioWebhook {
+            private boolean enabled = false;
+
+            /**
+             * Twilio account auth token. Required when
+             * {@code enabled=true} and
+             * {@code signature-verification=true} (which is the safe
+             * default). Required because the verification HMAC keys
+             * off it.
+             *
+             * <p>Operators almost always wire this from
+             * {@code ${TWILIO_AUTH_TOKEN}} so it doesn't end up in
+             * application.yml.
+             */
+            private String authToken;
+
+            /**
+             * Verify the {@code X-Twilio-Signature} header on every
+             * inbound callback. <strong>Should remain {@code true}</strong>
+             * in production. Operators occasionally disable for local
+             * development against tunnelled endpoints; the WARN log on
+             * disable is intentional.
+             */
+            private boolean signatureVerification = true;
+        }
+
+        @Data
+        public static class SesWebhook {
+            private boolean enabled = false;
+
+            /**
+             * The SNS topic ARN that SES publishes
+             * Delivery/Bounce/Complaint events to. Used as a
+             * defense-in-depth check after AWS SDK signature
+             * verification — we drop messages signed by AWS but
+             * published to a different topic ARN, since that's a
+             * misconfiguration not a forge.
+             *
+             * <p>{@code null} disables the topic-arn check
+             * (signature still applies).
+             */
+            private String topicArn;
+
+            /**
+             * Verify SNS message signatures via the AWS SDK
+             * {@code MessageManager.parseMessage}. <strong>Should
+             * remain {@code true}</strong> — without it, anyone can
+             * POST a forged Notification at the endpoint.
+             */
+            private boolean signatureVerification = true;
         }
     }
 

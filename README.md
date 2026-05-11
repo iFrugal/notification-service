@@ -52,6 +52,7 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - **Retries + DLQ**: Opt-in synchronous retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN) and exponential backoff with jitter; pluggable dead-letter store SPI (DD-13); operator replay endpoint with `replayOf` chain (DD-15)
 - **OpenAPI / Swagger**: Self-documenting via `/v3/api-docs` + `/swagger-ui` (springdoc 3.0.3); schema published as a CI build artifact for client codegen
 - **Distributed mode**: Optional `notification-redis` module providing Redis-backed implementations of the idempotency, rate-limit, and DLQ SPIs for multi-pod deployments (DD-14)
+- **Webhook delivery callbacks**: Opt-in `/webhooks/{provider}/...` surface ingests Twilio status (HMAC-SHA1) and SES via SNS (X.509) callbacks; parsed events flow to a `DeliveryEventListener` SPI (DD-16)
 - **Template Engine**: FreeMarker templates with tenant-specific overrides
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service
@@ -697,6 +698,77 @@ Content-Type: application/json
 | `/api/v1/admin/dead-letter/{requestId}/replay` | POST | Re-submit a dead-lettered request with `replayOf` chain (DD-15) |
 | `/api/v1/admin/health` | GET | Provider health status |
 | `/api/v1/admin/cache/templates/clear` | POST | Clear template cache |
+
+---
+
+## Webhook delivery callbacks (DD-16)
+
+Provider-side delivery callbacks (delivery / bounce / complaint) can
+be ingested at `/webhooks/{provider}/...`. Off by default; each
+provider section is independently toggleable.
+
+```yaml
+notification:
+  webhooks:
+    enabled: true                          # master switch
+    base-path: /webhooks                   # joined with notification.rest.base-path
+    twilio:
+      enabled: true
+      auth-token: ${TWILIO_AUTH_TOKEN}     # required when verification on
+      signature-verification: true         # leave on in prod
+    ses:
+      enabled: true
+      topic-arn: arn:aws:sns:us-east-1:0:my-topic   # defense-in-depth
+      signature-verification: true
+```
+
+Configure the URL on the provider side:
+
+| Provider | URL to register | Verification |
+|----------|-----------------|--------------|
+| Twilio | `https://your.host/api/v1/webhooks/twilio/status` | HMAC-SHA1 over URL + sorted form params |
+| SES via SNS | `https://your.host/api/v1/webhooks/ses/sns` (subscribe the SNS topic to this URL) | SNS X.509 (SHA1withRSA / SHA256withRSA), cert URL host pinned to `*.amazonaws.com` |
+
+Parsed events flow to every registered `DeliveryEventListener`. The
+default `LoggingDeliveryEventListener` logs at INFO; replace with your
+own listener bean to fan events into a real audit pipeline:
+
+```java
+@Component
+public class MyDeliveryListener implements DeliveryEventListener {
+    @Override
+    public void onEvent(DeliveryEvent event) {
+        // event.providerName(), event.providerMessageId(), event.status()
+        // dedup on event.providerEventId() if you persist
+    }
+}
+```
+
+Status mapping:
+
+| `DeliveryStatus` | Twilio | SES |
+|-----------------|--------|-----|
+| `DELIVERED` | `delivered` | `Delivery` |
+| `BOUNCED` | `undelivered` | `Bounce` (Permanent) |
+| `FAILED_AT_PROVIDER` | `failed` | `Bounce` (Transient) |
+| `COMPLAINED` | (n/a) | `Complaint` |
+| `UNKNOWN` | other | other |
+
+**FCM is not currently supported** — Firebase Cloud Messaging doesn't
+expose per-message webhook callbacks (BigQuery export only as of late
+2025). The `notification.webhooks.fcm.*` namespace is reserved.
+
+Failed signature verification returns `403 Forbidden`. A real provider
+whose signing key rotated will see the 403 in their admin dashboard;
+an attacker gets no information beyond "this endpoint exists." The
+endpoint itself returns `404` when the provider isn't enabled, so
+URLs you register but haven't toggled on remain inert.
+
+For the SNS subscription handshake, the controller logs the
+`SubscribeURL` from the `SubscriptionConfirmation` envelope —
+operators confirm the subscription manually (paste into a browser or
+the SNS console). We don't auto-fetch the URL because that's a
+side-effecting GET we don't want firing on a forged envelope.
 
 ---
 
