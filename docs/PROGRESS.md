@@ -23,7 +23,7 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-05-11 IST (DD-17 merged; DD-18 audit ↔ delivery join PR open).
+- **Last updated:** 2026-05-11 IST (DD-18 merged; DD-19 + DD-20 operator-surface bundle PR open).
   All dates in this file are local IST (UTC+5:30) since that's where
   the work is happening; UTC equivalents differ by ~5h30m.
 
@@ -300,12 +300,13 @@ collaborator) can pick up where the last one left off.
   - [x] README — "Persisted delivery events" subsection under DD-16
         + admin-endpoints row + Features bullet + Redis YAML example
 
-### Phase 14 — Joined audit ↔ delivery query (DD-18) ← in flight
+### Phase 14 — Joined audit ↔ delivery query (DD-18) ✅
 
-- [~] Single PR — `?requestId=…` filter on `/admin/delivery-events`
+- [x] Single PR — `?requestId=…` filter on `/admin/delivery-events`
       walks `NotificationAuditService.findByRequestId` then
-      `DeliveryEventStore.findByProviderMessageId`. Composition of
-      DD-15 + DD-17, no new SPI
+      `DeliveryEventStore.findByProviderMessageId`, merged as
+      [#41](https://github.com/iFrugal/notification-service/pull/41).
+      Composition of DD-15 + DD-17, no new SPI
   - [x] DD-18 design doc + decision-log entry
   - [x] `AdminController.getDeliveryEvents` extended — `?requestId`
         takes precedence over `?providerName + ?providerMessageId`
@@ -324,11 +325,38 @@ collaborator) can pick up where the last one left off.
   - [x] README — "Did this notification deliver?" prose under the
         existing delivery-events section + Features bullet update
 
-### Phase 15+ — Queued
+### Phase 15 — Operator-surface bundle (DD-19 + DD-20) ← in flight
+
+- [~] Bundled PR — two coherent operator-facing surfaces ship
+      together because both are low-risk extensions of existing
+      admin endpoints with no SPI changes beyond a single default
+      method
+  - [x] DD-19 design doc + decision-log entry
+  - [x] DD-20 design doc + decision-log entry
+  - [x] `NotificationAuditService.findRecent(tenantId, limit)`
+        default method on the SPI — returns `Optional.empty()` so
+        existing impls compile (`NoOpAuditService` returns empty;
+        backends that can iterate override)
+  - [x] `POST /admin/dead-letter/replay-batch?tenantId=…&dryRun=…&limit=…`
+        — mandatory tenantId (blast-radius), default limit 100
+        capped at 1000, dryRun returns preview without side
+        effects, live mode returns per-entry results
+  - [x] `GET /admin/audit/{requestId}` — single-record lookup, 404
+        on miss (covers the `NoOpAuditService` overload like DD-18
+        does)
+  - [x] `GET /admin/audit/recent?tenantId=…&limit=…` — most-recent
+        listing, 200 + `entries: null` + message when the SPI
+        returned `Optional.empty()`
+  - [x] Tests — `AdminControllerBulkReplayTest` (8),
+        `AdminControllerAuditBrowseTest` (8). All 35 admin-controller
+        tests green (incl. existing DD-15, 17, 18)
+  - [x] README — admin-endpoints table rows for all three new
+        endpoints
+
+### Phase 16+ — Queued
 
 - [ ] Jackson 2 → Jackson 3 migration (Boot 4's autoconfig defaults are Jackson 3; we still pin Jackson 2 in the parent POM)
 - [ ] CI workflow upload of `openapi.json` (12-line edit deferred from Phase 9 due to PAT scope)
-- [ ] Bulk DLQ replay (replay all entries for a tenant; needs confirm-before-action shape)
 - [ ] FCM delivery callbacks (Firebase doesn't ship per-message webhooks today; revisit if pull-based BigQuery export is in scope)
 
 ---
@@ -337,7 +365,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| (pending) | feat(dd-18): audit ↔ delivery join | `feat/dd-18-audit-delivery-join` | **awaiting CI/review** | Phase 14 — `?requestId` filter |
+| (pending) | feat(dd-19+dd-20): bulk DLQ replay + admin audit browse | `feat/dd-19-20-operator-surface` | **awaiting CI/review** | Phase 15 — bundled operator-surface PR |
 
 ---
 
@@ -345,6 +373,7 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#41](https://github.com/iFrugal/notification-service/pull/41) | feat(dd-18): GET /admin/delivery-events?requestId — audit↔delivery join | 2026-05-11 |
 | [#40](https://github.com/iFrugal/notification-service/pull/40) | feat(dd-17): persistent DeliveryEventStore + GET /admin/delivery-events | 2026-05-11 |
 | [#38](https://github.com/iFrugal/notification-service/pull/38) | feat(dd-16): webhook delivery callbacks (Twilio + SES via SNS) | 2026-05-11 |
 | [#35](https://github.com/iFrugal/notification-service/pull/35) | feat(dd-15): DLQ replay endpoint with replayOf chain | 2026-05-06 |

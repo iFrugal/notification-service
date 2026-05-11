@@ -697,6 +697,9 @@ Content-Type: application/json
 | `/api/v1/admin/rate-limit` | GET | Rate-limit config + live bucket snapshot (DD-12) |
 | `/api/v1/admin/dead-letter` | GET | Recent retry-exhausted / permanent failures (DD-13) |
 | `/api/v1/admin/dead-letter/{requestId}/replay` | POST | Re-submit a dead-lettered request with `replayOf` chain (DD-15) |
+| `/api/v1/admin/dead-letter/replay-batch` | POST | Bulk replay DLQ entries for a tenant; supports `?dryRun=true` (DD-19) |
+| `/api/v1/admin/audit/{requestId}` | GET | Look up a single audit record (DD-20) |
+| `/api/v1/admin/audit/recent` | GET | Most-recent audit rows for a tenant (DD-20) |
 | `/api/v1/admin/delivery-events` | GET | Recent provider delivery callbacks; filter by `providerName` + `providerMessageId` (DD-17) |
 | `/api/v1/admin/health` | GET | Provider health status |
 | `/api/v1/admin/cache/templates/clear` | POST | Clear template cache |

@@ -6,6 +6,7 @@ import com.lazydevs.notification.api.model.NotificationAudit;
 import com.lazydevs.notification.api.model.NotificationRequest;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -62,5 +63,26 @@ public interface NotificationAuditService {
      */
     default void recordDuplicateHit(NotificationRequest replayRequest, IdempotencyRecord originalRecord) {
         // no-op
+    }
+
+    /**
+     * Return the most-recent {@code limit} audit records for the given
+     * tenant, ordered most-recent-first (DD-20).
+     *
+     * <p>Returns {@link Optional#empty()} when the backend can't
+     * naturally answer the listing — same shape
+     * {@code DeadLetterStore.snapshot()} and
+     * {@code DeliveryEventStore.snapshot()} use. The default no-op
+     * here keeps existing audit impls compiling; the
+     * {@code GET /admin/audit/recent} admin endpoint renders the
+     * empty case as a 200 with an explanatory message rather than
+     * a 501 — operationally identical for an operator.
+     *
+     * @param tenantId required; cross-tenant recent is rejected at
+     *                 the controller for blast-radius reasons
+     * @param limit    1..200; the controller clamps before calling
+     */
+    default Optional<List<NotificationAudit>> findRecent(String tenantId, int limit) {
+        return Optional.empty();
     }
 }
