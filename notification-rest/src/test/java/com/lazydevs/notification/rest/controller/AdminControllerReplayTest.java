@@ -66,7 +66,8 @@ class AdminControllerReplayTest {
                 Optional.<RateLimiter>empty(),
                 Optional.of(deadLetterStore),
                 Optional.<com.lazydevs.notification.api.delivery.DeliveryEventStore>empty(),
-                notificationService);
+                notificationService,
+                mock(com.lazydevs.notification.core.service.NotificationAuditService.class));
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 
@@ -159,7 +160,8 @@ class AdminControllerReplayTest {
                 Optional.<RateLimiter>empty(),
                 Optional.<DeadLetterStore>empty(),
                 Optional.<com.lazydevs.notification.api.delivery.DeliveryEventStore>empty(),
-                notificationService);
+                notificationService,
+                mock(com.lazydevs.notification.core.service.NotificationAuditService.class));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         mvc.perform(post("/api/v1/admin/dead-letter/whatever/replay"))

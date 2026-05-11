@@ -8,10 +8,12 @@ import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.delivery.DeliveryEvent;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
+import com.lazydevs.notification.api.model.NotificationAudit;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.core.caller.CallerRegistry;
+import com.lazydevs.notification.core.service.NotificationAuditService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import com.lazydevs.notification.core.config.NotificationProperties;
@@ -69,6 +71,7 @@ public class AdminController {
     private final java.util.Optional<DeadLetterStore> deadLetterStore;
     private final java.util.Optional<DeliveryEventStore> deliveryEventStore;
     private final NotificationService notificationService;
+    private final NotificationAuditService auditService;
 
     public AdminController(NotificationProperties properties,
                            ProviderRegistry providerRegistry,
@@ -77,7 +80,8 @@ public class AdminController {
                            java.util.Optional<RateLimiter> rateLimiter,
                            java.util.Optional<DeadLetterStore> deadLetterStore,
                            java.util.Optional<DeliveryEventStore> deliveryEventStore,
-                           NotificationService notificationService) {
+                           NotificationService notificationService,
+                           NotificationAuditService auditService) {
         this.properties = properties;
         this.providerRegistry = providerRegistry;
         this.templateEngine = templateEngine;
@@ -86,6 +90,7 @@ public class AdminController {
         this.deadLetterStore = deadLetterStore;
         this.deliveryEventStore = deliveryEventStore;
         this.notificationService = notificationService;
+        this.auditService = auditService;
     }
 
     /**
@@ -489,16 +494,19 @@ public class AdminController {
      * admin tooling. Opt in with {@code ?includeRaw=true}.
      */
     @GetMapping("/delivery-events")
-    @Operation(summary = "Delivery event snapshot (DD-17)",
+    @Operation(summary = "Delivery event snapshot (DD-17 / DD-18)",
             description = "Recent provider callbacks (delivery, bounce, "
                     + "complaint, undelivered) for operator inspection. "
-                    + "Filter by providerName + providerMessageId. "
+                    + "Filter by `?requestId` (walks audit → "
+                    + "providerMessageId, DD-18), or directly by "
+                    + "`?providerName` + `?providerMessageId`. "
                     + "Returns 503 when "
                     + "`notification.delivery-events.enabled=false`. "
                     + "Raw provider attributes are excluded by default; "
                     + "set ?includeRaw=true to include them.")
     public ResponseEntity<Map<String, Object>> getDeliveryEvents(
             @RequestParam(name = "limit", defaultValue = "100") int limit,
+            @RequestParam(name = "requestId", required = false) String requestId,
             @RequestParam(name = "providerName", required = false) String providerName,
             @RequestParam(name = "providerMessageId", required = false) String providerMessageId,
             @RequestParam(name = "includeRaw", defaultValue = "false") boolean includeRaw) {
@@ -517,16 +525,20 @@ public class AdminController {
         result.put("maxEntries", properties.getDeliveryEvents().getMaxEntries());
         result.put("size", store.size());
 
-        // Filter precedence:
-        //   1. providerName + providerMessageId → findByProviderMessageId
-        //   2. otherwise → snapshot()
-        // The lookup form is for "what happened to this specific
-        // notification?" The snapshot form is for "what's been
-        // arriving lately?"
-        java.util.Optional<java.util.List<DeliveryEvent>> source;
-        boolean filtered = providerName != null && !providerName.isBlank()
+        // Filter precedence (DD-18 §"Filter precedence"):
+        //   1. requestId → walk audit, then events
+        //   2. providerName + providerMessageId → direct lookup
+        //   3. neither → snapshot
+        boolean byRequestId = requestId != null && !requestId.isBlank();
+        boolean byProviderTuple = providerName != null && !providerName.isBlank()
                 && providerMessageId != null && !providerMessageId.isBlank();
-        if (filtered) {
+
+        if (byRequestId) {
+            return getDeliveryEventsByRequestId(requestId, limit, includeRaw, result, store);
+        }
+
+        java.util.Optional<java.util.List<DeliveryEvent>> source;
+        if (byProviderTuple) {
             source = store.findByProviderMessageId(providerName, providerMessageId);
         } else {
             source = store.snapshot();
@@ -542,6 +554,75 @@ public class AdminController {
             result.put("entries", null);
             result.put(FIELD_MESSAGE,
                     "Backing store does not support snapshot iteration; query the store directly.");
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * DD-18 audit ↔ delivery join. Walks
+     * {@link NotificationAuditService#findByRequestId(String)} →
+     * {@link DeliveryEventStore#findByProviderMessageId(String, String)}.
+     *
+     * <p>Four outcomes:
+     * <ul>
+     *   <li>Audit not found → 404 ({@code NoOpAuditService} returns
+     *       {@code Optional.empty()} for everything, so operators
+     *       without a real audit backend see this on every requestId).</li>
+     *   <li>Audit found, {@code providerMessageId} null →
+     *       {@code auditState: "incomplete"}, empty entries — the
+     *       send hasn't completed yet, retry the query in a moment.</li>
+     *   <li>Audit found, {@code providerMessageId} set, no events →
+     *       {@code auditState: "complete"}, empty entries — send
+     *       completed but no callbacks have arrived (yet).</li>
+     *   <li>Audit found, events present → {@code auditState: "complete"}
+     *       with the events.</li>
+     * </ul>
+     */
+    private ResponseEntity<Map<String, Object>> getDeliveryEventsByRequestId(
+            String requestId, int limit, boolean includeRaw,
+            Map<String, Object> result, DeliveryEventStore store) {
+
+        java.util.Optional<NotificationAudit> auditOpt = auditService.findByRequestId(requestId);
+        if (auditOpt.isEmpty()) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put(FIELD_MESSAGE,
+                    "No audit record for requestId=" + sanitizeForLog(requestId)
+                            + ". Either the requestId is unknown, or the audit "
+                            + "service is not configured (the default NoOpAuditService "
+                            + "returns empty for every lookup).");
+            return ResponseEntity.status(404).body(body);
+        }
+
+        NotificationAudit audit = auditOpt.get();
+        result.put("requestId", requestId);
+        result.put("provider", audit.getProvider());
+        result.put("providerMessageId", audit.getProviderMessageId());
+
+        if (audit.getProviderMessageId() == null || audit.getProviderMessageId().isBlank()
+                || audit.getProvider() == null || audit.getProvider().isBlank()) {
+            // Send hasn't returned a provider message id yet — that's
+            // the "still in flight" state.
+            result.put("auditState", "incomplete");
+            result.put("entries", java.util.List.of());
+            result.put(FIELD_MESSAGE,
+                    "Audit record found but provider/providerMessageId is not yet set; "
+                            + "the send may still be in flight. Retry shortly.");
+            return ResponseEntity.ok(result);
+        }
+
+        result.put("auditState", "complete");
+        java.util.Optional<java.util.List<DeliveryEvent>> source =
+                store.findByProviderMessageId(audit.getProvider(), audit.getProviderMessageId());
+        if (source.isPresent()) {
+            int safeLimit = Math.clamp(limit, 1, 1_000);
+            result.put("entries", source.get().stream()
+                    .limit(safeLimit)
+                    .map(e -> toAdminEntry(e, includeRaw))
+                    .toList());
+        } else {
+            result.put("entries", java.util.List.of());
+            result.put(FIELD_MESSAGE,
+                    "Backing store does not support lookup; query the store directly.");
         }
         return ResponseEntity.ok(result);
     }
