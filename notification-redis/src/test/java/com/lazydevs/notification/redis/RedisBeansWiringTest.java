@@ -1,6 +1,7 @@
 package com.lazydevs.notification.redis;
 
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
+import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "notification.redis.idempotency.enabled=true",
         "notification.redis.rate-limit.enabled=true",
         "notification.redis.dead-letter.enabled=true",
+        "notification.redis.delivery-events.enabled=true",
         "notification.redis.key-prefix=test-wiring",
         // Closed port — all three beans should register without
         // attempting to connect. Lazy connection keeps context refresh
@@ -46,21 +48,23 @@ class RedisBeansWiringTest {
     @Autowired RedisIdempotencyStore redisIdempotencyStore;
     @Autowired RedisRateLimiter redisRateLimiter;
     @Autowired RedisDeadLetterStore redisDeadLetterStore;
+    @Autowired RedisDeliveryEventStore redisDeliveryEventStore;
 
     @Test
-    void allThreeRedisBeansAreRegistered() {
+    void allFourRedisBeansAreRegistered() {
         assertThat(redisIdempotencyStore).isNotNull();
         assertThat(redisRateLimiter).isNotNull();
         assertThat(redisDeadLetterStore).isNotNull();
+        assertThat(redisDeliveryEventStore).isNotNull();
     }
 
     @Test
     void redisBeansImplementTheirSpis() {
-        // Each Redis bean implements the SPI it backs. With
-        // @ConditionalOnMissingBean wiring, a request for the SPI by
-        // interface should resolve to the Redis impl.
+        // Each Redis bean implements the SPI it backs — a request for
+        // the SPI by interface resolves to the Redis impl.
         assertThat((IdempotencyStore) redisIdempotencyStore).isNotNull();
         assertThat((RateLimiter) redisRateLimiter).isNotNull();
         assertThat((DeadLetterStore) redisDeadLetterStore).isNotNull();
+        assertThat((DeliveryEventStore) redisDeliveryEventStore).isNotNull();
     }
 }
