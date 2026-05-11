@@ -106,6 +106,15 @@ public class NotificationProperties {
     private WebhookProperties webhooks = new WebhookProperties();
 
     /**
+     * Persistent {@code DeliveryEventStore} configuration (see DD-17).
+     * Off by default. When enabled, ingested delivery callbacks are
+     * retained in a bounded buffer queryable via
+     * {@code GET /admin/delivery-events}.
+     */
+    @Valid
+    private DeliveryEventProperties deliveryEvents = new DeliveryEventProperties();
+
+    /**
      * Tenant-specific configurations
      */
     private Map<String, TenantConfig> tenants = new LinkedHashMap<>();
@@ -401,6 +410,32 @@ public class NotificationProperties {
     }
 
     /**
+     * Persistent {@code DeliveryEventStore} config (DD-17). Off by
+     * default. When enabled, the in-memory {@code InMemoryDeliveryEventStore}
+     * bean registers and the {@code GET /admin/delivery-events}
+     * endpoint becomes useful.
+     *
+     * <p>Default cap is larger than the DLQ's because delivery events
+     * arrive at a rate proportional to send volume — a 1000-event
+     * buffer would wrap on any meaningful traffic.
+     */
+    @Data
+    public static class DeliveryEventProperties {
+        /** Master switch — false leaves the {@code DeliveryEventStore} bean absent. */
+        private boolean enabled = false;
+
+        /**
+         * Maximum events the in-memory store retains. Older entries
+         * fall off when this is exceeded. Tune up for high-volume
+         * deployments, but remember every event sits in process
+         * memory — the Redis store is the right answer for very
+         * large retention.
+         */
+        @Min(value = 1, message = "delivery-events max-entries must be at least 1")
+        private int maxEntries = 5_000;
+    }
+
+    /**
      * Redis-backed distributed-state config (DD-14). All flags off by
      * default — the in-memory implementations from notification-core
      * keep working unchanged.
@@ -439,6 +474,15 @@ public class NotificationProperties {
         @Valid
         private DeadLetterToggle deadLetter = new DeadLetterToggle();
 
+        /**
+         * Delivery-event distribution toggle (DD-17). Multi-pod
+         * deployments turn this on so callbacks landing on different
+         * pods share a single queryable buffer rather than each pod
+         * holding its own view.
+         */
+        @Valid
+        private DeliveryEventToggle deliveryEvents = new DeliveryEventToggle();
+
         @Data
         public static class FeatureToggle {
             private boolean enabled = false;
@@ -456,6 +500,19 @@ public class NotificationProperties {
              */
             @Min(value = 1, message = "redis.dead-letter max-entries must be at least 1")
             private int maxEntries = 1_000;
+        }
+
+        @Data
+        public static class DeliveryEventToggle {
+            private boolean enabled = false;
+
+            /**
+             * Maximum events retained in the Redis LIST. Higher
+             * default than the DLQ since delivery events arrive at
+             * a rate proportional to send volume.
+             */
+            @Min(value = 1, message = "redis.delivery-events max-entries must be at least 1")
+            private int maxEntries = 10_000;
         }
     }
 

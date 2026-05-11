@@ -6,6 +6,8 @@ import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.channel.NotificationProvider;
 import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
+import com.lazydevs.notification.api.delivery.DeliveryEvent;
+import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
@@ -65,6 +67,7 @@ public class AdminController {
     private final CallerRegistry callerRegistry;
     private final java.util.Optional<RateLimiter> rateLimiter;
     private final java.util.Optional<DeadLetterStore> deadLetterStore;
+    private final java.util.Optional<DeliveryEventStore> deliveryEventStore;
     private final NotificationService notificationService;
 
     public AdminController(NotificationProperties properties,
@@ -73,6 +76,7 @@ public class AdminController {
                            CallerRegistry callerRegistry,
                            java.util.Optional<RateLimiter> rateLimiter,
                            java.util.Optional<DeadLetterStore> deadLetterStore,
+                           java.util.Optional<DeliveryEventStore> deliveryEventStore,
                            NotificationService notificationService) {
         this.properties = properties;
         this.providerRegistry = providerRegistry;
@@ -80,6 +84,7 @@ public class AdminController {
         this.callerRegistry = callerRegistry;
         this.rateLimiter = rateLimiter;
         this.deadLetterStore = deadLetterStore;
+        this.deliveryEventStore = deliveryEventStore;
         this.notificationService = notificationService;
     }
 
@@ -463,6 +468,101 @@ public class AdminController {
         m.put("failureType", entry.failureType().name());
         m.put("errorCode", entry.response().errorCode());
         m.put("errorMessage", entry.response().errorMessage());
+        return m;
+    }
+
+    /**
+     * Delivery event store snapshot (DD-17). Returns recent provider
+     * callbacks (Twilio status, SES Delivery/Bounce/Complaint, etc.)
+     * for operator inspection.
+     *
+     * <p>Filterable by {@code providerName} + {@code providerMessageId}
+     * for "what happened to this specific notification?" lookups.
+     *
+     * <p>Returns {@code 503 Service Unavailable} when the store is
+     * disabled ({@code notification.delivery-events.enabled=false}) —
+     * the endpoint is meaningfully disabled, not just empty.
+     *
+     * <p>The raw provider attribute map is excluded from the response
+     * by default — it can carry recipient identifiers (phone numbers,
+     * email addresses) that operators don't always want surfaced in
+     * admin tooling. Opt in with {@code ?includeRaw=true}.
+     */
+    @GetMapping("/delivery-events")
+    @Operation(summary = "Delivery event snapshot (DD-17)",
+            description = "Recent provider callbacks (delivery, bounce, "
+                    + "complaint, undelivered) for operator inspection. "
+                    + "Filter by providerName + providerMessageId. "
+                    + "Returns 503 when "
+                    + "`notification.delivery-events.enabled=false`. "
+                    + "Raw provider attributes are excluded by default; "
+                    + "set ?includeRaw=true to include them.")
+    public ResponseEntity<Map<String, Object>> getDeliveryEvents(
+            @RequestParam(name = "limit", defaultValue = "100") int limit,
+            @RequestParam(name = "providerName", required = false) String providerName,
+            @RequestParam(name = "providerMessageId", required = false) String providerMessageId,
+            @RequestParam(name = "includeRaw", defaultValue = "false") boolean includeRaw) {
+
+        if (deliveryEventStore.isEmpty()) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("enabled", false);
+            body.put(FIELD_MESSAGE, "Delivery event store is disabled. "
+                    + "Enable with notification.delivery-events.enabled=true.");
+            return ResponseEntity.status(503).body(body);
+        }
+
+        DeliveryEventStore store = deliveryEventStore.get();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("enabled", true);
+        result.put("maxEntries", properties.getDeliveryEvents().getMaxEntries());
+        result.put("size", store.size());
+
+        // Filter precedence:
+        //   1. providerName + providerMessageId → findByProviderMessageId
+        //   2. otherwise → snapshot()
+        // The lookup form is for "what happened to this specific
+        // notification?" The snapshot form is for "what's been
+        // arriving lately?"
+        java.util.Optional<java.util.List<DeliveryEvent>> source;
+        boolean filtered = providerName != null && !providerName.isBlank()
+                && providerMessageId != null && !providerMessageId.isBlank();
+        if (filtered) {
+            source = store.findByProviderMessageId(providerName, providerMessageId);
+        } else {
+            source = store.snapshot();
+        }
+
+        if (source.isPresent()) {
+            int safeLimit = Math.clamp(limit, 1, 1_000);
+            result.put("entries", source.get().stream()
+                    .limit(safeLimit)
+                    .map(e -> toAdminEntry(e, includeRaw))
+                    .toList());
+        } else {
+            result.put("entries", null);
+            result.put(FIELD_MESSAGE,
+                    "Backing store does not support snapshot iteration; query the store directly.");
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Map a {@link DeliveryEvent} to the admin-endpoint shape.
+     * Routing identifiers always included; the raw provider attribute
+     * map is gated behind {@code includeRaw} to avoid leaking
+     * recipient identifiers by default.
+     */
+    private Map<String, Object> toAdminEntry(DeliveryEvent event, boolean includeRaw) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("timestamp", event.timestamp().toString());
+        m.put("providerName", event.providerName());
+        m.put("providerMessageId", event.providerMessageId());
+        m.put("providerEventId", event.providerEventId());
+        m.put("status", event.status().name());
+        m.put("reason", event.reason());
+        if (includeRaw) {
+            m.put("attributes", event.attributes());
+        }
         return m;
     }
 

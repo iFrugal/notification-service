@@ -23,7 +23,7 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-05-06 IST (DD-15 merged; DD-16 webhook callbacks PR open).
+- **Last updated:** 2026-05-11 IST (DD-16 merged; DD-17 persistent DeliveryEventStore PR open).
   All dates in this file are local IST (UTC+5:30) since that's where
   the work is happening; UTC equivalents differ by ~5h30m.
 
@@ -241,11 +241,12 @@ collaborator) can pick up where the last one left off.
   - [x] README — replay subsection under DD-13 + admin-endpoints
         row + Features bullet update
 
-### Phase 12 — Webhook delivery callbacks (DD-16) ← in flight
+### Phase 12 — Webhook delivery callbacks (DD-16) ✅
 
-- [~] Single PR — opt-in `/webhooks/{provider}/...` ingestion of
-      provider delivery callbacks; closes the "sent ≠ delivered"
-      visibility gap
+- [x] Single PR — opt-in `/webhooks/{provider}/...` ingestion of
+      provider delivery callbacks; closed the "sent ≠ delivered"
+      visibility gap, merged as
+      [#38](https://github.com/iFrugal/notification-service/pull/38)
   - [x] DD-16 design doc + decision-log entry
   - [x] `DeliveryStatus` enum (DELIVERED / BOUNCED / COMPLAINED /
         FAILED_AT_PROVIDER / UNKNOWN) and `DeliveryEvent` record on
@@ -268,15 +269,43 @@ collaborator) can pick up where the last one left off.
         `SnsSignatureVerifierTest` (6)
   - [x] README — "Webhook delivery callbacks" section + Features bullet
 
-### Phase 13+ — Queued
+### Phase 13 — Persistent DeliveryEventStore (DD-17) ← in flight
 
-- [ ] Persistent `DeliveryEventStore` SPI (Redis / SQL backings) so
-      operators can query historical delivery state (DD-16
-      §"Out of scope")
+- [~] Single PR — bounded `DeliveryEventStore` SPI so operators get
+      `GET /admin/delivery-events` without writing a custom listener
+  - [x] DD-17 design doc + decision-log entry
+  - [x] `DeliveryEventStore` SPI on `notification-api`. Extends
+        `DeliveryEventListener` (default `onEvent` calls `add`), so
+        registering a store bean automatically joins the listener
+        fan-out the webhook controller already iterates — no
+        autoconfig glue
+  - [x] `InMemoryDeliveryEventStore` — Caffeine bounded LRU, mirrors
+        the DD-13 `InMemoryDeadLetterStore` shape
+  - [x] `RedisDeliveryEventStore` — same LPUSH+LTRIM pattern as
+        `RedisDeadLetterStore`, gated on
+        `notification.redis.delivery-events.enabled=true`
+  - [x] `DeliveryEventProperties` (max-entries 5_000 default; higher
+        than DLQ because callbacks arrive proportional to send volume)
+        + Redis nested toggle
+  - [x] `GET /admin/delivery-events` — snapshot + size + optional
+        `?providerName` + `?providerMessageId` filter. Raw provider
+        attributes excluded by default (PII redaction matches DD-13);
+        opt in with `?includeRaw=true`
+  - [x] `RedisBeansWiringTest` extended to assert the new bean
+        registers
+  - [x] Tests — `InMemoryDeliveryEventStoreTest` (8),
+        `AdminControllerDeliveryEventsTest` (7),
+        `RedisDeliveryEventStoreIntegrationTest` (5)
+  - [x] README — "Persisted delivery events" subsection under DD-16
+        + admin-endpoints row + Features bullet + Redis YAML example
+
+### Phase 14+ — Queued
+
 - [ ] Jackson 2 → Jackson 3 migration (Boot 4's autoconfig defaults are Jackson 3; we still pin Jackson 2 in the parent POM)
 - [ ] CI workflow upload of `openapi.json` (12-line edit deferred from Phase 9 due to PAT scope)
 - [ ] Bulk DLQ replay (replay all entries for a tenant; needs confirm-before-action shape)
 - [ ] FCM delivery callbacks (Firebase doesn't ship per-message webhooks today; revisit if pull-based BigQuery export is in scope)
+- [ ] Joined `/admin/delivery-events?requestId=...` that walks `audit.providerMessageId → DeliveryEventStore.findByProviderMessageId` (DD-17 §"Out of scope")
 
 ---
 
@@ -284,7 +313,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| (pending) | feat(dd-16): webhook delivery callbacks | `feat/dd-16-webhook-callbacks` | **awaiting CI/review** | Phase 12 — Twilio + SES via SNS |
+| (pending) | feat(dd-17): persistent DeliveryEventStore | `feat/dd-17-delivery-event-store` | **awaiting CI/review** | Phase 13 — bounded store + admin endpoint |
 
 ---
 
@@ -292,6 +321,7 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#38](https://github.com/iFrugal/notification-service/pull/38) | feat(dd-16): webhook delivery callbacks (Twilio + SES via SNS) | 2026-05-11 |
 | [#35](https://github.com/iFrugal/notification-service/pull/35) | feat(dd-15): DLQ replay endpoint with replayOf chain | 2026-05-06 |
 | [#34](https://github.com/iFrugal/notification-service/pull/34) | docs(progress): mark Phase 10 / DD-14 done after PR #33 merge | 2026-04-30 |
 | [#33](https://github.com/iFrugal/notification-service/pull/33) | feat(dd-14): distributed Redis backends | 2026-04-30 |

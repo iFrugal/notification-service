@@ -53,6 +53,7 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - **OpenAPI / Swagger**: Self-documenting via `/v3/api-docs` + `/swagger-ui` (springdoc 3.0.3); schema published as a CI build artifact for client codegen
 - **Distributed mode**: Optional `notification-redis` module providing Redis-backed implementations of the idempotency, rate-limit, and DLQ SPIs for multi-pod deployments (DD-14)
 - **Webhook delivery callbacks**: Opt-in `/webhooks/{provider}/...` surface ingests Twilio status (HMAC-SHA1) and SES via SNS (X.509) callbacks; parsed events flow to a `DeliveryEventListener` SPI (DD-16)
+- **Delivery event store**: Opt-in bounded `DeliveryEventStore` SPI for `GET /admin/delivery-events` queryable history; in-memory Caffeine default + Redis backend (DD-17)
 - **Template Engine**: FreeMarker templates with tenant-specific overrides
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service
@@ -696,6 +697,7 @@ Content-Type: application/json
 | `/api/v1/admin/rate-limit` | GET | Rate-limit config + live bucket snapshot (DD-12) |
 | `/api/v1/admin/dead-letter` | GET | Recent retry-exhausted / permanent failures (DD-13) |
 | `/api/v1/admin/dead-letter/{requestId}/replay` | POST | Re-submit a dead-lettered request with `replayOf` chain (DD-15) |
+| `/api/v1/admin/delivery-events` | GET | Recent provider delivery callbacks; filter by `providerName` + `providerMessageId` (DD-17) |
 | `/api/v1/admin/health` | GET | Provider health status |
 | `/api/v1/admin/cache/templates/clear` | POST | Clear template cache |
 
@@ -769,6 +771,44 @@ For the SNS subscription handshake, the controller logs the
 operators confirm the subscription manually (paste into a browser or
 the SNS console). We don't auto-fetch the URL because that's a
 side-effecting GET we don't want firing on a forged envelope.
+
+### Persisted delivery events (DD-17)
+
+The DD-16 listener seam works well if you have your own audit pipeline.
+For out-of-the-box queryability, enable the bounded
+`DeliveryEventStore`:
+
+```yaml
+notification:
+  delivery-events:
+    enabled: true            # in-memory Caffeine, single pod
+    max-entries: 5000        # tune for traffic volume
+  redis:
+    delivery-events:
+      enabled: true          # share buffer across pods
+      max-entries: 10000
+```
+
+The store *is* a `DeliveryEventListener` (via a default method on the
+interface), so registering the bean automatically joins the listener
+fan-out — no glue code. Composes with custom listeners: register your
+own listener alongside, and both receive every event.
+
+Query with `GET /admin/delivery-events`:
+
+```http
+GET /api/v1/admin/delivery-events?limit=100
+GET /api/v1/admin/delivery-events?providerName=ses&providerMessageId=ses-msg-1
+```
+
+The raw provider attributes map (recipient phone numbers, email
+addresses) is **excluded by default** — opt in with `?includeRaw=true`.
+Returns `503` when the store is disabled (matches the DLQ admin
+endpoint convention).
+
+Both stores are inspection surfaces, not archives. For 90-day delivery
+history wire a custom `DeliveryEventListener` that writes to S3 / a
+data warehouse.
 
 ---
 
@@ -994,6 +1034,9 @@ notification:
     dead-letter:
       enabled: true                    # closes DD-13's foreseen-Redis SPI
       max-entries: 1000
+    delivery-events:
+      enabled: true                    # DD-17 multi-pod store
+      max-entries: 10000
 
 # Connection details — Spring Data Redis honours these
 spring:
