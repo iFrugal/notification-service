@@ -1090,18 +1090,15 @@ Operators can read DLQ entries with `redis-cli LRANGE
 
 ## Design Decisions
 
-Detailed design decisions are documented in:
+Start with the **[Architecture overview](docs/ARCHITECTURE.md)** for a
+walkthrough of how the pieces fit together. The per-decision corpus
+lives at [`docs/design-decisions/`](docs/design-decisions/) —
+see the
+[decision log](docs/design-decisions/00-decision-log.md) for the
+complete index.
 
-| Document | Description |
-|----------|-------------|
-| [01-module-structure.md](docs/design-decisions/01-module-structure.md) | Module organization |
-| [02-notification-request.md](docs/design-decisions/02-notification-request.md) | Request/response model |
-| [03-multi-tenancy.md](docs/design-decisions/03-multi-tenancy.md) | Multi-tenant approach |
-| [04-template-engine.md](docs/design-decisions/04-template-engine.md) | Template engine design |
-| [05-provider-registration.md](docs/design-decisions/05-provider-registration.md) | Provider registration |
-| [06-spi-discovery.md](docs/design-decisions/06-spi-discovery.md) | SPI discovery |
-| [07-audit-persistence.md](docs/design-decisions/07-audit-persistence.md) | Audit storage |
-| [08-packaging-modes.md](docs/design-decisions/08-packaging-modes.md) | Deployment modes |
+A version-by-version summary of what shipped when is in
+[`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
