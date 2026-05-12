@@ -82,7 +82,8 @@ class DefaultNotificationServiceRetryTest {
                 Optional.empty(),                // idempotency disabled
                 Optional.empty(),                // rate limit disabled
                 Optional.of(retryExecutor),
-                Optional.of(deadLetterStore));
+                Optional.of(deadLetterStore),
+                Optional.empty());
     }
 
     @Test
@@ -179,7 +180,8 @@ class DefaultNotificationServiceRetryTest {
                 Optional.empty(),
                 Optional.of(rateLimiter),
                 Optional.of(retryExecutor),
-                Optional.of(deadLetterStore));
+                Optional.of(deadLetterStore),
+                Optional.empty());
 
         when(rateLimiter.tryConsume(any())).thenReturn(Decision.allow());
         stubRender();
@@ -211,7 +213,8 @@ class DefaultNotificationServiceRetryTest {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),                // no retry
-                Optional.of(deadLetterStore));
+                Optional.of(deadLetterStore),
+                Optional.empty());
 
         stubRender();
         stubProviderResolution();

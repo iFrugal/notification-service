@@ -72,6 +72,7 @@ public class WebhookController {
     private final List<DeliveryEventListener> listeners;
     private final ObjectMapper json;
     private final SnsSignatureVerifier snsVerifier;
+    private final java.util.Optional<com.lazydevs.notification.core.metrics.NotificationMetrics> metrics;
     /**
      * Lazy-initialised — only built when Twilio is enabled and
      * signature verification is on. Storing the verifier keeps the
@@ -80,15 +81,18 @@ public class WebhookController {
     private volatile TwilioSignatureVerifier twilioVerifier;
 
     public WebhookController(NotificationProperties properties,
-                             List<DeliveryEventListener> listeners) {
+                             List<DeliveryEventListener> listeners,
+                             java.util.Optional<com.lazydevs.notification.core.metrics.NotificationMetrics> metrics) {
         this.properties = properties;
         this.listeners = listeners == null ? List.of() : listeners;
         this.json = new ObjectMapper();
         this.snsVerifier = new SnsSignatureVerifier();
-        log.info("WebhookController registered: twilio={} ses={} listeners={}",
+        this.metrics = metrics;
+        log.info("WebhookController registered: twilio={} ses={} listeners={} metrics={}",
                 properties.getWebhooks().getTwilio().isEnabled(),
                 properties.getWebhooks().getSes().isEnabled(),
-                this.listeners.size());
+                this.listeners.size(),
+                metrics.isPresent());
     }
 
     // -----------------------------------------------------------------
@@ -123,14 +127,14 @@ public class WebhookController {
             String signatureB64 = request.getHeader("X-Twilio-Signature");
             if (signatureB64 == null || signatureB64.isBlank()) {
                 log.warn("Twilio webhook: missing X-Twilio-Signature");
-                return forbidden();
+                return forbidden("twilio");
             }
             TwilioSignatureVerifier verifier = twilioVerifier();
             String requestUrl = reconstructRequestUrl(request);
             if (!verifier.verify(requestUrl, formParams, signatureB64)) {
                 log.warn("Twilio webhook: signature verification failed for url={} sourceIp={}",
                         sanitize(requestUrl), sanitize(request.getRemoteAddr()));
-                return forbidden();
+                return forbidden("twilio");
             }
         } else {
             log.warn("Twilio webhook: signature verification is DISABLED — "
@@ -243,7 +247,7 @@ public class WebhookController {
         if (cfg.isSignatureVerification()) {
             if (!snsVerifier.verify(envelope)) {
                 log.warn("SES/SNS webhook: signature verification failed");
-                return forbidden();
+                return forbidden("ses");
             }
         } else {
             log.warn("SES/SNS webhook: signature verification is DISABLED — "
@@ -259,7 +263,7 @@ public class WebhookController {
                 && !cfg.getTopicArn().equals(topicArn)) {
             log.warn("SES/SNS webhook: topic arn mismatch — got {}, configured {}",
                     sanitize(topicArn), sanitize(cfg.getTopicArn()));
-            return forbidden();
+            return forbidden("ses");
         }
 
         String type = textOrNull(envelope, "Type");
@@ -354,6 +358,7 @@ public class WebhookController {
     // -----------------------------------------------------------------
 
     private void dispatch(DeliveryEvent event) {
+        metrics.ifPresent(m -> m.recordDeliveryEventReceived(event.providerName(), event.status()));
         for (DeliveryEventListener l : listeners) {
             try {
                 l.onEvent(event);
@@ -367,7 +372,8 @@ public class WebhookController {
         }
     }
 
-    private static ResponseEntity<Map<String, Object>> forbidden() {
+    private ResponseEntity<Map<String, Object>> forbidden(String providerName) {
+        metrics.ifPresent(m -> m.recordWebhookSignatureFailed(providerName));
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(Map.of("error", "signature verification failed"));
     }

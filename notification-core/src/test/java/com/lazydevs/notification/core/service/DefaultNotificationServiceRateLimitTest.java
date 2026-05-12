@@ -70,7 +70,7 @@ class DefaultNotificationServiceRateLimitTest {
                 properties, providerRegistry, templateEngine, auditService,
                 Optional.empty(),
                 Optional.of(rateLimiter),
-                Optional.empty(), Optional.empty());
+                Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     @Test
@@ -147,7 +147,7 @@ class DefaultNotificationServiceRateLimitTest {
         DefaultNotificationService serviceWithIdem = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
                 Optional.of(idempotencyStore), Optional.of(rateLimiter),
-                Optional.empty(), Optional.empty());
+                Optional.empty(), Optional.empty(), Optional.empty());
 
         NotificationRequest req = baseRequest("billing-svc", Channel.EMAIL);
         req.setIdempotencyKey("idem-replay");
@@ -172,7 +172,7 @@ class DefaultNotificationServiceRateLimitTest {
         DefaultNotificationService serviceWithIdem = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
                 Optional.of(idempotencyStore), Optional.of(rateLimiter),
-                Optional.empty(), Optional.empty());
+                Optional.empty(), Optional.empty(), Optional.empty());
 
         NotificationRequest req = baseRequest("billing-svc", Channel.EMAIL);
         req.setIdempotencyKey("idem-inflight");
@@ -195,7 +195,7 @@ class DefaultNotificationServiceRateLimitTest {
         DefaultNotificationService serviceWithIdem = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
                 Optional.of(idempotencyStore), Optional.of(rateLimiter),
-                Optional.empty(), Optional.empty());
+                Optional.empty(), Optional.empty(), Optional.empty());
 
         when(idempotencyStore.findExisting(any())).thenReturn(Optional.empty());
         when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
@@ -214,7 +214,7 @@ class DefaultNotificationServiceRateLimitTest {
         DefaultNotificationService noLimiterService = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
                 Optional.empty(), Optional.empty(),
-                Optional.empty(), Optional.empty());
+                Optional.empty(), Optional.empty(), Optional.empty());
         stubProviderHappyPath();
 
         noLimiterService.send(baseRequest("billing-svc", Channel.EMAIL));

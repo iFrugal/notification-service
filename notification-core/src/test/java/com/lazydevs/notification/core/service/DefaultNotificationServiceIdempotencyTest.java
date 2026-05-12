@@ -77,7 +77,7 @@ class DefaultNotificationServiceIdempotencyTest {
         service = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
                 Optional.of(idempotencyStore), Optional.empty(),
-                Optional.empty(), Optional.empty());
+                Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     @Test
@@ -235,7 +235,7 @@ class DefaultNotificationServiceIdempotencyTest {
     void send_storeAbsent_neverCallsAnyStoreMethod() {
         DefaultNotificationService noStoreService = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
-                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
+                Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
         NotificationRequest req = baseRequest("idem-disabled");
         stubProviderHappyPath();
 
