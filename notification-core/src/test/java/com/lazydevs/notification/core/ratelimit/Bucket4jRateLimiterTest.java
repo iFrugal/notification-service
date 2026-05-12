@@ -160,6 +160,84 @@ class Bucket4jRateLimiterTest {
     }
 
     // -----------------------------------------------------------------
+    //  DD-23 — byChannel rule defaults
+    // -----------------------------------------------------------------
+
+    @Test
+    void byChannel_appliesWhenNoPerTupleOverrideMatches() {
+        // Global = 100 capacity (from setUp). byChannel[sms] = 5
+        // capacity. An acme SMS caller with no per-tuple override
+        // should get the byChannel rule (5), not the global (100).
+        properties.getRateLimit().getByChannel().put("sms",
+                new RateLimitRule(5, 5, Duration.ofSeconds(60)));
+        Bucket4jRateLimiter limiter = new Bucket4jRateLimiter(properties);
+
+        RateLimitKey key = new RateLimitKey("acme", "anon", "sms");
+        for (int i = 0; i < 5; i++) {
+            assertThat(limiter.tryConsume(key).allowed())
+                    .as("SMS attempt %d should be allowed", i + 1)
+                    .isTrue();
+        }
+        assertThat(limiter.tryConsume(key).allowed())
+                .as("6th SMS attempt exceeds the per-channel cap of 5")
+                .isFalse();
+    }
+
+    @Test
+    void byChannel_doesNotApplyWhenPerTupleOverrideMatches() {
+        // A per-tuple override of capacity=20 for acme/billing/sms
+        // should beat the byChannel default of 5. DD-23 §"Why byChannel
+        // between specific overrides and global default" — tenant
+        // agreement wins over channel-wide backstop.
+        properties.getRateLimit().setOverrides(buildOverrides(
+                override("acme", "billing", "sms", 20)));
+        properties.getRateLimit().getByChannel().put("sms",
+                new RateLimitRule(5, 5, Duration.ofSeconds(60)));
+        Bucket4jRateLimiter limiter = new Bucket4jRateLimiter(properties);
+
+        RateLimitKey key = new RateLimitKey("acme", "billing", "sms");
+        for (int i = 0; i < 20; i++) {
+            assertThat(limiter.tryConsume(key).allowed())
+                    .as("tuple-override capacity=20 should allow attempt %d", i + 1)
+                    .isTrue();
+        }
+        assertThat(limiter.tryConsume(key).allowed())
+                .as("21st should be denied by the per-tuple override, not the per-channel cap")
+                .isFalse();
+    }
+
+    @Test
+    void byChannel_doesNotAffectOtherChannels() {
+        // byChannel[sms]=5; email should still use the global 100.
+        properties.getRateLimit().getByChannel().put("sms",
+                new RateLimitRule(5, 5, Duration.ofSeconds(60)));
+        Bucket4jRateLimiter limiter = new Bucket4jRateLimiter(properties);
+
+        RateLimitKey emailKey = new RateLimitKey("acme", "anon", "email");
+        for (int i = 0; i < 100; i++) {
+            assertThat(limiter.tryConsume(emailKey).allowed())
+                    .as("email attempt %d allowed under global capacity 100", i + 1)
+                    .isTrue();
+        }
+    }
+
+    @Test
+    void byChannel_lookupIsCaseInsensitive() {
+        // YAML often binds channel names as uppercase; the limiter
+        // folds to lowercase for matching. A rule keyed under "sms"
+        // must match a key with channel="SMS".
+        properties.getRateLimit().getByChannel().put("sms",
+                new RateLimitRule(1, 1, Duration.ofSeconds(60)));
+        Bucket4jRateLimiter limiter = new Bucket4jRateLimiter(properties);
+
+        RateLimitKey key = new RateLimitKey("acme", "anon", "SMS");
+        assertThat(limiter.tryConsume(key).allowed()).isTrue();
+        assertThat(limiter.tryConsume(key).allowed())
+                .as("byChannel lookup should match SMS → sms")
+                .isFalse();
+    }
+
+    // -----------------------------------------------------------------
     //  Helpers
     // -----------------------------------------------------------------
 

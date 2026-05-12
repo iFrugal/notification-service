@@ -130,16 +130,30 @@ public class Bucket4jRateLimiter implements RateLimiter {
 
     /**
      * Resolve which rule applies to this key, walking from most specific
-     * to least specific:
+     * to least specific (DD-23 inserts the {@code byChannel} default
+     * between per-tuple overrides and the global default):
      *
      * <pre>
-     *   (tenant, caller, channel) → (tenant, caller, *) → (tenant, *, *) → default
+     *   (tenant, caller, channel) → (tenant, caller, *) → (tenant, *, *)
+     *     → byChannel[channel]
+     *     → default
      * </pre>
      */
     private RateLimitRule ruleFor(RateLimitKey key) {
         for (RateLimitOverride o : sortedOverrides) {
             if (matches(o, key)) {
                 return o;
+            }
+        }
+        // DD-23: per-channel default sits between per-tuple overrides
+        // and the global default. A tenant who's negotiated a higher
+        // bucket via an override above still wins; this slot is the
+        // "globally, SMS is more bounded than the catch-all" backstop.
+        if (key.channel() != null) {
+            RateLimitRule perChannel = config.getByChannel()
+                    .get(key.channel().toLowerCase(java.util.Locale.ROOT));
+            if (perChannel != null) {
+                return perChannel;
             }
         }
         return config.getDefaultRule();

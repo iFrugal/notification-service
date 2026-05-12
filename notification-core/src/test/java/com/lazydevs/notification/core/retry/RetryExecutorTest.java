@@ -162,12 +162,16 @@ class RetryExecutorTest {
         cfg.setMaxDelay(Duration.ofMillis(500));
         cfg.setJitter(0.0);
         RetryExecutor executor = new RetryExecutor(properties, Optional.empty());
+        // DD-23: computeBackoff now takes a rule; resolve the global rule
+        // for the null channel and use it for the schedule check.
+        com.lazydevs.notification.core.config.NotificationProperties.RetryRule rule =
+                cfg.ruleFor(null);
 
-        assertThat(executor.computeBackoff(1).toMillis()).isEqualTo(100);  // 100 × 2^0
-        assertThat(executor.computeBackoff(2).toMillis()).isEqualTo(200);  // 100 × 2^1
-        assertThat(executor.computeBackoff(3).toMillis()).isEqualTo(400);  // 100 × 2^2
-        assertThat(executor.computeBackoff(4).toMillis()).isEqualTo(500);  // capped
-        assertThat(executor.computeBackoff(10).toMillis()).isEqualTo(500); // still capped
+        assertThat(executor.computeBackoff(rule, 1).toMillis()).isEqualTo(100);  // 100 × 2^0
+        assertThat(executor.computeBackoff(rule, 2).toMillis()).isEqualTo(200);  // 100 × 2^1
+        assertThat(executor.computeBackoff(rule, 3).toMillis()).isEqualTo(400);  // 100 × 2^2
+        assertThat(executor.computeBackoff(rule, 4).toMillis()).isEqualTo(500);  // capped
+        assertThat(executor.computeBackoff(rule, 10).toMillis()).isEqualTo(500); // still capped
     }
 
     @Test
@@ -188,5 +192,146 @@ class RetryExecutorTest {
         for (int i = 0; i < 50; i++) {
             assertThat(RetryExecutor.applyJitter(1000.0, 0.0)).isEqualTo(1000.0);
         }
+    }
+
+    // -----------------------------------------------------------------
+    //  DD-23 — per-channel rule overrides
+    // -----------------------------------------------------------------
+
+    @Test
+    void perChannelMaxAttempts_appliesToMatchingChannel() {
+        // Global is 3 attempts (from setUp). SMS gets a tighter rule
+        // of 2 attempts. A persistently failing call on SMS should
+        // stop at 2 attempts, not 3.
+        com.lazydevs.notification.core.config.NotificationProperties.RetryRule smsRule =
+                new com.lazydevs.notification.core.config.NotificationProperties.RetryRule();
+        smsRule.setMaxAttempts(2);
+        smsRule.setInitialDelay(Duration.ofMillis(1));
+        smsRule.setMaxDelay(Duration.ofMillis(2));
+        smsRule.setJitter(0.0);
+        smsRule.setMultiplier(2.0);
+        properties.getRetry().getByChannel().put("sms", smsRule);
+
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty());
+        AtomicInteger calls = new AtomicInteger();
+
+        RetryExecutor.Outcome outcome = executor.execute(
+                com.lazydevs.notification.api.Channel.SMS,
+                () -> {
+                    calls.incrementAndGet();
+                    return SendResult.failure("RATE_LIMIT", "carrier busy", FailureType.TRANSIENT);
+                });
+
+        assertThat(outcome.result().success()).isFalse();
+        assertThat(outcome.attempts())
+                .as("SMS override should stop at 2, even though global is 3")
+                .isEqualTo(2);
+        assertThat(calls.get()).isEqualTo(2);
+    }
+
+    @Test
+    void perChannelOverride_doesNotAffectOtherChannels() {
+        // SMS overridden to 2; email should still use the global 3.
+        com.lazydevs.notification.core.config.NotificationProperties.RetryRule smsRule =
+                new com.lazydevs.notification.core.config.NotificationProperties.RetryRule();
+        smsRule.setMaxAttempts(2);
+        smsRule.setInitialDelay(Duration.ofMillis(1));
+        smsRule.setMaxDelay(Duration.ofMillis(2));
+        smsRule.setJitter(0.0);
+        smsRule.setMultiplier(2.0);
+        properties.getRetry().getByChannel().put("sms", smsRule);
+
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty());
+        AtomicInteger calls = new AtomicInteger();
+
+        executor.execute(
+                com.lazydevs.notification.api.Channel.EMAIL,
+                () -> {
+                    calls.incrementAndGet();
+                    return SendResult.failure("PROVIDER_BUSY", "smtp 421", FailureType.TRANSIENT);
+                });
+
+        assertThat(calls.get())
+                .as("EMAIL uses global maxAttempts=3, not the SMS override")
+                .isEqualTo(3);
+    }
+
+    @Test
+    void perChannelLookup_isCaseInsensitive() {
+        // YAML often binds enum names as uppercase; the executor folds
+        // to lowercase for matching. A rule keyed under "sms" must
+        // match a Channel.SMS call.
+        com.lazydevs.notification.core.config.NotificationProperties.RetryRule rule =
+                new com.lazydevs.notification.core.config.NotificationProperties.RetryRule();
+        rule.setMaxAttempts(1);  // no retries at all
+        rule.setInitialDelay(Duration.ofMillis(1));
+        rule.setMaxDelay(Duration.ofMillis(2));
+        rule.setJitter(0.0);
+        rule.setMultiplier(2.0);
+        properties.getRetry().getByChannel().put("sms", rule);
+
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty());
+        AtomicInteger calls = new AtomicInteger();
+
+        executor.execute(
+                com.lazydevs.notification.api.Channel.SMS,
+                () -> {
+                    calls.incrementAndGet();
+                    return SendResult.failure("X", "y", FailureType.TRANSIENT);
+                });
+
+        assertThat(calls.get())
+                .as("Channel.SMS.name()=SMS should match the lower-cased map key")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void nullChannel_fallsBackToGlobalRule() {
+        // execute(null, supplier) — the back-compat path — uses globals.
+        properties.getRetry().getByChannel().put("sms",
+                makeRule(1, Duration.ofMillis(1)));  // SMS would be 1, global stays 3
+
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty());
+        AtomicInteger calls = new AtomicInteger();
+
+        executor.execute(
+                null,
+                () -> {
+                    calls.incrementAndGet();
+                    return SendResult.failure("X", "y", FailureType.TRANSIENT);
+                });
+
+        assertThat(calls.get())
+                .as("null channel resolves to global maxAttempts=3")
+                .isEqualTo(3);
+    }
+
+    @Test
+    void legacyExecuteWithoutChannel_stillWorks() {
+        // The original execute(Supplier) signature is the back-compat
+        // shim. It should keep functioning — global rule, no
+        // per-channel resolution.
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty());
+        AtomicInteger calls = new AtomicInteger();
+
+        RetryExecutor.Outcome outcome = executor.execute(() -> {
+            calls.incrementAndGet();
+            return SendResult.success("msg-1");
+        });
+
+        assertThat(outcome.result().success()).isTrue();
+        assertThat(calls.get()).isEqualTo(1);
+    }
+
+    private static com.lazydevs.notification.core.config.NotificationProperties.RetryRule
+            makeRule(int maxAttempts, Duration delay) {
+        com.lazydevs.notification.core.config.NotificationProperties.RetryRule r =
+                new com.lazydevs.notification.core.config.NotificationProperties.RetryRule();
+        r.setMaxAttempts(maxAttempts);
+        r.setInitialDelay(delay);
+        r.setMaxDelay(delay.multipliedBy(10));
+        r.setJitter(0.0);
+        r.setMultiplier(2.0);
+        return r;
     }
 }
