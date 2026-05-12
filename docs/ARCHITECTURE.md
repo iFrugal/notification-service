@@ -219,6 +219,9 @@ release artifacts is done by `crazy-max/ghaction-import-gpg`.
 
 ## Where to go next
 
+- **Integrating the service?** → start at the
+  [`docs/FEATURE_MATRIX.md`](./FEATURE_MATRIX.md) — every feature,
+  which JAR to add, which property to flip, three worked examples.
 - **Bug or feature work** → start at
   [`docs/PROGRESS.md`](./PROGRESS.md) (the live tracker of in-flight
   and queued work) and the relevant

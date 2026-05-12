@@ -10,8 +10,13 @@
 
 A multi-tenant notification service supporting multiple channels (Email, SMS, WhatsApp, Push) with pluggable providers. Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone Docker container**.
 
+> ### 📋 **[Feature Matrix → `docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md)**
+>
+> **For integrators:** every feature, which JAR to add, which property to flip, side-by-side. Three worked examples (single-pod email-only → SaaS multi-channel → multi-pod distributed). Start there if you're asking *"what do I actually need to enable X?"*
+
 ## Table of Contents
 
+- **[📋 Feature Matrix](docs/FEATURE_MATRIX.md)** — what to add and configure per feature
 - [Features](#features)
 - [Architecture](#architecture)
 - [Modules](#modules)
@@ -1090,8 +1095,12 @@ Operators can read DLQ entries with `redis-cli LRANGE
 
 ## Design Decisions
 
-Start with the **[Architecture overview](docs/ARCHITECTURE.md)** for a
-walkthrough of how the pieces fit together. The per-decision corpus
+If you're integrating the service, start with the
+**[📋 Feature Matrix](docs/FEATURE_MATRIX.md)** — every feature,
+which JAR to add, which property to flip, plus three worked examples.
+
+For the *why* behind the design, the **[Architecture overview](docs/ARCHITECTURE.md)**
+walks through how the pieces fit together. The per-decision corpus
 lives at [`docs/design-decisions/`](docs/design-decisions/) —
 see the
 [decision log](docs/design-decisions/00-decision-log.md) for the
