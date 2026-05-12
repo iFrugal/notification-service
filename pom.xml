@@ -11,7 +11,7 @@
 
     <artifactId>notification-service</artifactId>
     <packaging>pom</packaging>
-    <version>1.0.1</version>
+    <version>1.0.1-SNAPSHOT</version>
 
     <name>notification-service</name>
     <description>Multi-tenant notification service supporting email, SMS, WhatsApp, and push notifications</description>
