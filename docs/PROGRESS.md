@@ -18,12 +18,13 @@ collaborator) can pick up where the last one left off.
 ## Status snapshot
 
 - **Repository:** `iFrugal/notification-service`
-- **Current version on Maven Central:** `1.0.0`
-- **Working version (snapshot):** `1.0.1-SNAPSHOT`
+- **Current version (this branch):** `1.0.1` (release in flight)
+- **Latest released on Maven Central:** `1.0.0`
+- **Working version (after release):** `1.0.2-SNAPSHOT` (bumped in a follow-up PR after CI publishes)
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-05-12 IST (DD-19/20/21/22 + docs all merged; DD-23 per-channel-overrides PR open; 1.0.1 release pending).
+- **Last updated:** 2026-05-12 IST (1.0.1 release PR open — 13 DDs since 1.0.0; v1 cycle complete).
   All dates in this file are local IST (UTC+5:30) since that's where
   the work is happening; UTC equivalents differ by ~5h30m.
 
@@ -378,11 +379,12 @@ collaborator) can pick up where the last one left off.
       cross-links. Merged as
       [#44](https://github.com/iFrugal/notification-service/pull/44)
 
-### Phase 18 — Per-channel retry + rate-limit overrides (DD-23) ← in flight
+### Phase 18 — Per-channel retry + rate-limit overrides (DD-23) ✅
 
-- [~] Single PR — closes DD-12 §"Out of scope" + DD-13's promised
+- [x] Single PR — closes DD-12 §"Out of scope" + DD-13's promised
       per-channel tunables. Backwards-compatible: top-level retry
-      fields stay; new `byChannel` slot composes on top
+      fields stay; new `byChannel` slot composes on top, merged as
+      [#45](https://github.com/iFrugal/notification-service/pull/45)
   - [x] DD-23 design doc + decision-log entry
   - [x] `RetryProperties.byChannel: Map<String, RetryRule>` +
         `ruleFor(channel)` helper; new `RetryRule` value type with
@@ -400,11 +402,25 @@ collaborator) can pick up where the last one left off.
   - [x] Tests — `RetryExecutorTest` extended with 5 byChannel cases,
         `Bucket4jRateLimiterTest` extended with 4 byChannel cases
 
-### Phase 19 — Cut 1.0.1 release ← next
+### Phase 19 — Cut 1.0.1 release ← in flight
 
-- [ ] Bump `1.0.1-SNAPSHOT` → `1.0.1` in all module POMs, flip
-      `CHANGELOG.md` `[Unreleased]` → `[1.0.1]`, tag, push, let
-      CI publish to Maven Central, bump to `1.0.2-SNAPSHOT`.
+- [~] PR bumps all 22 module POMs from `1.0.1-SNAPSHOT` to `1.0.1`
+      and flips `CHANGELOG.md` `[Unreleased]` → `[1.0.1]` dated
+      2026-05-12. The v1 milestone — 13 DDs (DD-10 → DD-22 inclusive,
+      via DD-23) and a Java 21→25 + Boot 3→4 foundation upgrade
+      since 1.0.0
+  - [x] All 22 module POMs bumped to `1.0.1`
+  - [x] CHANGELOG entry flipped from `[Unreleased]` to `[1.0.1]`
+        with today's date; fresh empty `[Unreleased]` section
+        seeded; compare-links updated
+  - [x] Status snapshot in PROGRESS.md reflects the release version
+  - [ ] After merge: tag `v1.0.1` on the merge commit; release
+        workflow picks up the tag and publishes to Maven Central
+        via the Central Portal + GPG signing
+  - [ ] Follow-up tiny PR bumps the working version to
+        `1.0.2-SNAPSHOT` — pattern matches the `1.0.0` release
+        (the `[release] [skip ci] prepare for next development
+        iteration` commit pattern visible in `git log`)
 
 ### Out-of-scope / parked
 
@@ -422,7 +438,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| (pending) | feat(dd-23): per-channel retry + rate-limit overrides | `feat/dd-23-per-channel-overrides` | **awaiting CI/review** | Phase 18 — final feature PR for the v1 cycle |
+| (pending) | release: 1.0.1 | `release/1.0.1` | **awaiting CI/review** | Phase 19 — POM bumps + CHANGELOG flip; v1 milestone |
 
 ---
 
@@ -430,6 +446,7 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#45](https://github.com/iFrugal/notification-service/pull/45) | feat(dd-23): per-channel retry + rate-limit overrides | 2026-05-12 |
 | [#44](https://github.com/iFrugal/notification-service/pull/44) | docs: add ARCHITECTURE.md + CHANGELOG.md | 2026-05-11 |
 | [#43](https://github.com/iFrugal/notification-service/pull/43) | feat(dd-21+dd-22): actuator health indicators + Micrometer metrics | 2026-05-11 |
 | [#42](https://github.com/iFrugal/notification-service/pull/42) | feat(dd-19+dd-20): bulk DLQ replay + admin audit browse | 2026-05-11 |
