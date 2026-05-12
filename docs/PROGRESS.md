@@ -18,13 +18,31 @@ collaborator) can pick up where the last one left off.
 ## Status snapshot
 
 - **Repository:** `iFrugal/notification-service`
-- **Current version (this branch):** `1.0.1` (release in flight)
+- **Working version (current):** `1.0.1-SNAPSHOT` (restored — see release-procedure note below)
 - **Latest released on Maven Central:** `1.0.0`
-- **Working version (after release):** `1.0.2-SNAPSHOT` (bumped in a follow-up PR after CI publishes)
+- **Next release:** `1.0.1` (pending manual workflow trigger via Actions → "Release to Maven Central")
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-05-12 IST (1.0.1 release PR open — 13 DDs since 1.0.0; v1 cycle complete).
+- **Last updated:** 2026-05-12 IST (1.0.1 release awaiting workflow run; POMs restored to SNAPSHOT after #46 misstep).
+
+> **Release procedure note:** The release workflow at
+> `.github/workflows/release.yml` is **`workflow_dispatch`-only**
+> (despite the stale comment claiming "tag-driven"). It runs
+> `maven-release-plugin` (`release:prepare` + `release:perform`)
+> which **expects the working tree to be at a `-SNAPSHOT` version
+> and does the version bumps + tag itself.** Do NOT pre-bump POMs
+> manually before running. The flow is:
+>
+> 1. Go to Actions → "Release to Maven Central" → "Run workflow"
+> 2. Leave both version inputs blank (auto-derives `1.0.1` from
+>    `1.0.1-SNAPSHOT`)
+> 3. Try `dry-run: true` first to verify; then re-run with
+>    `dry-run: false` to actually publish
+> 4. The workflow tags `v1.0.1`, deploys to Central, bumps to
+>    `1.0.2-SNAPSHOT` in a follow-on commit, pushes back to main,
+>    and (via `softprops/action-gh-release`) auto-generates the
+>    GitHub Release page from the tag
   All dates in this file are local IST (UTC+5:30) since that's where
   the work is happening; UTC equivalents differ by ~5h30m.
 
@@ -402,25 +420,32 @@ collaborator) can pick up where the last one left off.
   - [x] Tests — `RetryExecutorTest` extended with 5 byChannel cases,
         `Bucket4jRateLimiterTest` extended with 4 byChannel cases
 
-### Phase 19 — Cut 1.0.1 release ← in flight
+### Phase 19 — Cut 1.0.1 release ← awaiting workflow run
 
-- [~] PR bumps all 22 module POMs from `1.0.1-SNAPSHOT` to `1.0.1`
-      and flips `CHANGELOG.md` `[Unreleased]` → `[1.0.1]` dated
-      2026-05-12. The v1 milestone — 13 DDs (DD-10 → DD-22 inclusive,
-      via DD-23) and a Java 21→25 + Boot 3→4 foundation upgrade
-      since 1.0.0
-  - [x] All 22 module POMs bumped to `1.0.1`
-  - [x] CHANGELOG entry flipped from `[Unreleased]` to `[1.0.1]`
-        with today's date; fresh empty `[Unreleased]` section
-        seeded; compare-links updated
-  - [x] Status snapshot in PROGRESS.md reflects the release version
-  - [ ] After merge: tag `v1.0.1` on the merge commit; release
-        workflow picks up the tag and publishes to Maven Central
-        via the Central Portal + GPG signing
-  - [ ] Follow-up tiny PR bumps the working version to
-        `1.0.2-SNAPSHOT` — pattern matches the `1.0.0` release
-        (the `[release] [skip ci] prepare for next development
-        iteration` commit pattern visible in `git log`)
+- [~] PR #46 manually bumped POMs + flipped CHANGELOG. Worked
+      mechanically but **was the wrong shape** for the existing
+      release workflow, which uses `maven-release-plugin` and
+      expects to encounter a `-SNAPSHOT` tree and do the version
+      bumps itself. POMs are now reverted to `1.0.1-SNAPSHOT` so
+      the workflow can run cleanly.
+  - [x] PR #46 merged manual POM bumps to `1.0.1` and flipped
+        `CHANGELOG.md` to `[1.0.1]` dated 2026-05-12
+  - [x] Tag `v1.0.1` was pushed but the release workflow has
+        `workflow_dispatch` only (no `push: tags: …`), so the
+        tag-push did nothing. Tag deleted.
+  - [~] **THIS PR** reverts the POM bumps back to `1.0.1-SNAPSHOT`
+        (keeping the CHANGELOG entry — release plugin doesn't
+        touch CHANGELOG and the `[1.0.1] - 2026-05-12` entry is
+        still accurate). Adds the release-procedure note to the
+        status snapshot above so future humans know to run the
+        workflow rather than pre-bump.
+  - [ ] **After this PR merges:** open Actions → "Release to
+        Maven Central" → "Run workflow", leave both version inputs
+        blank, dry-run first then real. Workflow auto-bumps to
+        `1.0.1`, tags `v1.0.1`, deploys to Central, bumps to
+        `1.0.2-SNAPSHOT` in a follow-on `[release] [skip ci]
+        prepare for next development iteration` commit, and
+        auto-creates the GitHub Release page from the tag.
 
 ### Out-of-scope / parked
 
@@ -438,7 +463,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| (pending) | release: 1.0.1 | `release/1.0.1` | **awaiting CI/review** | Phase 19 — POM bumps + CHANGELOG flip; v1 milestone |
+| (pending) | fix(release): restore SNAPSHOT so workflow can release | `fix/restore-snapshot-for-release-workflow` | **awaiting CI/review** | Phase 19 — corrects PR #46's misstep; unblocks `maven-release-plugin` |
 
 ---
 
@@ -446,6 +471,7 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#46](https://github.com/iFrugal/notification-service/pull/46) | release: 1.0.1 (POM bumps + CHANGELOG flip — reverted by next PR, see Phase 19 note) | 2026-05-12 |
 | [#45](https://github.com/iFrugal/notification-service/pull/45) | feat(dd-23): per-channel retry + rate-limit overrides | 2026-05-12 |
 | [#44](https://github.com/iFrugal/notification-service/pull/44) | docs: add ARCHITECTURE.md + CHANGELOG.md | 2026-05-11 |
 | [#43](https://github.com/iFrugal/notification-service/pull/43) | feat(dd-21+dd-22): actuator health indicators + Micrometer metrics | 2026-05-11 |
