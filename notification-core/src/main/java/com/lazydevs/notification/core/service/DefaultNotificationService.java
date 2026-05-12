@@ -174,8 +174,11 @@ public class DefaultNotificationService implements NotificationService {
             SendResult result;
             int attempts;
             if (retryExecutor.isPresent()) {
+                // DD-23: pass the channel so the executor can resolve
+                // per-channel rule overrides (notification.retry.by-channel.<channel>).
+                // Null-safe — execute(null, ...) falls back to the global rule.
                 RetryExecutor.Outcome outcome = retryExecutor.get()
-                        .execute(() -> provider.send(request, content));
+                        .execute(request.getChannel(), () -> provider.send(request, content));
                 result = outcome.result();
                 attempts = outcome.attempts();
                 if (attempts > 1) {

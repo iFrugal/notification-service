@@ -1,9 +1,11 @@
 package com.lazydevs.notification.core.retry;
 
+import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.model.SendResult;
 import com.lazydevs.notification.api.retry.RetryPredicate;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import com.lazydevs.notification.core.config.NotificationProperties.RetryProperties;
+import com.lazydevs.notification.core.config.NotificationProperties.RetryRule;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -14,7 +16,9 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 
 /**
- * In-process retry helper for provider calls (DD-13).
+ * In-process retry helper for provider calls (DD-13). DD-23 adds
+ * per-channel rule resolution — see
+ * {@link #execute(Channel, Supplier)}.
  *
  * <p>Wraps a {@code Supplier<SendResult>} and re-invokes it up to
  * {@code maxAttempts} times when the {@link RetryPredicate} says the
@@ -53,32 +57,50 @@ public class RetryExecutor {
         // channel-aware or attempt-cap-aware predicate via @Bean.
         this.predicate = customPredicate.orElse(RetryPredicate.DEFAULT);
         log.info("RetryExecutor initialized: maxAttempts={}, initialDelay={}, multiplier={}, "
-                        + "maxDelay={}, jitter={}",
+                        + "maxDelay={}, jitter={}, byChannelOverrides={}",
                 config.getMaxAttempts(), config.getInitialDelay(), config.getMultiplier(),
-                config.getMaxDelay(), config.getJitter());
+                config.getMaxDelay(), config.getJitter(), config.getByChannel().size());
     }
 
     /**
      * Run {@code action}, retrying on failure per the configured
-     * policy.
+     * global policy.
+     *
+     * <p>Retained for callers that don't have channel context.
+     * Equivalent to {@link #execute(Channel, Supplier)} with
+     * {@code channel = null}, which resolves to the global rule.
+     */
+    public Outcome execute(Supplier<SendResult> action) {
+        return execute(null, action);
+    }
+
+    /**
+     * Run {@code action}, retrying on failure per the rule resolved
+     * for {@code channel} (DD-23). When the channel has a
+     * per-channel override configured under
+     * {@code notification.retry.by-channel.<channel>}, that rule's
+     * knobs (max-attempts, backoff, jitter) replace the globals for
+     * the duration of this invocation. Otherwise the global rule
+     * applies.
      *
      * @return the final {@link SendResult} — either a success, a failure
      *         the predicate said to stop on, or the last failure after
      *         exhausting attempts. Also returns the attempt count so the
      *         caller can record it on the audit / response.
      */
-    public Outcome execute(Supplier<SendResult> action) {
+    public Outcome execute(Channel channel, Supplier<SendResult> action) {
+        RetryRule rule = config.ruleFor(channel != null ? channel.name() : null);
         SendResult result = null;
-        int attempt = 0;
-        for (attempt = 1; attempt <= config.getMaxAttempts(); attempt++) {
+        int attempt;
+        for (attempt = 1; attempt <= rule.getMaxAttempts(); attempt++) {
             result = invokeSafely(action, attempt);
             if (result.success() || !predicate.shouldRetry(result, attempt)) {
                 return new Outcome(result, attempt);
             }
             // Don't sleep after the last attempt — we're about to return
             // the failure regardless.
-            if (attempt < config.getMaxAttempts()) {
-                Duration backoff = computeBackoff(attempt);
+            if (attempt < rule.getMaxAttempts()) {
+                Duration backoff = computeBackoff(rule, attempt);
                 log.debug("Attempt {} failed; sleeping {}ms before retry", attempt, backoff.toMillis());
                 if (!sleepUninterruptibly(backoff)) {
                     // Thread interrupted — surface the most recent failure
@@ -89,7 +111,7 @@ public class RetryExecutor {
         }
         // Exhausted attempts. attempt is now (maxAttempts + 1) due to the
         // post-increment of the for-loop; clamp for the report.
-        return new Outcome(result, Math.min(attempt - 1, config.getMaxAttempts()));
+        return new Outcome(result, Math.min(attempt - 1, rule.getMaxAttempts()));
     }
 
     /**
@@ -116,17 +138,17 @@ public class RetryExecutor {
      * Compute backoff for this attempt: exponential base, capped by
      * {@code maxDelay}, then jittered. Visible for testing.
      */
-    Duration computeBackoff(int attempt) {
+    Duration computeBackoff(RetryRule rule, int attempt) {
         // attempt is 1-based; first delay (after attempt 1 fails) uses
         // initialDelay × multiplier^0 = initialDelay.
         // Explicit (double) cast on the exponent — silences Sonar's
         // "subtraction operands should be double when result is used as
         // double" lint, and protects against the (theoretical) integer
         // overflow if attempt were ever Integer.MIN_VALUE.
-        double base = config.getInitialDelay().toMillis()
-                * Math.pow(config.getMultiplier(), (double) (attempt - 1));
-        double capped = Math.min(base, config.getMaxDelay().toMillis());
-        double jittered = applyJitter(capped, config.getJitter());
+        double base = rule.getInitialDelay().toMillis()
+                * Math.pow(rule.getMultiplier(), (double) (attempt - 1));
+        double capped = Math.min(base, rule.getMaxDelay().toMillis());
+        double jittered = applyJitter(capped, rule.getJitter());
         return Duration.ofMillis(Math.max(0L, (long) jittered));
     }
 

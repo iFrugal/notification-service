@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **DD-23 Per-channel retry + rate-limit overrides** — new `byChannel`
+  map on `RetryProperties` and `RateLimitProperties` lets operators
+  set per-channel defaults (SMS tighter than email, etc.) without
+  enumerating per-tenant overrides. Closes DD-12 §"Out of scope" +
+  DD-13 §"Per-channel retry config". `RetryExecutor` gets a
+  channel-aware `execute(Channel, Supplier)` overload; old signature
+  retained for back-compat. Rate-limit precedence:
+  most-specific-tuple override → `byChannel` default → global
+  `defaultRule`. Backwards-compatible — top-level retry fields stay;
+  `byChannel` composes on top.
 - **DD-21 Actuator health indicators** — per-SPI status at
   `/actuator/health/{dlq,idempotency,rateLimit,deliveryEvents}`. DLQ
   flips to `OUT_OF_SERVICE` (not `DOWN`) at a configurable fullness

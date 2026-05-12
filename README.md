@@ -48,8 +48,8 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
 - **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)
-- **Rate Limiting**: Opt-in token-bucket throttle per `(tenant, caller, channel)` with `429 + Retry-After` (DD-12)
-- **Retries + DLQ**: Opt-in synchronous retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN) and exponential backoff with jitter; pluggable dead-letter store SPI (DD-13); operator replay endpoint with `replayOf` chain (DD-15)
+- **Rate Limiting**: Opt-in token-bucket throttle per `(tenant, caller, channel)` with `429 + Retry-After` (DD-12); per-channel default rules let operators bound SMS tighter than email without enumerating overrides (DD-23)
+- **Retries + DLQ**: Opt-in synchronous retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN) and exponential backoff with jitter; pluggable dead-letter store SPI (DD-13); operator replay endpoint with `replayOf` chain (DD-15); per-channel `byChannel` retry rule overrides (DD-23)
 - **OpenAPI / Swagger**: Self-documenting via `/v3/api-docs` + `/swagger-ui` (springdoc 3.0.3); schema published as a CI build artifact for client codegen
 - **Distributed mode**: Optional `notification-redis` module providing Redis-backed implementations of the idempotency, rate-limit, and DLQ SPIs for multi-pod deployments (DD-14)
 - **Webhook delivery callbacks**: Opt-in `/webhooks/{provider}/...` surface ingests Twilio status (HMAC-SHA1) and SES via SNS (X.509) callbacks; parsed events flow to a `DeliveryEventListener` SPI (DD-16)

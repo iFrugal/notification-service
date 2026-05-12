@@ -166,13 +166,21 @@ public class RedisRateLimiter implements RateLimiter {
     }
 
     /**
-     * Walk overrides most-specific-first, fall back to default — same
-     * algorithm as the in-memory {@code Bucket4jRateLimiter}.
+     * Walk overrides most-specific-first, fall back to the byChannel
+     * default (DD-23), then the global default — same algorithm as
+     * the in-memory {@code Bucket4jRateLimiter}.
      */
     private RateLimitRule ruleFor(RateLimitKey key) {
         for (RateLimitOverride o : sortedOverrides) {
             if (matches(o, key)) {
                 return o;
+            }
+        }
+        if (key.channel() != null) {
+            RateLimitRule perChannel = config.getByChannel()
+                    .get(key.channel().toLowerCase(java.util.Locale.ROOT));
+            if (perChannel != null) {
+                return perChannel;
             }
         }
         return config.getDefaultRule();

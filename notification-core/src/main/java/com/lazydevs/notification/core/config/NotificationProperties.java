@@ -242,11 +242,30 @@ public class NotificationProperties {
         /**
          * Targeted rule overrides. Match precedence is most-specific-wins:
          * {@code (tenant, caller, channel)} > {@code (tenant, caller)}
-         * > {@code (tenant)} > {@code defaultRule}. Within the same
-         * specificity, configuration order is the tiebreaker.
+         * > {@code (tenant)} > {@code byChannel default} > {@code defaultRule}.
+         * Within the same specificity, configuration order is the tiebreaker.
          */
         @Valid
         private List<RateLimitOverride> overrides = new ArrayList<>();
+
+        /**
+         * Per-channel rule defaults (DD-23). Sits between per-tuple
+         * {@link #overrides} and the global {@link #defaultRule} in the
+         * precedence chain. Lets operators set "globally, SMS is more
+         * bounded than the catch-all" without enumerating an override
+         * per tenant.
+         *
+         * <p>Keys are channel names, case-insensitive (folded to
+         * lowercase at lookup). Values are full {@link RateLimitRule}s.
+         *
+         * <p>A tenant who's negotiated a higher SMS bucket via the
+         * {@link #overrides} list still wins — that's the deliberate
+         * shape of "channel-default as backstop, tenant-override as
+         * agreement" (DD-23 §"Why byChannel between specific overrides
+         * and global default").
+         */
+        @Valid
+        private Map<String, RateLimitRule> byChannel = new LinkedHashMap<>();
     }
 
     /**
@@ -384,6 +403,109 @@ public class NotificationProperties {
             // Class doc says "Duration.ZERO would defeat backoff" — a
             // zero initial delay turns retries into a tight loop, which
             // is almost always a config typo. Enforce strictly positive.
+            return initialDelay != null
+                    && !initialDelay.isNegative()
+                    && !initialDelay.isZero();
+        }
+
+        @AssertTrue(message = "retry maxDelay must be positive and >= initialDelay")
+        public boolean isMaxDelayValid() {
+            return maxDelay != null
+                    && !maxDelay.isNegative()
+                    && !maxDelay.isZero()
+                    && (initialDelay == null || maxDelay.compareTo(initialDelay) >= 0);
+        }
+
+        /**
+         * Per-channel rule overrides (DD-23). Keys are channel names
+         * (case-insensitive — folded to lowercase at lookup). When a
+         * request's channel matches a key, the corresponding
+         * {@link RetryRule} replaces the global defaults for that
+         * request. No match → global defaults stand.
+         *
+         * <p>YAML example:
+         * <pre>
+         * notification:
+         *   retry:
+         *     max-attempts: 3             # global
+         *     by-channel:
+         *       sms:                       # SMS is expensive — tight bound
+         *         max-attempts: 2
+         *         initial-delay: 2s
+         *       email:                     # email is cheap — generous bound
+         *         max-attempts: 5
+         * </pre>
+         */
+        @Valid
+        private Map<String, RetryRule> byChannel = new LinkedHashMap<>();
+
+        /**
+         * Resolve the effective retry rule for the given channel.
+         * Returns the per-channel override if present, otherwise a
+         * snapshot of the global defaults. Case-insensitive lookup.
+         *
+         * @param channel channel name (e.g. {@code "EMAIL"}, {@code "sms"});
+         *                {@code null} returns the global defaults
+         */
+        public RetryRule ruleFor(String channel) {
+            if (channel != null) {
+                RetryRule override = byChannel.get(channel.toLowerCase(java.util.Locale.ROOT));
+                if (override != null) {
+                    return override;
+                }
+            }
+            return globalRule();
+        }
+
+        /**
+         * Snapshot the global fields as a {@link RetryRule} value. Used
+         * as the fallback when no per-channel override matches and as
+         * the shape exposed to the per-channel map.
+         */
+        private RetryRule globalRule() {
+            RetryRule r = new RetryRule();
+            r.setMaxAttempts(maxAttempts);
+            r.setInitialDelay(initialDelay);
+            r.setMultiplier(multiplier);
+            r.setMaxDelay(maxDelay);
+            r.setJitter(jitter);
+            return r;
+        }
+    }
+
+    /**
+     * A single retry rule — same shape as the top-level
+     * {@link RetryProperties} fields. Used as the value type of
+     * {@code RetryProperties.byChannel} (DD-23).
+     *
+     * <p>Validation is duplicated from {@link RetryProperties} so a
+     * misconfigured per-channel override fails binding the same way a
+     * misconfigured global default does.
+     */
+    @Data
+    public static class RetryRule {
+        @Min(value = 1, message = "retry max-attempts must be at least 1")
+        @Max(value = 10, message = "retry max-attempts must be at most 10 — use async + DLQ for higher")
+        private int maxAttempts = 3;
+
+        @NotNull
+        private java.time.Duration initialDelay = java.time.Duration.ofSeconds(1);
+
+        @jakarta.validation.constraints.DecimalMin(value = "1.0",
+                message = "retry multiplier must be >= 1.0")
+        private double multiplier = 2.0;
+
+        @NotNull
+        private java.time.Duration maxDelay = java.time.Duration.ofSeconds(30);
+
+        @jakarta.validation.constraints.DecimalMin(value = "0.0",
+                message = "retry jitter must be in [0.0, 1.0]")
+        @jakarta.validation.constraints.DecimalMax(value = "1.0",
+                message = "retry jitter must be in [0.0, 1.0]")
+        private double jitter = 0.5;
+
+        @AssertTrue(message = "retry initialDelay must be positive (zero defeats backoff)")
+        public boolean isInitialDelayValid() {
             return initialDelay != null
                     && !initialDelay.isNegative()
                     && !initialDelay.isZero();

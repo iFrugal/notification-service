@@ -23,7 +23,7 @@ collaborator) can pick up where the last one left off.
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-05-11 IST (DD-19 + DD-20 merged; DD-21 + DD-22 observability bundle PR open).
+- **Last updated:** 2026-05-12 IST (DD-19/20/21/22 + docs all merged; DD-23 per-channel-overrides PR open; 1.0.1 release pending).
   All dates in this file are local IST (UTC+5:30) since that's where
   the work is happening; UTC equivalents differ by ~5h30m.
 
@@ -353,50 +353,68 @@ collaborator) can pick up where the last one left off.
   - [x] README — admin-endpoints table rows for all three new
         endpoints
 
-### Phase 16 — Observability bundle (DD-21 + DD-22) ← in flight
+### Phase 15 — Operator-surface bundle (DD-19 + DD-20) ✅
 
-- [~] Bundled PR — per-SPI health indicators + Micrometer metrics
-      ship together. Both touch actuator, both low-risk, both
-      operator-loved
-  - [x] DD-21 design doc + decision-log entry
-  - [x] DD-22 design doc + decision-log entry
-  - [x] `spring-boot-health` + `micrometer-core` added as optional
-        deps on `notification-core` (transitive only when consumers
-        pull actuator)
-  - [x] Four `HealthIndicator` beans under
-        `notification-core.health` package — DLQ, idempotency,
-        rate-limit, delivery-events. Each `@ConditionalOnClass(HealthIndicator)`
-        + `@ConditionalOnProperty` matching its SPI's enable flag
-        (avoids the `@ConditionalOnBean` ordering antipattern that
-        bit us on DD-14)
-  - [x] DLQ indicator flips to `Status.OUT_OF_SERVICE` at configurable
-        threshold (default 80% of `max-entries`) — not `DOWN`, so
-        K8s liveness probes don't restart the pod
-  - [x] `NotificationMetrics` helper wraps `MeterRegistry`. Eight
-        counters (sends, retries, rate-limit denied, idempotency
-        replay, DLQ added, delivery received, webhook signature
-        failed), two gauges (DLQ size, delivery-events size), one
-        timer (send duration)
-  - [x] Wired into `DefaultNotificationService` (replay /
-        rate-limit / DLQ / send paths) and `WebhookController`
-        (delivery event + signature-failed)
-  - [x] Tag cardinality bounded — `tenant` only on
-        `idempotency.replay` per DD-22 §"Tag cardinality"
-  - [x] `HealthProperties.dlqNearFullPercent` config knob (default 80)
-  - [x] Tests — `HealthIndicatorsTest` (9 cases across all four
-        indicators), `NotificationMetricsTest` (11 cases covering
-        every meter type)
-  - [x] Existing test constructor sites updated for new
-        `Optional<NotificationMetrics>` arg on `DefaultNotificationService`
-        and `WebhookController`
+- [x] Bundled PR — `POST /admin/dead-letter/replay-batch` + audit
+      browse (`GET /admin/audit/{id}` + `/recent`), merged as
+      [#42](https://github.com/iFrugal/notification-service/pull/42)
 
-### Phase 17+ — Queued
+### Phase 16 — Observability bundle (DD-21 + DD-22) ✅
 
-- [ ] Jackson 2 → Jackson 3 migration (Boot 4's autoconfig defaults are Jackson 3; we still pin Jackson 2 in the parent POM)
-- [ ] CI workflow upload of `openapi.json` (12-line edit deferred from Phase 9 due to PAT scope)
-- [ ] FCM delivery callbacks (Firebase doesn't ship per-message webhooks today; revisit if pull-based BigQuery export is in scope)
-- [ ] Per-channel retry/rate-limit differentiation (DD-12 §"Out of scope")
-- [ ] Outbound delivery webhooks (push our state to upstream callers — inverse of DD-16)
+- [x] Bundled PR — per-SPI actuator health indicators + Micrometer
+      metrics across the send path, merged as
+      [#43](https://github.com/iFrugal/notification-service/pull/43).
+      Four `HealthIndicator` beans (DLQ / idempotency / rate-limit /
+      delivery-events) each `@ConditionalOnClass(HealthIndicator)`
+      + `@ConditionalOnProperty`. DLQ flips to `OUT_OF_SERVICE` at
+      configurable threshold (default 80%). `NotificationMetrics`
+      helper wraps `MeterRegistry` — 8 counters + 2 gauges + 1 timer;
+      `tenant` tag bounded to `idempotency.replay`. 20 new tests.
+
+### Phase 17 — Architecture + changelog docs ✅
+
+- [x] `docs/ARCHITECTURE.md` walking the system as a coherent
+      narrative; `CHANGELOG.md` in Keep-a-Changelog format; README
+      cross-links. Merged as
+      [#44](https://github.com/iFrugal/notification-service/pull/44)
+
+### Phase 18 — Per-channel retry + rate-limit overrides (DD-23) ← in flight
+
+- [~] Single PR — closes DD-12 §"Out of scope" + DD-13's promised
+      per-channel tunables. Backwards-compatible: top-level retry
+      fields stay; new `byChannel` slot composes on top
+  - [x] DD-23 design doc + decision-log entry
+  - [x] `RetryProperties.byChannel: Map<String, RetryRule>` +
+        `ruleFor(channel)` helper; new `RetryRule` value type with
+        the same validation as the top-level fields
+  - [x] `RetryExecutor.execute(Channel, Supplier)` overload (old
+        signature retained for back-compat). `computeBackoff` now
+        takes the resolved rule
+  - [x] `RateLimitProperties.byChannel: Map<String, RateLimitRule>`
+        — sits between per-tuple overrides and the global default in
+        precedence (per-tuple > byChannel > defaultRule)
+  - [x] `Bucket4jRateLimiter` + `RedisRateLimiter` consult byChannel
+        after exhausting per-tuple overrides
+  - [x] `DefaultNotificationService` passes `request.getChannel()`
+        to the executor
+  - [x] Tests — `RetryExecutorTest` extended with 5 byChannel cases,
+        `Bucket4jRateLimiterTest` extended with 4 byChannel cases
+
+### Phase 19 — Cut 1.0.1 release ← next
+
+- [ ] Bump `1.0.1-SNAPSHOT` → `1.0.1` in all module POMs, flip
+      `CHANGELOG.md` `[Unreleased]` → `[1.0.1]`, tag, push, let
+      CI publish to Maven Central, bump to `1.0.2-SNAPSHOT`.
+
+### Out-of-scope / parked
+
+- Jackson 2 → Jackson 3 migration (cleanup; Boot 4 defaults to
+  Jackson 3 but we pin Jackson 2 in the parent POM). Risky; deferred
+  until forced.
+- CI workflow upload of `openapi.json` (12-line edit blocked on PAT
+  workflow scope). User to commit when convenient.
+- FCM delivery callbacks (Firebase doesn't ship per-message webhooks
+  today; revisit if pull-based BigQuery export is in scope).
 
 ---
 
@@ -404,7 +422,7 @@ collaborator) can pick up where the last one left off.
 
 | # | Title | Branch | Status | Notes |
 |---|-------|--------|--------|-------|
-| (pending) | feat(dd-21+dd-22): actuator health + Micrometer metrics | `feat/dd-21-22-observability` | **awaiting CI/review** | Phase 16 — observability foundation |
+| (pending) | feat(dd-23): per-channel retry + rate-limit overrides | `feat/dd-23-per-channel-overrides` | **awaiting CI/review** | Phase 18 — final feature PR for the v1 cycle |
 
 ---
 
@@ -412,6 +430,8 @@ collaborator) can pick up where the last one left off.
 
 | PR | Title | Merged |
 |----|-------|--------|
+| [#44](https://github.com/iFrugal/notification-service/pull/44) | docs: add ARCHITECTURE.md + CHANGELOG.md | 2026-05-11 |
+| [#43](https://github.com/iFrugal/notification-service/pull/43) | feat(dd-21+dd-22): actuator health indicators + Micrometer metrics | 2026-05-11 |
 | [#42](https://github.com/iFrugal/notification-service/pull/42) | feat(dd-19+dd-20): bulk DLQ replay + admin audit browse | 2026-05-11 |
 | [#41](https://github.com/iFrugal/notification-service/pull/41) | feat(dd-18): GET /admin/delivery-events?requestId — audit↔delivery join | 2026-05-11 |
 | [#40](https://github.com/iFrugal/notification-service/pull/40) | feat(dd-17): persistent DeliveryEventStore + GET /admin/delivery-events | 2026-05-11 |
