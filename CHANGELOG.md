@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet — `1.0.1` just shipped. Next changes land here._
+
+## [1.0.1] - 2026-05-12
+
 ### Added
 
 - **DD-23 Per-channel retry + rate-limit overrides** — new `byChannel`
@@ -162,5 +166,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI/CD via GitHub Actions: build, release, deploy, Dependabot,
   CodeQL. SonarCloud quality gate.
 
-[Unreleased]: https://github.com/iFrugal/notification-service/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/iFrugal/notification-service/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/iFrugal/notification-service/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/iFrugal/notification-service/releases/tag/v1.0.0
