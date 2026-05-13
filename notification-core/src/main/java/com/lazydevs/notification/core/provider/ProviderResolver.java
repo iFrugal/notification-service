@@ -90,7 +90,7 @@ public class ProviderResolver {
             }
             throw new ProviderConfigurationException(providerName, channel.name(),
                     String.format("Bean '%s' is not an instance of %s", beanName, providerInterface.getName()));
-        } catch (NoSuchBeanDefinitionException e) {
+        } catch (NoSuchBeanDefinitionException _) {
             throw new ProviderNotFoundException(
                     String.format("Spring bean '%s' not found in ApplicationContext for provider '%s'",
                             beanName, providerName));
@@ -129,12 +129,14 @@ public class ProviderResolver {
             Function<String, Object> beanSupplier = name -> {
                 try {
                     return applicationContext.getBean(name);
-                } catch (NoSuchBeanDefinitionException e) {
+                } catch (NoSuchBeanDefinitionException _) {
                     // Try by type
                     try {
                         return applicationContext.getBean(Class.forName(name));
                     } catch (Exception ex) {
-                        throw new RuntimeException("Bean not found: " + name, ex);
+                        throw new ProviderConfigurationException(
+                                "Bean not found while resolving @Autowired dependency '" + name + "'",
+                                ex);
                     }
                 }
             };

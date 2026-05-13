@@ -83,7 +83,7 @@ public class ProviderRegistry {
             Class<?> clazz = Class.forName(className);
             builtInProviders.put(channel.name() + ":" + name, (Class<? extends NotificationProvider>) clazz);
             log.debug("Registered built-in provider: {}:{} -> {}", channel, name, className);
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException _) {
             // Provider module not on classpath - this is OK
             log.debug("Built-in provider not available (module not on classpath): {}:{}", channel, name);
         }
@@ -169,7 +169,7 @@ public class ProviderRegistry {
                 log.info("Initialized provider: tenant={}, channel={}, provider={}{}",
                         tenantId, channel, providerName, defaultMarker);
             } catch (Exception e) {
-                throw new RuntimeException(
+                throw new com.lazydevs.notification.api.exception.ProviderConfigurationException(
                         String.format("Failed to initialize provider '%s' for channel '%s' in tenant '%s': %s",
                                 providerName, channel, tenantId, e.getMessage()), e);
             }
@@ -333,13 +333,12 @@ public class ProviderRegistry {
         allProviders.clear();
     }
 
-    @SuppressWarnings("unchecked")
     private Class<? extends NotificationProvider> getProviderInterface(Channel channel) {
         return switch (channel) {
-            case EMAIL -> (Class) EmailProvider.class;
-            case SMS -> (Class) SmsProvider.class;
-            case WHATSAPP -> (Class) WhatsAppProvider.class;
-            case PUSH -> (Class) PushProvider.class;
+            case EMAIL -> EmailProvider.class;
+            case SMS -> SmsProvider.class;
+            case WHATSAPP -> WhatsAppProvider.class;
+            case PUSH -> PushProvider.class;
         };
     }
 }

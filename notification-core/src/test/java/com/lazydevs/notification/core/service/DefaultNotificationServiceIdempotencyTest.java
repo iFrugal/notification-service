@@ -136,9 +136,9 @@ class DefaultNotificationServiceIdempotencyTest {
     void send_completedReplayable_returnsCached_noProviderCall() throws Exception {
         NotificationRequest req = baseRequest("idem-replay");
         NotificationResponse cached = sentResponse("original-req-id");
-        IdempotencyRecord record = new IdempotencyRecord(
+        IdempotencyRecord cachedRecord = new IdempotencyRecord(
                 "original-req-id", IdempotencyStatus.COMPLETE, cached, Instant.now());
-        when(idempotencyStore.findExisting(any())).thenReturn(Optional.of(record));
+        when(idempotencyStore.findExisting(any())).thenReturn(Optional.of(cachedRecord));
 
         NotificationResponse response = service.send(req);
 
@@ -154,7 +154,7 @@ class DefaultNotificationServiceIdempotencyTest {
         // No provider lookup, no template render, no audit recordReceived.
         verifyNoInteractions(providerRegistry, templateEngine);
         verify(auditService, never()).recordReceived(any());
-        verify(auditService).recordDuplicateHit(eq(req), eq(record));
+        verify(auditService).recordDuplicateHit(eq(req), eq(cachedRecord));
         // markInProgress / markComplete not called — we short-circuited.
         verify(idempotencyStore, never()).markInProgress(any(), anyString());
         verify(idempotencyStore, never()).markComplete(any(), any());
@@ -179,9 +179,9 @@ class DefaultNotificationServiceIdempotencyTest {
     void send_failedPriorAttempt_treatsAsFresh() {
         NotificationRequest req = baseRequest("idem-failed");
         NotificationResponse priorFailure = failedResponse("prior-req-id");
-        IdempotencyRecord record = new IdempotencyRecord(
+        IdempotencyRecord priorRecord = new IdempotencyRecord(
                 "prior-req-id", IdempotencyStatus.COMPLETE, priorFailure, Instant.now());
-        when(idempotencyStore.findExisting(any())).thenReturn(Optional.of(record));
+        when(idempotencyStore.findExisting(any())).thenReturn(Optional.of(priorRecord));
         when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
         stubProviderHappyPath();
 

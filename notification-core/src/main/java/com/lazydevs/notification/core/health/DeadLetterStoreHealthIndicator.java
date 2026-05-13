@@ -66,7 +66,7 @@ public class DeadLetterStoreHealthIndicator implements HealthIndicator {
                     .build();
         }
 
-        int fillPercent = maxEntries == 0 ? 0 : (int) Math.min(100L, (long) size * 100L / maxEntries);
+        int fillPercent = maxEntries == 0 ? 0 : (int) Math.min(100L, size * 100L / maxEntries);
         Health.Builder builder = (nearFullPercent > 0 && fillPercent >= nearFullPercent)
                 ? Health.status(Status.OUT_OF_SERVICE)
                 : Health.up();

@@ -22,6 +22,9 @@ import java.util.UUID;
 @Slf4j
 public class SmtpEmailProvider implements EmailProvider {
 
+    private static final String CHARSET_UTF8 = "UTF-8";
+    private static final String CT_HTML_UTF8 = "text/html; charset=UTF-8";
+
     private String host;
     private int port = 587;
     private String username;
@@ -136,7 +139,7 @@ public class SmtpEmailProvider implements EmailProvider {
                 subject = recipient.subject();
             }
             if (subject != null) {
-                message.setSubject(subject, "UTF-8");
+                message.setSubject(subject, CHARSET_UTF8);
             }
 
             // Body
@@ -145,18 +148,18 @@ public class SmtpEmailProvider implements EmailProvider {
                 MimeMultipart multipart = new MimeMultipart("alternative");
 
                 MimeBodyPart textPart = new MimeBodyPart();
-                textPart.setText(content.textBody(), "UTF-8");
+                textPart.setText(content.textBody(), CHARSET_UTF8);
                 multipart.addBodyPart(textPart);
 
                 MimeBodyPart htmlPart = new MimeBodyPart();
-                htmlPart.setContent(content.htmlBody(), "text/html; charset=UTF-8");
+                htmlPart.setContent(content.htmlBody(), CT_HTML_UTF8);
                 multipart.addBodyPart(htmlPart);
 
                 message.setContent(multipart);
             } else if (content.hasHtml()) {
-                message.setContent(content.htmlBody(), "text/html; charset=UTF-8");
+                message.setContent(content.htmlBody(), CT_HTML_UTF8);
             } else {
-                message.setText(content.textBody(), "UTF-8");
+                message.setText(content.textBody(), CHARSET_UTF8);
             }
 
             // Handle attachments
@@ -166,9 +169,9 @@ public class SmtpEmailProvider implements EmailProvider {
                 // Add body
                 MimeBodyPart bodyPart = new MimeBodyPart();
                 if (content.hasHtml()) {
-                    bodyPart.setContent(content.htmlBody(), "text/html; charset=UTF-8");
+                    bodyPart.setContent(content.htmlBody(), CT_HTML_UTF8);
                 } else {
-                    bodyPart.setText(content.textBody(), "UTF-8");
+                    bodyPart.setText(content.textBody(), CHARSET_UTF8);
                 }
                 mixedMultipart.addBodyPart(bodyPart);
 
@@ -284,14 +287,14 @@ public class SmtpEmailProvider implements EmailProvider {
     private int getInt(Map<String, Object> props, String key, int defaultValue) {
         Object value = props.get(key);
         if (value == null) return defaultValue;
-        if (value instanceof Number) return ((Number) value).intValue();
+        if (value instanceof Number n) return n.intValue();
         return Integer.parseInt(String.valueOf(value));
     }
 
     private boolean getBoolean(Map<String, Object> props, String key, boolean defaultValue) {
         Object value = props.get(key);
         if (value == null) return defaultValue;
-        if (value instanceof Boolean) return (Boolean) value;
+        if (value instanceof Boolean b) return b;
         return Boolean.parseBoolean(String.valueOf(value));
     }
 }

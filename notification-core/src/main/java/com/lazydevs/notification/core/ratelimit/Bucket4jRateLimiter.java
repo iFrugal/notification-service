@@ -166,10 +166,7 @@ public class Bucket4jRateLimiter implements RateLimiter {
         if (o.getCaller() != null && !o.getCaller().equals(key.callerId())) {
             return false;
         }
-        if (o.getChannel() != null && !o.getChannel().equalsIgnoreCase(key.channel())) {
-            return false;
-        }
-        return true;
+        return o.getChannel() == null || o.getChannel().equalsIgnoreCase(key.channel());
     }
 
     private int specificity(RateLimitOverride o) {
