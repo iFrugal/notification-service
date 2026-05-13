@@ -83,11 +83,24 @@ public class CaffeineIdempotencyStore implements IdempotencyStore {
 
     @Override
     public void markComplete(IdempotencyKey key, NotificationResponse response) {
-        IdempotencyRecord prior = cache.getIfPresent(key);
-        String notificationId = prior != null ? prior.notificationId()
-                : (response != null ? response.requestId() : null);
         cache.put(key, new IdempotencyRecord(
-                notificationId, IdempotencyStatus.COMPLETE, response, Instant.now()));
+                resolveNotificationId(key, response),
+                IdempotencyStatus.COMPLETE, response, Instant.now()));
+    }
+
+    /**
+     * Pick the {@code notificationId} to record on the COMPLETE entry.
+     * Prefer the id from the in-progress record (the first attempt that
+     * claimed the key); fall back to the response's requestId for
+     * defensive correctness when the in-progress entry has been
+     * evicted under TTL pressure.
+     */
+    private String resolveNotificationId(IdempotencyKey key, NotificationResponse response) {
+        IdempotencyRecord prior = cache.getIfPresent(key);
+        if (prior != null) {
+            return prior.notificationId();
+        }
+        return response != null ? response.requestId() : null;
     }
 
     @Override

@@ -116,7 +116,7 @@ public final class SnsSignatureVerifier {
             }
             String host = uri.getHost();
             return host != null && CERT_URL_HOST.matcher(host.toLowerCase()).matches();
-        } catch (IllegalArgumentException | NullPointerException e) {
+        } catch (IllegalArgumentException | NullPointerException _) {
             // URI.create chokes on whitespace and a few other invalid
             // forms with NPE; treat any parsing failure as "not
             // allowed" — we never validate untrustworthy URLs against

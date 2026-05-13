@@ -173,5 +173,45 @@ public class NotificationRequest {
             String contentType,
             byte[] content,
             String url) {
+
+        /**
+         * Custom {@code equals} so two attachments with identical bytes
+         * compare equal. The record-generated default uses
+         * {@code Object.equals} on the {@code byte[]} field, which is
+         * reference equality — fixed per Sonar S6218.
+         */
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (!(o instanceof Attachment other)) {
+                return false;
+            }
+            return java.util.Objects.equals(filename, other.filename)
+                    && java.util.Objects.equals(contentType, other.contentType)
+                    && java.util.Arrays.equals(content, other.content)
+                    && java.util.Objects.equals(url, other.url);
+        }
+
+        /** Matches {@link #equals} — content-based hash over the byte array. */
+        @Override
+        public int hashCode() {
+            int result = java.util.Objects.hash(filename, contentType, url);
+            result = 31 * result + java.util.Arrays.hashCode(content);
+            return result;
+        }
+
+        /**
+         * Render the byte-array as a length-only summary; the full
+         * bytes can be large and aren't useful in logs.
+         */
+        @Override
+        public String toString() {
+            return "Attachment[filename=" + filename
+                    + ", contentType=" + contentType
+                    + ", content=" + (content == null ? "null" : "byte[" + content.length + "]")
+                    + ", url=" + url + "]";
+        }
     }
 }

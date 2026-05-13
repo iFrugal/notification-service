@@ -65,6 +65,13 @@ public class NotificationMetrics {
     private static final String M_DELIVERY_SIZE = "notification.delivery-events.size";
     private static final String M_WEBHOOK_SIG_FAILED = "notification.webhook.signature.failed.total";
 
+    // Common tag keys / values reused across multiple meters. Pulled out
+    // as constants so a rename is one place, and to silence S1192.
+    private static final String TAG_CHANNEL = "channel";
+    private static final String TAG_STATUS = "status";
+    private static final String UNKNOWN_LOWER = "unknown";
+    private static final String UNKNOWN_UPPER = "UNKNOWN";
+
     private final MeterRegistry registry;
 
     public NotificationMetrics(MeterRegistry registry,
@@ -72,10 +79,10 @@ public class NotificationMetrics {
                                Optional<DeliveryEventStore> deliveryEventStore) {
         this.registry = registry;
 
-        // Gauges register at construction with a Supplier<Number> that
-        // Micrometer polls on each registry-export tick. The size()
-        // method returns -1 when the backend can't answer cheaply;
-        // gauge value follows the SPI without translation.
+        // Gauges register at construction; Micrometer polls the supplied
+        // size methods on each registry-export tick. A backend that
+        // can't answer cheaply returns -1 from size and the gauge value
+        // follows.
         deadLetterStore.ifPresent(store ->
                 registry.gauge(M_DLQ_SIZE, Tags.empty(), store, DeadLetterStore::size));
         deliveryEventStore.ifPresent(store ->
@@ -93,11 +100,11 @@ public class NotificationMetrics {
      */
     public void recordSend(Channel channel, NotificationStatus status, Duration duration) {
         Tags tags = Tags.of(
-                Tag.of("channel", channelTag(channel)),
-                Tag.of("status", statusTag(status)));
+                Tag.of(TAG_CHANNEL, channelTag(channel)),
+                Tag.of(TAG_STATUS, statusTag(status)));
         registry.counter(M_SENDS_TOTAL, tags).increment();
         Timer.builder(M_SENDS_DURATION)
-                .tags(Tags.of(Tag.of("channel", channelTag(channel))))
+                .tags(Tags.of(Tag.of(TAG_CHANNEL, channelTag(channel))))
                 .register(registry)
                 .record(duration);
     }
@@ -105,14 +112,14 @@ public class NotificationMetrics {
     /** Record a retry attempt (DD-13). Tags: {@code channel}, {@code attempt}. */
     public void recordRetry(Channel channel, int attempt) {
         registry.counter(M_RETRIES_TOTAL,
-                "channel", channelTag(channel),
+                TAG_CHANNEL, channelTag(channel),
                 "attempt", Integer.toString(attempt))
                 .increment();
     }
 
     /** Record a rate-limit denial (DD-12). Tag: {@code channel}. */
     public void recordRateLimitDenied(Channel channel) {
-        registry.counter(M_RATE_LIMIT_DENIED, "channel", channelTag(channel)).increment();
+        registry.counter(M_RATE_LIMIT_DENIED, TAG_CHANNEL, channelTag(channel)).increment();
     }
 
     /**
@@ -122,14 +129,14 @@ public class NotificationMetrics {
      */
     public void recordIdempotencyReplay(String tenantId) {
         registry.counter(M_IDEMPOTENCY_REPLAY,
-                "tenant", tenantId == null ? "unknown" : tenantId).increment();
+                "tenant", tenantId == null ? UNKNOWN_LOWER : tenantId).increment();
     }
 
     /** Record a DLQ addition (DD-13). Tags: {@code channel}, {@code failureType}. */
     public void recordDlqAdded(Channel channel, FailureType failureType) {
         registry.counter(M_DLQ_ADDED,
-                "channel", channelTag(channel),
-                "failureType", failureType == null ? "UNKNOWN" : failureType.name())
+                TAG_CHANNEL, channelTag(channel),
+                "failureType", failureType == null ? UNKNOWN_UPPER : failureType.name())
                 .increment();
     }
 
@@ -139,8 +146,8 @@ public class NotificationMetrics {
      */
     public void recordDeliveryEventReceived(String providerName, DeliveryStatus status) {
         registry.counter(M_DELIVERY_RECEIVED,
-                "provider", providerName == null ? "unknown" : providerName,
-                "status", status == null ? "UNKNOWN" : status.name())
+                "provider", providerName == null ? UNKNOWN_LOWER : providerName,
+                TAG_STATUS, status == null ? UNKNOWN_UPPER : status.name())
                 .increment();
     }
 
@@ -150,15 +157,15 @@ public class NotificationMetrics {
      */
     public void recordWebhookSignatureFailed(String providerName) {
         registry.counter(M_WEBHOOK_SIG_FAILED,
-                "provider", providerName == null ? "unknown" : providerName)
+                "provider", providerName == null ? UNKNOWN_LOWER : providerName)
                 .increment();
     }
 
     private static String channelTag(Channel channel) {
-        return channel == null ? "unknown" : channel.name();
+        return channel == null ? UNKNOWN_LOWER : channel.name();
     }
 
     private static String statusTag(NotificationStatus status) {
-        return status == null ? "UNKNOWN" : status.name();
+        return status == null ? UNKNOWN_UPPER : status.name();
     }
 }

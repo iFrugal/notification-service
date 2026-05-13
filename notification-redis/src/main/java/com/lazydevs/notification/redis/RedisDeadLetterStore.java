@@ -140,15 +140,9 @@ public class RedisDeadLetterStore implements DeadLetterStore {
                 return false;
             }
             for (String raw : raws) {
-                try {
-                    DeadLetterEntry candidate = json.readValue(raw, DeadLetterEntry.class);
-                    if (tenantId.equals(candidate.request().getTenantId())
-                            && requestId.equals(candidate.request().getRequestId())) {
-                        Long removed = redis.opsForList().remove(key, 1, raw);
-                        return removed != null && removed > 0;
-                    }
-                } catch (JsonProcessingException e) {
-                    log.warn("Skipping malformed DLQ entry during remove: {}", e.getMessage());
+                Optional<Boolean> outcome = tryRemoveCandidate(key, raw, tenantId, requestId);
+                if (outcome.isPresent()) {
+                    return outcome.get();
                 }
             }
             return false;
@@ -160,5 +154,28 @@ public class RedisDeadLetterStore implements DeadLetterStore {
                     tenantId, requestId, e.toString());
             return false;
         }
+    }
+
+    /**
+     * Try removing this single serialised entry. Returns
+     * {@code Optional.of(true)} if the LREM hit, {@code Optional.of(false)}
+     * if Redis reported nothing was removed (someone else got there first),
+     * and {@code Optional.empty()} if the candidate didn't match — caller
+     * should keep iterating.
+     */
+    private Optional<Boolean> tryRemoveCandidate(String listKey, String raw, String tenantId, String requestId) {
+        DeadLetterEntry candidate;
+        try {
+            candidate = json.readValue(raw, DeadLetterEntry.class);
+        } catch (JsonProcessingException e) {
+            log.warn("Skipping malformed DLQ entry during remove: {}", e.getMessage());
+            return Optional.empty();
+        }
+        if (!tenantId.equals(candidate.request().getTenantId())
+                || !requestId.equals(candidate.request().getRequestId())) {
+            return Optional.empty();
+        }
+        Long removed = redis.opsForList().remove(listKey, 1, raw);
+        return Optional.of(removed != null && removed > 0);
     }
 }

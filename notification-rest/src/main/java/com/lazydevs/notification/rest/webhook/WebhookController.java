@@ -68,6 +68,10 @@ import java.util.Map;
                 + "every registered DeliveryEventListener.")
 public class WebhookController {
 
+    private static final String FIELD_ERROR = "error";
+    private static final String FIELD_STATUS = "status";
+    private static final String PROVIDER_TWILIO = "twilio";
+
     private final NotificationProperties properties;
     private final List<DeliveryEventListener> listeners;
     private final ObjectMapper json;
@@ -120,21 +124,21 @@ public class WebhookController {
             // enabled SES; 404 keeps the URL inert without claiming
             // the path exists.
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of("error", "twilio webhook is not enabled"));
+                    .body(Map.of(FIELD_ERROR, "twilio webhook is not enabled"));
         }
 
         if (cfg.isSignatureVerification()) {
             String signatureB64 = request.getHeader("X-Twilio-Signature");
             if (signatureB64 == null || signatureB64.isBlank()) {
                 log.warn("Twilio webhook: missing X-Twilio-Signature");
-                return forbidden("twilio");
+                return forbidden(PROVIDER_TWILIO);
             }
             TwilioSignatureVerifier verifier = twilioVerifier();
             String requestUrl = reconstructRequestUrl(request);
             if (!verifier.verify(requestUrl, formParams, signatureB64)) {
                 log.warn("Twilio webhook: signature verification failed for url={} sourceIp={}",
                         sanitize(requestUrl), sanitize(request.getRemoteAddr()));
-                return forbidden("twilio");
+                return forbidden(PROVIDER_TWILIO);
             }
         } else {
             log.warn("Twilio webhook: signature verification is DISABLED — "
@@ -146,10 +150,10 @@ public class WebhookController {
         DeliveryEvent event = parseTwilioEvent(formParams);
         if (event == null) {
             log.warn("Twilio webhook: missing required fields (MessageSid/MessageStatus)");
-            return ResponseEntity.badRequest().body(Map.of("error", "MessageSid and MessageStatus are required"));
+            return ResponseEntity.badRequest().body(Map.of(FIELD_ERROR, "MessageSid and MessageStatus are required"));
         }
         dispatch(event);
-        return ResponseEntity.ok(Map.of("status", "accepted"));
+        return ResponseEntity.ok(Map.of(FIELD_STATUS, "accepted"));
     }
 
     static DeliveryEvent parseTwilioEvent(Map<String, String> formParams) {
@@ -168,7 +172,7 @@ public class WebhookController {
         String eventId = accountSid + ":" + messageSid + ":" + messageStatus;
         return new DeliveryEvent(
                 Instant.now(),
-                "twilio",
+                PROVIDER_TWILIO,
                 messageSid,
                 eventId,
                 status,
@@ -233,7 +237,7 @@ public class WebhookController {
         WebhookProperties.SesWebhook cfg = properties.getWebhooks().getSes();
         if (!cfg.isEnabled()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of("error", "ses webhook is not enabled"));
+                    .body(Map.of(FIELD_ERROR, "ses webhook is not enabled"));
         }
 
         JsonNode envelope;
@@ -241,7 +245,7 @@ public class WebhookController {
             envelope = json.readTree(rawBody);
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             return ResponseEntity.badRequest()
-                    .body(Map.of("error", "body is not valid JSON: " + e.getOriginalMessage()));
+                    .body(Map.of(FIELD_ERROR, "body is not valid JSON: " + e.getOriginalMessage()));
         }
 
         if (cfg.isSignatureVerification()) {
@@ -276,13 +280,13 @@ public class WebhookController {
             log.info("SES/SNS webhook: SubscriptionConfirmation received. Operator must confirm: {}",
                     sanitize(subscribeUrl));
             return ResponseEntity.ok(Map.of(
-                    "status", "subscription-confirmation-received",
+                    FIELD_STATUS, "subscription-confirmation-received",
                     "subscribeUrl", subscribeUrl == null ? "" : subscribeUrl));
         }
 
         if (!"Notification".equals(type)) {
             log.info("SES/SNS webhook: ignoring envelope type={}", sanitize(type));
-            return ResponseEntity.ok(Map.of("status", "ignored", "type", type == null ? "" : type));
+            return ResponseEntity.ok(Map.of(FIELD_STATUS, "ignored", "type", type == null ? "" : type));
         }
 
         // Notification.Message is a JSON string — a separate parse step.
@@ -290,10 +294,10 @@ public class WebhookController {
         DeliveryEvent event = parseSesMessage(inner);
         if (event == null) {
             log.warn("SES/SNS webhook: could not parse Notification.Message — dropping");
-            return ResponseEntity.badRequest().body(Map.of("error", "could not parse Notification.Message"));
+            return ResponseEntity.badRequest().body(Map.of(FIELD_ERROR, "could not parse Notification.Message"));
         }
         dispatch(event);
-        return ResponseEntity.ok(Map.of("status", "accepted"));
+        return ResponseEntity.ok(Map.of(FIELD_STATUS, "accepted"));
     }
 
     DeliveryEvent parseSesMessage(String inner) {
@@ -375,7 +379,7 @@ public class WebhookController {
     private ResponseEntity<Map<String, Object>> forbidden(String providerName) {
         metrics.ifPresent(m -> m.recordWebhookSignatureFailed(providerName));
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                .body(Map.of("error", "signature verification failed"));
+                .body(Map.of(FIELD_ERROR, "signature verification failed"));
     }
 
     /**
@@ -388,7 +392,9 @@ public class WebhookController {
      * ({@code server.forward-headers-strategy=framework}).
      */
     static String reconstructRequestUrl(HttpServletRequest request) {
-        StringBuffer url = request.getRequestURL();
+        // getRequestURL() returns a StringBuffer; copy into StringBuilder
+        // for the typical lock-free local mutation we need here.
+        StringBuilder url = new StringBuilder(request.getRequestURL());
         if (request.getQueryString() != null) {
             url.append('?').append(request.getQueryString());
         }

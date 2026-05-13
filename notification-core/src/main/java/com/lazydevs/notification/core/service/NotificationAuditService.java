@@ -5,7 +5,6 @@ import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
 import com.lazydevs.notification.api.model.NotificationAudit;
 import com.lazydevs.notification.api.model.NotificationRequest;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 

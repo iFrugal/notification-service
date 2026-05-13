@@ -24,6 +24,8 @@ import java.util.Map;
 @Slf4j
 public class SesEmailProvider implements EmailProvider {
 
+    private static final String CHARSET_UTF8 = "UTF-8";
+
     private String region;
     private String fromAddress;
     private String fromName;
@@ -91,14 +93,14 @@ public class SesEmailProvider implements EmailProvider {
             // Body
             Body.Builder bodyBuilder = Body.builder();
             if (content.hasHtml()) {
-                bodyBuilder.html(Content.builder().data(content.htmlBody()).charset("UTF-8").build());
+                bodyBuilder.html(Content.builder().data(content.htmlBody()).charset(CHARSET_UTF8).build());
             }
             if (content.hasText()) {
-                bodyBuilder.text(Content.builder().data(content.textBody()).charset("UTF-8").build());
+                bodyBuilder.text(Content.builder().data(content.textBody()).charset(CHARSET_UTF8).build());
             }
 
             Message message = Message.builder()
-                    .subject(Content.builder().data(subject).charset("UTF-8").build())
+                    .subject(Content.builder().data(subject).charset(CHARSET_UTF8).build())
                     .body(bodyBuilder.build())
                     .build();
 

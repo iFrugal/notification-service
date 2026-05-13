@@ -51,11 +51,11 @@ class CaffeineIdempotencyStoreTest {
         boolean won = store.markInProgress(key, "req-001");
 
         assertThat(won).isTrue();
-        Optional<IdempotencyRecord> record = store.findExisting(key);
-        assertThat(record).isPresent();
-        assertThat(record.get().status()).isEqualTo(IdempotencyStatus.IN_PROGRESS);
-        assertThat(record.get().notificationId()).isEqualTo("req-001");
-        assertThat(record.get().response()).isNull();
+        Optional<IdempotencyRecord> found = store.findExisting(key);
+        assertThat(found).isPresent();
+        assertThat(found.get().status()).isEqualTo(IdempotencyStatus.IN_PROGRESS);
+        assertThat(found.get().notificationId()).isEqualTo("req-001");
+        assertThat(found.get().response()).isNull();
     }
 
     @Test
@@ -80,11 +80,11 @@ class CaffeineIdempotencyStoreTest {
 
         store.markComplete(key, response);
 
-        IdempotencyRecord record = store.findExisting(key).orElseThrow();
-        assertThat(record.status()).isEqualTo(IdempotencyStatus.COMPLETE);
-        assertThat(record.response()).isSameAs(response);
+        IdempotencyRecord saved = store.findExisting(key).orElseThrow();
+        assertThat(saved.status()).isEqualTo(IdempotencyStatus.COMPLETE);
+        assertThat(saved.response()).isSameAs(response);
         // notificationId is preserved from the in-progress record, not from the response.
-        assertThat(record.notificationId()).isEqualTo("req-004");
+        assertThat(saved.notificationId()).isEqualTo("req-004");
     }
 
     @Test
@@ -96,9 +96,9 @@ class CaffeineIdempotencyStoreTest {
 
         store.markComplete(key, sentResponse("req-005"));
 
-        IdempotencyRecord record = store.findExisting(key).orElseThrow();
-        assertThat(record.notificationId()).isEqualTo("req-005");
-        assertThat(record.status()).isEqualTo(IdempotencyStatus.COMPLETE);
+        IdempotencyRecord saved = store.findExisting(key).orElseThrow();
+        assertThat(saved.notificationId()).isEqualTo("req-005");
+        assertThat(saved.status()).isEqualTo(IdempotencyStatus.COMPLETE);
     }
 
     @Test

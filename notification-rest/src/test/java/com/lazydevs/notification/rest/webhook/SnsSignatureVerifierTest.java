@@ -71,13 +71,20 @@ class SnsSignatureVerifierTest {
 
         // Per AWS docs the field order for Notification is:
         //   Message, MessageId, Subject (if present), Timestamp, TopicArn, Type
-        assertThat(sts).isEqualTo(
-                "Message\n{\"some\":\"json\"}\n"
-                        + "MessageId\nabc-123\n"
-                        + "Subject\nDelivery\n"
-                        + "Timestamp\n2026-04-30T12:00:00.000Z\n"
-                        + "TopicArn\narn:aws:sns:us-east-1:000:my-topic\n"
-                        + "Type\nNotification\n");
+        assertThat(sts).isEqualTo("""
+                Message
+                {"some":"json"}
+                MessageId
+                abc-123
+                Subject
+                Delivery
+                Timestamp
+                2026-04-30T12:00:00.000Z
+                TopicArn
+                arn:aws:sns:us-east-1:000:my-topic
+                Type
+                Notification
+                """);
     }
 
     @Test

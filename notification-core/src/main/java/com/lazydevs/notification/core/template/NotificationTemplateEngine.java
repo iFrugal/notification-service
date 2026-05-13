@@ -257,14 +257,14 @@ public class NotificationTemplateEngine {
 
             if (dateObj == null) return "";
 
-            if (dateObj instanceof Date) {
-                return new SimpleDateFormat(pattern).format((Date) dateObj);
-            } else if (dateObj instanceof Instant) {
+            if (dateObj instanceof Date d) {
+                return new SimpleDateFormat(pattern).format(d);
+            } else if (dateObj instanceof Instant i) {
                 return DateTimeFormatter.ofPattern(pattern)
                         .withZone(ZoneId.systemDefault())
-                        .format((Instant) dateObj);
-            } else if (dateObj instanceof java.time.LocalDate) {
-                return ((java.time.LocalDate) dateObj).format(DateTimeFormatter.ofPattern(pattern));
+                        .format(i);
+            } else if (dateObj instanceof java.time.LocalDate ld) {
+                return ld.format(DateTimeFormatter.ofPattern(pattern));
             }
             return String.valueOf(dateObj);
         }
@@ -288,10 +288,10 @@ public class NotificationTemplateEngine {
             ZoneId zoneId = ZoneId.of(timezone);
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern(pattern).withZone(zoneId);
 
-            if (dateObj instanceof Instant) {
-                return formatter.format((Instant) dateObj);
-            } else if (dateObj instanceof Date) {
-                return formatter.format(((Date) dateObj).toInstant());
+            if (dateObj instanceof Instant i) {
+                return formatter.format(i);
+            } else if (dateObj instanceof Date d) {
+                return formatter.format(d.toInstant());
             }
             return String.valueOf(dateObj);
         }
@@ -311,8 +311,8 @@ public class NotificationTemplateEngine {
 
             if (amountObj == null) return "";
 
-            double amount = amountObj instanceof Number
-                    ? ((Number) amountObj).doubleValue()
+            double amount = amountObj instanceof Number n
+                    ? n.doubleValue()
                     : Double.parseDouble(String.valueOf(amountObj));
 
             NumberFormat formatter = NumberFormat.getCurrencyInstance(Locale.US);
@@ -377,7 +377,7 @@ public class NotificationTemplateEngine {
             Object value = unwrap(arguments.get(0));
             String defaultVal = String.valueOf(arguments.get(1));
 
-            if (value == null || (value instanceof String && ((String) value).isBlank())) {
+            if (value == null || (value instanceof String s && s.isBlank())) {
                 return defaultVal;
             }
             return value;
@@ -394,7 +394,7 @@ public class NotificationTemplateEngine {
             String text = String.valueOf(unwrap(arguments.get(0)));
             try {
                 return java.net.URLEncoder.encode(text, StandardCharsets.UTF_8);
-            } catch (Exception e) {
+            } catch (Exception _) {
                 return text;
             }
         }
@@ -404,10 +404,10 @@ public class NotificationTemplateEngine {
      * Unwrap FreeMarker template model to Java object.
      */
     private static Object unwrap(Object obj) {
-        if (obj instanceof freemarker.template.TemplateModel) {
+        if (obj instanceof freemarker.template.TemplateModel tm) {
             try {
-                return freemarker.template.utility.DeepUnwrap.unwrap((freemarker.template.TemplateModel) obj);
-            } catch (Exception e) {
+                return freemarker.template.utility.DeepUnwrap.unwrap(tm);
+            } catch (Exception _) {
                 return obj;
             }
         }

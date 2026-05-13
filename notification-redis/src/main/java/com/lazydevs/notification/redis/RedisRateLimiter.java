@@ -193,10 +193,7 @@ public class RedisRateLimiter implements RateLimiter {
         if (o.getCaller() != null && !o.getCaller().equals(key.callerId())) {
             return false;
         }
-        if (o.getChannel() != null && !o.getChannel().equalsIgnoreCase(key.channel())) {
-            return false;
-        }
-        return true;
+        return o.getChannel() == null || o.getChannel().equalsIgnoreCase(key.channel());
     }
 
     private static int specificity(RateLimitOverride o) {
