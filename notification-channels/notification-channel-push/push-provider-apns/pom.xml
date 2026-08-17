@@ -20,7 +20,7 @@
         <dependency>
             <groupId>com.eatthepath</groupId>
             <artifactId>pushy</artifactId>
-            <version>0.15.4</version>
+            <version>0.15.6</version>
         </dependency>
     </dependencies>
 

@@ -6,7 +6,7 @@
     <parent>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>ifrugal-parent</artifactId>
-        <version>1.0.15</version>
+        <version>1.0.16</version>
     </parent>
 
     <artifactId>notification-service</artifactId>
@@ -44,7 +44,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- Spring Boot -->
-        <spring-boot.version>4.0.5</spring-boot.version>
+        <spring-boot.version>4.1.0</spring-boot.version>
 
         <!-- all-about-persistence: shared version for persistence-api,
              persistence-utils, app-building-commons, and mongodb-persistence.
@@ -54,7 +54,7 @@
         <all-about-persistence.version>1.0.46</all-about-persistence.version>
 
         <!-- Jackson -->
-        <jackson.version>2.21.2</jackson.version>
+        <jackson.version>2.22.2</jackson.version>
 
         <!-- Lombok -->
         <!-- 1.18.30 predates JDK 22 and fails on JDK 25 with:
@@ -68,9 +68,9 @@
 
         <!-- Channel Provider Dependencies -->
 
-        <aws-sdk.version>2.42.39</aws-sdk.version>
-        <twilio.version>12.0.0</twilio.version>
-        <firebase-admin.version>9.8.0</firebase-admin.version>
+        <aws-sdk.version>2.53.1</aws-sdk.version>
+        <twilio.version>12.1.1</twilio.version>
+        <firebase-admin.version>9.10.0</firebase-admin.version>
         <jakarta-mail.version>2.0.2</jakarta-mail.version>
 
 
@@ -85,9 +85,9 @@
 
         <!-- Springdoc OpenAPI — runtime schema generation + Swagger UI.
              The 3.x line targets Spring Boot 4 / Spring Framework 7 (the
-             POM extends spring-boot-starter-parent:4.0.5 directly), so
-             3.0.3 is the right pin for this codebase. -->
-        <springdoc.version>3.0.3</springdoc.version>
+             POM extends spring-boot-starter-parent:4.1.0 directly), so
+             3.1.0 is the right pin for this codebase. -->
+        <springdoc.version>3.1.0</springdoc.version>
     </properties>
 
     <dependencyManagement>
