@@ -54,6 +54,9 @@
         <all-about-persistence.version>1.0.54</all-about-persistence.version>
 
         <!-- Jackson -->
+        <!-- Imported as jackson-bom in dependencyManagement so every Jackson 2
+             artifact resolves at this one version. The BOM import must stay
+             above the Spring Boot BOM import so it wins. -->
         <jackson.version>2.22.2</jackson.version>
 
         <!-- Lombok -->
@@ -92,6 +95,15 @@
 
     <dependencyManagement>
         <dependencies>
+            <!-- Jackson BOM: must stay above the Spring Boot BOM so it wins -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
             <!-- Spring Boot BOM -->
             <dependency>
                 <groupId>org.springframework.boot</groupId>
@@ -210,18 +222,6 @@
                 <groupId>com.github.ifrugal</groupId>
                 <artifactId>app-building-commons</artifactId>
                 <version>${all-about-persistence.version}</version>
-            </dependency>
-
-            <!-- Jackson -->
-            <dependency>
-                <groupId>com.fasterxml.jackson.core</groupId>
-                <artifactId>jackson-databind</artifactId>
-                <version>${jackson.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.fasterxml.jackson.datatype</groupId>
-                <artifactId>jackson-datatype-jsr310</artifactId>
-                <version>${jackson.version}</version>
             </dependency>
 
             <!-- Lombok -->
