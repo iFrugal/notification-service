@@ -44,14 +44,14 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- Spring Boot -->
-        <spring-boot.version>4.1.0</spring-boot.version>
+        <spring-boot.version>4.1.1</spring-boot.version>
 
         <!-- all-about-persistence: shared version for persistence-api,
              persistence-utils, app-building-commons, and mongodb-persistence.
              Keep this as a single released version (not -SNAPSHOT) so the
              reactor resolves cleanly for every consumer, CI runner, and
              Central-Portal release job. -->
-        <all-about-persistence.version>1.0.46</all-about-persistence.version>
+        <all-about-persistence.version>1.0.54</all-about-persistence.version>
 
         <!-- Jackson -->
         <jackson.version>2.22.2</jackson.version>
@@ -85,7 +85,7 @@
 
         <!-- Springdoc OpenAPI — runtime schema generation + Swagger UI.
              The 3.x line targets Spring Boot 4 / Spring Framework 7 (the
-             POM extends spring-boot-starter-parent:4.1.0 directly), so
+             POM extends spring-boot-starter-parent:4.1.1 directly), so
              3.1.0 is the right pin for this codebase. -->
         <springdoc.version>3.1.0</springdoc.version>
     </properties>
@@ -345,18 +345,6 @@
 
     <build>
         <plugins>
-            <!-- ifrugal-parent pins JaCoCo to 0.8.12 directly in its
-                 <build><plugins> block, which bundles an ASM that can't
-                 read Java 25 bytecode (major version 69) and fails report
-                 generation with "Unsupported class file major version 69".
-                 Re-declaring here in <plugins> overrides the inherited
-                 version. 0.8.14 is the first JaCoCo release with ASM new
-                 enough for JDK 25. -->
-            <plugin>
-                <groupId>org.jacoco</groupId>
-                <artifactId>jacoco-maven-plugin</artifactId>
-                <version>0.8.14</version>
-            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
