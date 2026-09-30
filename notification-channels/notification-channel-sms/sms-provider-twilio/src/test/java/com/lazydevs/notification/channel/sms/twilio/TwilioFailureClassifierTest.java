@@ -29,16 +29,17 @@ class TwilioFailureClassifierTest {
 
     @Test
     void apiException_429_isTransient() {
-        // Twilio's ApiException's 5-arg constructor:
-        // (message, code, moreInfo, status, cause). 'code' is the
-        // Twilio-specific error code; 'status' is the HTTP status.
-        ApiException e = new ApiException("rate limited", 20429, null, 429, null);
+        // Twilio's ApiException 8-arg constructor:
+        // (message, code, moreInfo, status, httpStatusCode, params,
+        // userError, cause). 'code' is the Twilio-specific error code;
+        // 'status' is the HTTP status (what getStatusCode() returns).
+        ApiException e = new ApiException("rate limited", 20429, null, 429, null, null, null, null);
         assertThat(TwilioSmsProvider.classifyTwilio(e)).isEqualTo(FailureType.TRANSIENT);
     }
 
     @Test
     void apiException_5xx_isTransient() {
-        ApiException e = new ApiException("upstream err", null, null, 503, null);
+        ApiException e = new ApiException("upstream err", 503);
         assertThat(TwilioSmsProvider.classifyTwilio(e)).isEqualTo(FailureType.TRANSIENT);
     }
 
@@ -47,7 +48,7 @@ class TwilioFailureClassifierTest {
         // Twilio's "21211 Invalid To Number" comes back as HTTP 400 —
         // the status-code mapping catches it without needing a Twilio
         // error-code lookup table.
-        ApiException e = new ApiException("Invalid 'To' Phone Number", 21211, null, 400, null);
+        ApiException e = new ApiException("Invalid 'To' Phone Number", 21211, null, 400, null, null, null, null);
         assertThat(TwilioSmsProvider.classifyTwilio(e)).isEqualTo(FailureType.PERMANENT);
     }
 
