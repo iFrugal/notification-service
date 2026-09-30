@@ -6,9 +6,6 @@ import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -30,13 +27,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * iteration order on its underlying ConcurrentHashMap.
  *
  * <p>Bean is registered only when
- * {@code notification.dead-letter.enabled=true}; a future Redis-backed
- * bean replaces it via {@link ConditionalOnMissingBean}.
+ * {@code notification.dead-letter.enabled=true}; any other
+ * {@link DeadLetterStore} bean replaces it (see
+ * {@link com.lazydevs.notification.core.config.NotificationCoreDefaultsAutoConfiguration}).
  */
 @Slf4j
-@Component
-@ConditionalOnProperty(prefix = "notification.dead-letter", name = "enabled", havingValue = "true")
-@ConditionalOnMissingBean(DeadLetterStore.class)
 public class InMemoryDeadLetterStore implements DeadLetterStore {
 
     private final Cache<Long, DeadLetterEntry> entries;

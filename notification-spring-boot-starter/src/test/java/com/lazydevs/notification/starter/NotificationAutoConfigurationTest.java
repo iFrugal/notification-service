@@ -22,6 +22,8 @@ import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
+import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Optional;
@@ -98,6 +100,17 @@ class NotificationAutoConfigurationTest {
     }
 
     @Test
+    void componentScannedIdempotencyStore_replacesTheCaffeineDefault() {
+        // Same shape as RedisIdempotencyStore: a @Component registered by the
+        // application's own configuration, not a @Bean method.
+        runner.withUserConfiguration(ScannedIdempotencyStoreConfiguration.class).run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).hasSingleBean(IdempotencyStore.class);
+            assertThat(context.getBean(IdempotencyStore.class)).isInstanceOf(ScannedIdempotencyStore.class);
+        });
+    }
+
+    @Test
     void userDeadLetterStore_replacesTheInMemoryDefault() {
         runner.withPropertyValues("notification.dead-letter.enabled=true")
                 .withUserConfiguration(UserDeadLetterStoreConfiguration.class)
@@ -140,6 +153,15 @@ class NotificationAutoConfigurationTest {
     }
 
     @Configuration(proxyBeanMethods = false)
+    @Import(ScannedIdempotencyStore.class)
+    static class ScannedIdempotencyStoreConfiguration {
+    }
+
+    @Component
+    static class ScannedIdempotencyStore extends StubIdempotencyStore {
+    }
+
+    @Configuration(proxyBeanMethods = false)
     static class UserDeadLetterStoreConfiguration {
         @Bean
         DeadLetterStore userDeadLetterStore() {
@@ -147,7 +169,7 @@ class NotificationAutoConfigurationTest {
         }
     }
 
-    static final class StubIdempotencyStore implements IdempotencyStore {
+    static class StubIdempotencyStore implements IdempotencyStore {
         @Override
         public Optional<IdempotencyRecord> findExisting(IdempotencyKey key) {
             return Optional.empty();
