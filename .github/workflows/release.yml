@@ -1,7 +1,8 @@
 name: Release to Maven Central
 
-# Intentionally NOT triggered on every push to main. Releases are manual
-# (via workflow_dispatch) or tag-driven (pushing a v-prefixed tag).
+# Intentionally NOT triggered on every push to main. Releases are triggered
+# by workflow_dispatch only. The Central deployment auto-publishes after
+# validation; the workflow does not wait for publication.
 # This avoids the all-about-persistence pattern where every merge to master
 # starts a release, which is surprising and hard to roll back.
 on:
@@ -99,7 +100,7 @@ jobs:
           ./mvnw -B -ntp \
             -s "$HOME/.m2/settings.xml" \
             -DscmCommentPrefix="[release] [skip ci] " \
-            -Darguments="-DskipTests=true -Dcentral.autoPublish=false -Dcentral.waitUntil=uploaded" \
+            -Darguments="-DskipTests=true" \
             $DRY_RUN_FLAG \
             "${VERSION_ARGS[@]}" \
             release:clean release:prepare
@@ -107,7 +108,7 @@ jobs:
           if [[ "${{ inputs.dry-run }}" != "true" ]]; then
             ./mvnw -B -ntp \
               -s "$HOME/.m2/settings.xml" \
-              -Darguments="-DskipTests=true -Dcentral.autoPublish=false -Dcentral.waitUntil=uploaded" \
+              -Darguments="-DskipTests=true" \
               release:perform
           fi
 
