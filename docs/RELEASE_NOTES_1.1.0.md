@@ -20,6 +20,11 @@
 | `notification-store-jdbc` | `com.github.ifrugal:notification-store-jdbc:1.1.0` | PostgreSQL-backed `IdempotencyStore`, `DeadLetterStore` and `DeliveryEventStore`. Reference DDL ships in the jar; the host runs the migrations. No rate limiter. See the [module README](../notification-store-jdbc/README.md). |
 | `email-provider-acs` | `com.github.ifrugal:email-provider-acs:1.1.0` | Azure Communication Services Email, authenticated by connection string, `DefaultAzureCredential` (with `azure-identity`) or a `TokenCredential` bean. See the [module README](../notification-channels/notification-channel-email/email-provider-acs/README.md). |
 
+`email-provider-acs` pins no Azure HTTP client.
+Add exactly one of `com.azure:azure-core-http-jdk-httpclient` (recommended on Spring Boot 4, no Netty), `azure-core-http-okhttp`, `azure-core-http-vertx` or `azure-core-http-netty` (Netty 4.1, which conflicts with Spring Boot 4.1's Netty 4.2).
+Without one, the provider fails at startup with a message listing these options.
+When several are present, `AZURE_HTTP_CLIENT_IMPLEMENTATION` selects the implementation.
+
 ## Breaking changes
 
 - **REST is off by default.**
