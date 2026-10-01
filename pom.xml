@@ -31,6 +31,7 @@
         <module>notification-kafka</module>
         <module>notification-rest</module>
         <module>notification-redis</module>
+        <module>notification-store-jdbc</module>
         <module>notification-spring-boot-starter</module>
         <module>notification-server</module>
     </modules>
@@ -284,6 +285,13 @@
             <dependency>
                 <groupId>${project.groupId}</groupId>
                 <artifactId>notification-redis</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- Internal: notification-store-jdbc module -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>notification-store-jdbc</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
