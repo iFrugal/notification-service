@@ -25,7 +25,6 @@ import com.lazydevs.notification.core.template.NotificationTemplateEngine;
 import lazydevs.persistence.connection.multitenant.TenantContext;
 import lazydevs.services.basic.filter.RequestContext;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.time.Instant;
@@ -41,7 +40,6 @@ import java.util.concurrent.Executors;
  * Default implementation of NotificationService.
  */
 @Slf4j
-@Service
 public class DefaultNotificationService implements NotificationService {
 
     private final NotificationProperties properties;

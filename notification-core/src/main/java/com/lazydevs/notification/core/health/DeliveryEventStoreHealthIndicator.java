@@ -5,9 +5,6 @@ import com.lazydevs.notification.core.config.NotificationProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 /**
  * Actuator health indicator for the {@link DeliveryEventStore}
@@ -19,9 +16,6 @@ import org.springframework.stereotype.Component;
  * is the expected steady-state behaviour, not an alert condition.
  */
 @Slf4j
-@Component("deliveryEvents")
-@ConditionalOnClass(HealthIndicator.class)
-@ConditionalOnProperty(prefix = "notification.delivery-events", name = "enabled", havingValue = "true")
 public class DeliveryEventStoreHealthIndicator implements HealthIndicator {
 
     private final DeliveryEventStore store;

@@ -6,8 +6,6 @@ import com.lazydevs.notification.api.delivery.DeliveryEvent;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -33,8 +31,6 @@ import java.util.concurrent.atomic.AtomicLong;
  * close cousins (DD-17 §"Why not merge with the DLQ store").
  */
 @Slf4j
-@Component
-@ConditionalOnProperty(prefix = "notification.delivery-events", name = "enabled", havingValue = "true")
 public class InMemoryDeliveryEventStore implements DeliveryEventStore {
 
     private final Cache<Long, DeliveryEvent> events;

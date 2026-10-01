@@ -7,9 +7,7 @@ import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -38,9 +36,6 @@ import java.util.Optional;
  * boundary.
  */
 @Slf4j
-@Component
-@ConditionalOnProperty(prefix = "notification.redis.dead-letter",
-        name = "enabled", havingValue = "true")
 public class RedisDeadLetterStore implements DeadLetterStore {
 
     private final StringRedisTemplate redis;

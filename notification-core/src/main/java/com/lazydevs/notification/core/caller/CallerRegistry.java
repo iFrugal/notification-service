@@ -3,7 +3,6 @@ package com.lazydevs.notification.core.caller;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import com.lazydevs.notification.core.config.NotificationProperties.CallerRegistryProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -28,7 +27,6 @@ import java.util.Set;
  * stays allocation-free in the request path.
  */
 @Slf4j
-@Component
 public class CallerRegistry {
 
     private final CallerRegistryProperties config;

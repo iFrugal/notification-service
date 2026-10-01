@@ -4,8 +4,6 @@ import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.model.NotificationAudit;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Service;
 
 import java.util.Optional;
 
@@ -14,8 +12,6 @@ import java.util.Optional;
  * Used when audit is disabled.
  */
 @Slf4j
-@Service
-@ConditionalOnProperty(prefix = "notification.audit", name = "enabled", havingValue = "false", matchIfMissing = true)
 public class NoOpAuditService implements NotificationAuditService {
 
     public NoOpAuditService() {

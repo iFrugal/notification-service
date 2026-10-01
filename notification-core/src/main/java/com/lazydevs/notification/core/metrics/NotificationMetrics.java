@@ -11,8 +11,6 @@ import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.Optional;
@@ -50,8 +48,6 @@ import java.util.Optional;
  * stay bounded.
  */
 @Slf4j
-@Component
-@ConditionalOnClass(MeterRegistry.class)
 public class NotificationMetrics {
 
     private static final String M_SENDS_TOTAL = "notification.sends.total";
