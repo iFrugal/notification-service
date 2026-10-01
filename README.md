@@ -8,7 +8,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-25-orange.svg)](https://openjdk.org/projects/jdk/25/)
 
-A multi-tenant notification service supporting multiple channels (Email, SMS, WhatsApp, Push) with pluggable providers. Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone Docker container**.
+A multi-tenant notification service with pluggable providers.
+Email (SMTP, AWS SES) and SMS (Twilio) ship with built-in providers; WhatsApp and Push exist as provider SPIs, and their built-in providers are planned (see [Planned providers](#planned-providers)).
+Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone Docker container**.
 
 > ### 📋 **[Feature Matrix → `docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md)**
 >
@@ -20,6 +22,7 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - [Features](#features)
 - [Architecture](#architecture)
 - [Modules](#modules)
+  - [Planned providers](#planned-providers)
 - [Quick Start](#quick-start)
   - [As a Spring Boot Starter](#as-a-spring-boot-starter)
   - [As a Standalone Service](#as-a-standalone-service)
@@ -48,8 +51,8 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 
 ## Features
 
-- **Multi-Channel Support**: Email, SMS, WhatsApp, Push notifications
-- **Multiple Providers per Channel**: SMTP, AWS SES, Twilio, Firebase FCM, etc.
+- **Multi-Channel Support**: Email and SMS with built-in providers; WhatsApp and Push as SPI extension points (`WhatsAppProvider`, `PushProvider`) with built-in providers planned
+- **Multiple Providers per Channel**: SMTP and AWS SES for email, Twilio for SMS; AWS SNS, WhatsApp (Twilio, Meta) and Push (FCM, APNs) providers are planned
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
 - **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)
@@ -64,7 +67,7 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service
 - **REST & Kafka**: Accept notifications via REST API or Kafka consumer
-- **Audit Trail**: Optional persistence of notification history
+- **Audit Trail**: `NotificationAuditService` SPI with a no-op default (`NoOpAuditService`); no persistence backend ships, so register your own bean to keep history
 - **Fail-Fast Validation**: All providers validated at startup
 
 ---
@@ -94,13 +97,16 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 │  │   Engine    │  │  Registry   │  │  Service    │             │
 │  └─────────────┘  └──────┬──────┘  └─────────────┘             │
 │                          │                                       │
-│    ┌─────────┬───────────┼───────────┬─────────┐               │
-│    ▼         ▼           ▼           ▼         ▼               │
-│ ┌──────┐ ┌──────┐   ┌────────┐  ┌────────┐ ┌──────┐           │
-│ │ SMTP │ │ SES  │   │ Twilio │  │  FCM   │ │ APNS │           │
-│ └──────┘ └──────┘   └────────┘  └────────┘ └──────┘           │
+│    ┌─────────┬───────────┼───────────┐                         │
+│    ▼         ▼           ▼           ▼                         │
+│ ┌──────┐ ┌──────┐   ┌────────┐  ┌────────┐                     │
+│ │ SMTP │ │ SES  │   │ Twilio │  │ Custom │                     │
+│ └──────┘ └──────┘   └────────┘  └────────┘                     │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+`Custom` is any provider you register against a channel SPI (see [Adding Custom Providers](#adding-custom-providers)).
+WhatsApp and Push have no built-in provider yet; see [Planned providers](#planned-providers).
 
 ---
 
@@ -112,10 +118,26 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 | `notification-core` | Service implementation, provider registry, template engine |
 | `notification-rest` | REST controllers and filters |
 | `notification-kafka` | Kafka consumer for async notifications |
-| `notification-audit` | Audit persistence (optional) |
-| `notification-channels/*` | Channel-specific provider implementations |
+| `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `sms-provider-twilio` |
 | `notification-spring-boot-starter` | Auto-configuration for library mode |
 | `notification-server` | Standalone application with Dockerfile |
+
+### Planned providers
+
+The channel SPIs `SmsProvider`, `WhatsAppProvider` and `PushProvider` live in `notification-api` and exist today.
+You can send on any of these channels now by implementing the SPI yourself (see [Adding Custom Providers](#adding-custom-providers)).
+The built-in providers below are planned and have no published artifact:
+
+| Channel | Provider | Status |
+|---------|----------|--------|
+| SMS | AWS SNS | Planned |
+| WhatsApp | Twilio | Planned |
+| WhatsApp | Meta WhatsApp Cloud API | Planned |
+| Push | Firebase Cloud Messaging (FCM) | Planned |
+| Push | Apple Push Notification service (APNs) | Planned |
+
+Planned order: FCM (HTTP v1 API) first, then the Meta WhatsApp Cloud API with a signed webhook.
+The remaining providers are not scheduled yet.
 
 ---
 
@@ -129,14 +151,14 @@ Add the dependency to your `pom.xml`:
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>notification-spring-boot-starter</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.2</version>
 </dependency>
 
 <!-- Add providers you need -->
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>email-provider-smtp</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 
@@ -1007,7 +1029,9 @@ Each tenant can have:
 
 ## Audit
 
-Enable audit persistence:
+Audit is a `NotificationAuditService` SPI in `notification-core` with a no-op default (`NoOpAuditService`, which logs only).
+No audit persistence backend ships with this project; to keep notification history, register your own `NotificationAuditService` bean.
+The `notification.audit.*` properties below are bound for your bean to read; the shipped no-op ignores them.
 
 ```yaml
 notification:
@@ -1019,7 +1043,7 @@ notification:
     async: true
 ```
 
-Audit records include:
+Audit records passed to the SPI include:
 - Request/response details
 - Status transitions
 - Provider message IDs

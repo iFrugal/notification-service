@@ -160,7 +160,6 @@ notification-api                  SPIs, DTOs, exceptions; no logic
 notification-core                 Default impls, business logic, autoconfig
 notification-rest                 REST controllers, filters, webhook surface
 notification-kafka                Kafka consumer
-notification-audit                Audit persistence (placeholder for real backend)
 notification-redis                Redis-backed SPI implementations (DD-14)
 notification-channels/*           Channel + provider implementations
   notification-channel-email
@@ -168,20 +167,14 @@ notification-channels/*           Channel + provider implementations
     email-provider-ses
   notification-channel-sms
     sms-provider-twilio
-    sms-provider-sns
-  notification-channel-whatsapp
-    whatsapp-provider-twilio
-    whatsapp-provider-meta
-  notification-channel-push
-    push-provider-fcm
-    push-provider-apns
 notification-spring-boot-starter  Auto-configuration for library use
 notification-server               Standalone Docker app
 ```
 
-Total: 22 modules. The strict separation lets consumers pull only the
-providers they use — an SMTP-only deployment doesn't transitively
-inherit AWS or Twilio SDKs.
+Total: 14 modules, including the root and aggregator poms.
+The strict separation lets consumers pull only the providers they use, so an SMTP-only deployment doesn't transitively inherit AWS or Twilio SDKs.
+AWS SNS SMS, WhatsApp (Twilio, Meta) and push (FCM, APNs) providers are planned; until they ship, the `SmsProvider`, `WhatsAppProvider` and `PushProvider` SPIs in `notification-api` are the extension points.
+Audit has no module of its own: the `NotificationAuditService` SPI and its `NoOpAuditService` default live in `notification-core`.
 
 ## Cross-cutting invariants
 
@@ -210,7 +203,7 @@ must not be trusted from clients:
 ## Versioning and release
 
 The project follows semantic versioning. The current snapshot is
-`1.0.1-SNAPSHOT`; `1.0.0` is the most-recent released version on
+`1.0.3-SNAPSHOT`; `1.0.2` is the most-recent released version on
 Maven Central. Release automation is wired via GitHub Actions
 (see `.github/workflows/release.yml`). Maven Central publishing
 goes through the Central Portal via

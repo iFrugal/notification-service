@@ -18,13 +18,13 @@ collaborator) can pick up where the last one left off.
 ## Status snapshot
 
 - **Repository:** `iFrugal/notification-service`
-- **Working version (current):** `1.0.1-SNAPSHOT` (restored — see release-procedure note below)
-- **Latest released on Maven Central:** `1.0.0`
-- **Next release:** `1.0.1` (pending manual workflow trigger via Actions → "Release to Maven Central")
+- **Working version (current):** `1.0.3-SNAPSHOT`
+- **Latest released on Maven Central:** `1.0.2`
+- **Next release:** `1.1.0` (planned)
 - **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-05-12 IST (1.0.1 release awaiting workflow run; POMs restored to SNAPSHOT after #46 misstep).
+- **Last updated:** 2026-10-01 IST (version rows refreshed after the 1.0.2 release).
 
 > **Release procedure note:** The release workflow at
 > `.github/workflows/release.yml` is **`workflow_dispatch`-only**

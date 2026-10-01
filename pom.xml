@@ -28,7 +28,6 @@
         <module>notification-api</module>
         <module>notification-core</module>
         <module>notification-channels</module>
-        <module>notification-audit</module>
         <module>notification-kafka</module>
         <module>notification-rest</module>
         <module>notification-redis</module>
@@ -73,7 +72,6 @@
 
         <aws-sdk.version>2.53.1</aws-sdk.version>
         <twilio.version>12.1.1</twilio.version>
-        <firebase-admin.version>9.10.0</firebase-admin.version>
         <jakarta-mail.version>2.0.2</jakarta-mail.version>
 
 
@@ -126,11 +124,6 @@
             </dependency>
             <dependency>
                 <groupId>${project.groupId}</groupId>
-                <artifactId>notification-audit</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>${project.groupId}</groupId>
                 <artifactId>notification-kafka</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -169,41 +162,6 @@
             <dependency>
                 <groupId>${project.groupId}</groupId>
                 <artifactId>sms-provider-twilio</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>${project.groupId}</groupId>
-                <artifactId>sms-provider-sns</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>${project.groupId}</groupId>
-                <artifactId>notification-channel-whatsapp</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>${project.groupId}</groupId>
-                <artifactId>whatsapp-provider-twilio</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>${project.groupId}</groupId>
-                <artifactId>whatsapp-provider-meta</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>${project.groupId}</groupId>
-                <artifactId>notification-channel-push</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>${project.groupId}</groupId>
-                <artifactId>push-provider-fcm</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>${project.groupId}</groupId>
-                <artifactId>push-provider-apns</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
@@ -246,13 +204,6 @@
                 <groupId>com.twilio.sdk</groupId>
                 <artifactId>twilio</artifactId>
                 <version>${twilio.version}</version>
-            </dependency>
-
-            <!-- Firebase -->
-            <dependency>
-                <groupId>com.google.firebase</groupId>
-                <artifactId>firebase-admin</artifactId>
-                <version>${firebase-admin.version}</version>
             </dependency>
 
             <!-- Jakarta Mail -->
