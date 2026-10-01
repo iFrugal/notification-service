@@ -37,7 +37,8 @@ import static com.lazydevs.notification.store.jdbc.JdbcStoreSupport.nowPlusMilli
  * <p>{@link #claim} leases rows with one
  * {@code UPDATE ... RETURNING} over a {@code FOR UPDATE SKIP LOCKED}
  * selection, so concurrent claimers on any number of replicas receive
- * disjoint rows. {@link #remove} acknowledges, {@link #release} gives the
+ * disjoint rows; the targeted {@link #claim(String, String, Duration)}
+ * leases a single row the same way. {@link #remove} acknowledges, {@link #release} gives the
  * lease back. Rows past {@code dead-letter-retention} are invisible to
  * every read and are deleted by {@link #purgeExpired(int)}.
  */
@@ -58,6 +59,7 @@ public class JdbcDeadLetterStore implements DeadLetterStore, JdbcPurgeableStore 
     private final String findSql;
     private final String removeSql;
     private final String claimSql;
+    private final String claimOneSql;
     private final String releaseSql;
     private final String purgeSql;
 
@@ -90,15 +92,21 @@ public class JdbcDeadLetterStore implements DeadLetterStore, JdbcPurgeableStore 
         this.removeSql = "DELETE FROM " + t + " WHERE " + keyMatch;
         // The CTE is MATERIALIZED so the locking selection runs exactly
         // once; the outer UPDATE touches only the rows it locked.
-        this.claimSql = "WITH claimable AS MATERIALIZED ("
-                + "SELECT id FROM " + t
-                + " WHERE tenant_key = COALESCE(:tenant, '') AND " + live
-                + " AND (claimed_until IS NULL OR claimed_until < now())"
-                + " ORDER BY created_at, id LIMIT :limit FOR UPDATE SKIP LOCKED)"
-                + " UPDATE " + t + " AS d SET claimed_until = " + nowPlusMillis("lease")
+        String unclaimed = live + " AND (claimed_until IS NULL OR claimed_until < now())";
+        String leaseClaimable = " UPDATE " + t + " AS d SET claimed_until = " + nowPlusMillis("lease")
                 + " WHERE d.id IN (SELECT id FROM claimable)"
                 + " RETURNING d.id, d.tenant_id, d.request_id, d.failed_at, d.request, d.response,"
                 + " d.attempts, d.failure_type, d.created_at";
+        this.claimSql = "WITH claimable AS MATERIALIZED ("
+                + "SELECT id FROM " + t
+                + " WHERE tenant_key = COALESCE(:tenant, '') AND " + unclaimed
+                + " ORDER BY created_at, id LIMIT :limit FOR UPDATE SKIP LOCKED)"
+                + leaseClaimable;
+        this.claimOneSql = "WITH claimable AS MATERIALIZED ("
+                + "SELECT id FROM " + t
+                + " WHERE " + keyMatch + " AND " + unclaimed
+                + " FOR UPDATE SKIP LOCKED)"
+                + leaseClaimable;
         this.releaseSql = "UPDATE " + t + " SET claimed_until = NULL WHERE " + keyMatch;
         this.purgeSql = "DELETE FROM " + t + " WHERE id IN (SELECT id FROM " + t
                 + " WHERE expires_at <= now() LIMIT :limit FOR UPDATE SKIP LOCKED)";
@@ -209,6 +217,26 @@ public class JdbcDeadLetterStore implements DeadLetterStore, JdbcPurgeableStore 
                 .map(ClaimedRow::entry)
                 .filter(Objects::nonNull)
                 .toList();
+    }
+
+    /**
+     * Leases the one live, unclaimed row of {@code (tenantId, requestId)}
+     * until {@code now() + lease}. Empty when the row is missing, expired,
+     * leased by someone else, or locked by a concurrent claim.
+     */
+    @Override
+    public Optional<DeadLetterEntry> claim(String tenantId, String requestId, Duration lease) {
+        if (requestId == null) {
+            return Optional.empty();
+        }
+        long leaseMillis = JdbcStoreSupport.millis(JdbcStoreSupport.requirePositive(lease, "lease"));
+        return keyParams(jdbc.sql(claimOneSql), tenantId, requestId)
+                .param("lease", leaseMillis)
+                .query(this::mapEntry)
+                .list()
+                .stream()
+                .filter(Objects::nonNull)
+                .findFirst();
     }
 
     /** Clears the lease so the row is claimable again immediately. Never throws. */

@@ -15,8 +15,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
- * Covers the lock-free defaults of {@link DeadLetterStore#claim} and
- * {@link DeadLetterStore#release} that existing stores inherit.
+ * Covers the lock-free defaults of both {@link DeadLetterStore#claim}
+ * overloads and {@link DeadLetterStore#release} that existing stores inherit.
  */
 class DeadLetterStoreDefaultsTest {
 
@@ -91,6 +91,38 @@ class DeadLetterStoreDefaultsTest {
             }
         };
         assertThat(store.claim("a", 5, Duration.ofMinutes(1))).isEmpty();
+    }
+
+    @Test
+    void targetedClaimDefaultsToFindByRequestIdWithoutALease() {
+        DeadLetterEntry target = entry("a", "1");
+        DeadLetterStore store = new DeadLetterStore() {
+            @Override
+            public void add(DeadLetterEntry entry) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Optional<List<DeadLetterEntry>> snapshot() {
+                return Optional.of(List.of(target));
+            }
+
+            @Override
+            public int size() {
+                return 1;
+            }
+
+            @Override
+            public Optional<DeadLetterEntry> findByRequestId(String tenantId, String requestId) {
+                return "a".equals(tenantId) && "1".equals(requestId) ? Optional.of(target) : Optional.empty();
+            }
+        };
+
+        assertThat(store.claim("a", "1", Duration.ofMinutes(1))).containsSame(target);
+        // No lease: the default claims the same entry again.
+        assertThat(store.claim("a", "1", Duration.ofMinutes(1))).containsSame(target);
+        assertThat(store.claim("b", "1", Duration.ofMinutes(1))).isEmpty();
+        assertThat(store.claim("a", "2", Duration.ofMinutes(1))).isEmpty();
     }
 
     @Test

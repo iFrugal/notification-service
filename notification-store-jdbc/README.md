@@ -205,12 +205,13 @@ The dead-letter and delivery-event stores log and swallow that failure, as their
 
 `JdbcDeadLetterStore` implements `DeadLetterStore.claim` and `release` so several replicas can drain the same tenant without replaying an entry twice:
 
-1. `claim(tenantId, limit, lease)` leases up to `limit` unclaimed entries, oldest first, in one `UPDATE ... RETURNING` statement over a `FOR UPDATE SKIP LOCKED` selection.
+1. `claim(tenantId, limit, lease)` leases up to `limit` unclaimed entries, oldest first, in one `UPDATE ... RETURNING` statement over a `FOR UPDATE SKIP LOCKED` selection; `claim(tenantId, requestId, lease)` leases that one entry the same way, for single-entry replay.
 2. After a successful replay, `remove(tenantId, requestId)` deletes the entry; removal is the acknowledgement.
 3. After a failed replay, `release(tenantId, requestId)` clears the lease so the entry is claimable again at once.
 4. An entry that is neither removed nor released, for example because the replica crashed, becomes claimable when its lease ends.
 
 All expiry and lease arithmetic uses database time (`now()`), so replicas with skewed clocks still agree.
+The REST replay endpoints follow this cycle, with the lease from `notification.dead-letter.replay-lease` (default `PT5M`).
 
 ## Expiry and purge
 

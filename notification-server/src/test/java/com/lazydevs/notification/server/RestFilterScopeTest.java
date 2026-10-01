@@ -33,13 +33,8 @@ class RestFilterScopeTest {
 
     private static final String UNKNOWN_CALLER = "rogue-svc";
 
-    /*
-     * Sent lowercase on purpose: TenantFilter looks the header up as
-     * "x-service-id" in a case-sensitive map, and Tomcat keeps HTTP/1.1
-     * header names as sent, so "X-Service-Id" would not be seen at all.
-     * That is a separate defect; this test is about where the filters run.
-     */
-    private static final String CALLER_HEADER = "x-service-id";
+    /** The documented spelling; Tomcat passes HTTP/1.1 header names through as sent. */
+    private static final String CALLER_HEADER = "X-Service-Id";
 
     @LocalServerPort
     private int port;

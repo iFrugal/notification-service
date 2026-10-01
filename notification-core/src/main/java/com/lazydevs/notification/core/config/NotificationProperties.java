@@ -573,6 +573,21 @@ public class NotificationProperties {
          */
         @Min(value = 1, message = "dead-letter max-entries must be at least 1")
         private int maxEntries = 1_000;
+
+        /**
+         * How long a replay holds its claim on a dead-letter entry. While
+         * the lease is live no other replay, on this or another replica,
+         * picks the entry up; a successful replay removes it, a failed one
+         * releases it, and a replica that dies mid-replay lets it lapse.
+         * Make it longer than the slowest provider send, including retries.
+         */
+        private java.time.Duration replayLease = java.time.Duration.ofMinutes(5);
+
+        /** A zero or negative lease would let two replays take the same entry. */
+        @AssertTrue(message = "dead-letter replay-lease must be positive")
+        public boolean isReplayLeasePositive() {
+            return replayLease != null && replayLease.isPositive();
+        }
     }
 
     /**

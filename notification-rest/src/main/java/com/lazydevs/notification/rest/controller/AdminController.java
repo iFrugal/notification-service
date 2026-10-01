@@ -65,6 +65,14 @@ public class AdminController {
     private static final String FIELD_REQUEST_ID = "requestId";
     private static final String FIELD_PROVIDER_MESSAGE_ID = "providerMessageId";
     private static final String FIELD_IS_DEFAULT = "isDefault";
+    private static final String FIELD_NEW_REQUEST_ID = "newRequestId";
+
+    /**
+     * Replay outcome for an entry another replay (on this or another
+     * replica) currently holds a lease on. Not a failure: the entry is
+     * being handled elsewhere.
+     */
+    private static final String STATUS_CLAIMED = "CLAIMED";
 
     /** Standard "DLQ disabled" explanation surfaced in 503 responses. */
     private static final String MSG_DLQ_DISABLED =
@@ -330,15 +338,24 @@ public class AdminController {
      * pointing at the original), and re-submits it through
      * {@link NotificationService#send(NotificationRequest)}.
      *
-     * <p>Lifecycle:
+     * <p>Lifecycle: the entry is first claimed with
+     * {@link DeadLetterStore#claim(String, String, java.time.Duration)} for
+     * {@code notification.dead-letter.replay-lease}, so a concurrent
+     * replay of the same entry (on this or another replica) cannot send
+     * it twice.
      * <ul>
-     *   <li>Successful replay (non-{@code FAILED}) — original entry is
-     *       removed from the DLQ. The new send may produce its own DLQ
-     *       entry if it ends up failing further down the line, but
-     *       that's a fresh record with its own {@code replayOf}.</li>
-     *   <li>Replay failure (still {@code FAILED}) — original entry stays
-     *       in the DLQ; HTTP 502 surfaces the new error to the operator
-     *       so the failure is loud rather than silent.</li>
+     *   <li>Successful replay (non-{@code FAILED}) - original entry is
+     *       removed from the DLQ, which acknowledges the claim. The new
+     *       send may produce its own DLQ entry if it ends up failing
+     *       further down the line, but that's a fresh record with its own
+     *       {@code replayOf}.</li>
+     *   <li>Replay failure (still {@code FAILED}, or the send threw) -
+     *       original entry stays in the DLQ and its claim is released so a
+     *       later attempt can take it; HTTP 502 (or 500) surfaces the new
+     *       error to the operator so the failure is loud rather than
+     *       silent.</li>
+     *   <li>Entry claimed by another replay - HTTP 409 with
+     *       {@code status=CLAIMED}; nothing is sent.</li>
      * </ul>
      *
      * <p>The requesting tenant is taken from the path-resolved entry
@@ -353,7 +370,8 @@ public class AdminController {
                     + "requestId. The replay gets a fresh requestId + idempotencyKey "
                     + "and a `replayOf` field pointing at the original. On success "
                     + "the original entry is removed from the DLQ; on failure it "
-                    + "stays and the response is 502.")
+                    + "stays, its replay claim is released, and the response is 502. "
+                    + "An entry another replay currently holds is not sent (409).")
     public ResponseEntity<Map<String, Object>> replayDeadLetter(
             @PathVariable("requestId") String requestId,
             @RequestParam(name = "tenantId", required = false) String tenantId) {
@@ -375,8 +393,17 @@ public class AdminController {
                 : tenantId;
 
         DeadLetterStore store = deadLetterStore.get();
-        Optional<DeadLetterEntry> opt = store.findByRequestId(resolvedTenantId, requestId);
+        Optional<DeadLetterEntry> opt = store.claim(resolvedTenantId, requestId, replayLease());
         if (opt.isEmpty()) {
+            if (store.findByRequestId(resolvedTenantId, requestId).isPresent()) {
+                // Present but not claimable: another replay holds the lease.
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put(FIELD_ORIGINAL_REQUEST_ID, requestId);
+                body.put(FIELD_TENANT_ID, resolvedTenantId);
+                body.put(FIELD_STATUS, STATUS_CLAIMED);
+                body.put(FIELD_MESSAGE, "Entry is claimed by another replay; not replayed.");
+                return ResponseEntity.status(409).body(body);
+            }
             return ResponseEntity.status(404)
                     .body(Map.of(FIELD_MESSAGE,
                             "No dead-letter entry for tenant=" + sanitizeForLog(resolvedTenantId)
@@ -392,16 +419,17 @@ public class AdminController {
         } catch (RuntimeException e) {
             log.error("Replay failed for tenant={}, requestId={}: {}",
                     sanitizeForLog(resolvedTenantId), sanitizeForLog(requestId), e.toString());
+            store.release(resolvedTenantId, requestId);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put(FIELD_ORIGINAL_REQUEST_ID, requestId);
             body.put(FIELD_REPLAY_OF, requestId);
-            body.put(FIELD_MESSAGE, "Replay errored before reaching provider; entry kept.");
+            body.put(FIELD_MESSAGE, "Replay errored before reaching provider; entry kept and released.");
             return ResponseEntity.status(500).body(body);
         }
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put(FIELD_ORIGINAL_REQUEST_ID, requestId);
-        body.put("newRequestId", response.requestId());
+        body.put(FIELD_NEW_REQUEST_ID, response.requestId());
         body.put(FIELD_REPLAY_OF, requestId);
         body.put(FIELD_TENANT_ID, entry.request().getTenantId());
         body.put(FIELD_CALLER_ID, entry.request().getCallerId());
@@ -414,15 +442,17 @@ public class AdminController {
             // Replay reached the provider but the provider failed again —
             // entry stays. 502 makes "this didn't work" loud in operator
             // tooling rather than buried in a 200 body.
+            store.release(resolvedTenantId, requestId);
             body.put(FIELD_ERROR_CODE, response.errorCode());
             body.put(FIELD_ERROR_MESSAGE, response.errorMessage());
-            body.put(FIELD_MESSAGE, "Replay failed; entry kept in DLQ.");
+            body.put(FIELD_MESSAGE, "Replay failed; entry kept in DLQ and released.");
             return ResponseEntity.status(502).body(body);
         }
 
-        // Successful replay → drop the original from the DLQ. remove()
-        // is documented to never throw and to return false on a missing
-        // entry, so the worst case is a stale entry remains visible
+        // Successful replay → drop the original from the DLQ, which also
+        // acknowledges the claim. remove() is documented to never throw
+        // and to return false on a missing entry, so the worst case is a
+        // stale entry remains visible (and claimed until the lease lapses)
         // until size pressure or a subsequent replay attempt.
         boolean removed = store.remove(resolvedTenantId, requestId);
         body.put(FIELD_REMOVED_FROM_DLQ, removed);
@@ -439,25 +469,34 @@ public class AdminController {
      * scoped to one tenant is recoverable; the same typo without a
      * scope would touch the entire DLQ).
      *
-     * <p>Live mode: per entry, builds a fresh request the same way
+     * <p>Live mode: claims up to {@code limit} entries with
+     * {@link DeadLetterStore#claim(String, int, java.time.Duration)} for
+     * {@code notification.dead-letter.replay-lease}, so batches running
+     * concurrently on several replicas work on disjoint entries. Per
+     * claimed entry, builds a fresh request the same way
      * {@link #buildReplayRequest(DeadLetterEntry)} does, calls
      * {@link NotificationService#send(NotificationRequest)}, removes
-     * the entry on success, leaves it on failure. The HTTP response
-     * is always {@code 200} — per-entry failures appear in the
+     * the entry on success (the acknowledgement) and releases it on
+     * failure. Entries of the tenant that the store lists but another
+     * replay currently holds are reported with {@code status=CLAIMED}
+     * and counted under {@code claimed}, not as failures. The HTTP
+     * response is always {@code 200}; per-entry failures appear in the
      * {@code entries} array so an operator running this for recovery
      * sees every individual outcome rather than a single status code.
      *
-     * <p>Dry-run: returns the same preview list but skips both the
-     * {@code send} and the {@code remove} — useful before pulling
-     * the trigger on a 1000-entry recovery.
+     * <p>Dry-run: returns a preview from {@link DeadLetterStore#snapshot()}
+     * and skips the claim, the {@code send} and the {@code remove}, which
+     * is useful before pulling the trigger on a 1000-entry recovery.
      */
     @PostMapping("/dead-letter/replay-batch")
     @Operation(summary = "Bulk DLQ replay (DD-19)",
             description = "Replay many DLQ entries in one call. Mandatory "
                     + "tenantId for blast-radius safety. limit defaults to 100, "
                     + "capped at 1000. dryRun=true returns the preview without "
-                    + "side effects. Per-entry results in the response — HTTP "
-                    + "200 even when some entries fail.")
+                    + "side effects. Entries are claimed before replay, so concurrent "
+                    + "batches never replay the same entry; entries held by another "
+                    + "replay are reported as CLAIMED. Per-entry results in the "
+                    + "response, HTTP 200 even when some entries fail.")
     public ResponseEntity<Map<String, Object>> replayDeadLetterBatch(
             @RequestParam(name = "tenantId", required = false) String tenantId,
             @RequestParam(name = "limit", defaultValue = "100") int limit,
@@ -475,8 +514,14 @@ public class AdminController {
         }
 
         DeadLetterStore store = deadLetterStore.get();
+        int safeLimit = Math.clamp(limit, 1, 1_000);
+        // Taken before the claim. The dry-run previews it; live mode only
+        // uses it to name the tenant's entries another replay holds.
         Optional<List<DeadLetterEntry>> snapshotOpt = store.snapshot();
-        if (snapshotOpt.isEmpty()) {
+        List<DeadLetterEntry> claimed = dryRun
+                ? List.of()
+                : store.claim(tenantId, safeLimit, replayLease());
+        if (snapshotOpt.isEmpty() && claimed.isEmpty()) {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("mode", dryRun ? "dry-run" : "live");
             body.put(FIELD_TENANT_ID, tenantId);
@@ -486,18 +531,16 @@ public class AdminController {
             return ResponseEntity.ok(body);
         }
 
-        int safeLimit = Math.clamp(limit, 1, 1_000);
-        List<DeadLetterEntry> matching = snapshotOpt.get().stream()
-                .filter(e -> tenantId.equals(e.request().getTenantId()))
-                .limit(safeLimit)
-                .toList();
-
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("mode", dryRun ? "dry-run" : "live");
         body.put(FIELD_TENANT_ID, tenantId);
-        body.put("requested", matching.size());
 
         if (dryRun) {
+            List<DeadLetterEntry> matching = snapshotOpt.orElseThrow().stream()
+                    .filter(e -> tenantId.equals(e.request().getTenantId()))
+                    .limit(safeLimit)
+                    .toList();
+            body.put("requested", matching.size());
             body.put(FIELD_ENTRIES, matching.stream()
                     .map(this::toDryRunPreviewEntry)
                     .toList());
@@ -506,10 +549,14 @@ public class AdminController {
             return ResponseEntity.ok(body);
         }
 
+        List<DeadLetterEntry> claimedElsewhere =
+                claimedElsewhere(snapshotOpt.orElse(List.of()), tenantId, claimed, safeLimit);
+        body.put("requested", claimed.size() + claimedElsewhere.size());
+
         int replayed = 0;
         int stillDeadLettered = 0;
-        List<Map<String, Object>> resultEntries = new ArrayList<>(matching.size());
-        for (DeadLetterEntry entry : matching) {
+        List<Map<String, Object>> resultEntries = new ArrayList<>(claimed.size() + claimedElsewhere.size());
+        for (DeadLetterEntry entry : claimed) {
             Map<String, Object> row = new LinkedHashMap<>();
             String originalRequestId = entry.request().getRequestId();
             row.put(FIELD_ORIGINAL_REQUEST_ID, originalRequestId);
@@ -517,7 +564,7 @@ public class AdminController {
             NotificationRequest replay = buildReplayRequest(entry);
             try {
                 NotificationResponse response = notificationService.send(replay);
-                row.put("newRequestId", response.requestId());
+                row.put(FIELD_NEW_REQUEST_ID, response.requestId());
                 row.put(FIELD_STATUS, response.status().name());
                 boolean succeeded = response.status() != NotificationStatus.FAILED
                         && response.status() != NotificationStatus.REJECTED;
@@ -526,6 +573,7 @@ public class AdminController {
                     row.put(FIELD_REMOVED_FROM_DLQ, removed);
                     replayed++;
                 } else {
+                    store.release(tenantId, originalRequestId);
                     row.put(FIELD_ERROR_CODE, response.errorCode());
                     row.put(FIELD_ERROR_MESSAGE, response.errorMessage());
                     row.put(FIELD_REMOVED_FROM_DLQ, false);
@@ -534,6 +582,7 @@ public class AdminController {
             } catch (RuntimeException e) {
                 // Per-entry failures don't fail the batch — caller sees
                 // each row's outcome via the entries array.
+                store.release(tenantId, originalRequestId);
                 row.put(FIELD_STATUS, "FAILED");
                 row.put(FIELD_ERROR_MESSAGE, e.getClass().getSimpleName() + ": " + e.getMessage());
                 row.put(FIELD_REMOVED_FROM_DLQ, false);
@@ -543,13 +592,48 @@ public class AdminController {
             }
             resultEntries.add(row);
         }
+        for (DeadLetterEntry entry : claimedElsewhere) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put(FIELD_ORIGINAL_REQUEST_ID, entry.request().getRequestId());
+            row.put(FIELD_STATUS, STATUS_CLAIMED);
+            row.put(FIELD_REMOVED_FROM_DLQ, false);
+            resultEntries.add(row);
+        }
 
         body.put("replayed", replayed);
         body.put("stillDeadLettered", stillDeadLettered);
+        body.put("claimed", claimedElsewhere.size());
         body.put(FIELD_ENTRIES, resultEntries);
         body.put(FIELD_MESSAGE, "Bulk replay completed. Successful entries removed from DLQ; "
-                + "failed entries kept for inspection.");
+                + "failed entries released and kept for inspection; entries claimed by "
+                + "another replay skipped.");
         return ResponseEntity.ok(body);
+    }
+
+    /**
+     * The tenant's entries, from the snapshot taken just before the claim,
+     * that the claim did not return although it had room for them: another
+     * replay holds their lease (or finished with them in between). Empty
+     * when the claim filled {@code limit}, because the remaining entries
+     * may then simply not have fit.
+     */
+    private static List<DeadLetterEntry> claimedElsewhere(List<DeadLetterEntry> snapshot, String tenantId,
+                                                          List<DeadLetterEntry> claimed, int limit) {
+        int room = limit - claimed.size();
+        if (room <= 0) {
+            return List.of();
+        }
+        Set<String> claimedIds = new HashSet<>();
+        claimed.forEach(e -> claimedIds.add(e.request().getRequestId()));
+        return snapshot.stream()
+                .filter(e -> tenantId.equals(e.request().getTenantId()))
+                .filter(e -> !claimedIds.contains(e.request().getRequestId()))
+                .limit(room)
+                .toList();
+    }
+
+    private java.time.Duration replayLease() {
+        return properties.getDeadLetter().getReplayLease();
     }
 
     /**

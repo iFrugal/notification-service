@@ -18,13 +18,26 @@ import com.lazydevs.notification.core.service.NotificationAuditService;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -39,44 +52,53 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Tests for the DD-19 bulk DLQ replay endpoint.
  *
  * <p>Covers dry-run vs live, the tenantId requirement, partial
- * success (some entries succeed, some fail), DLQ-disabled, and
+ * success (some entries succeed, some fail), DLQ-disabled,
  * cross-tenant isolation (entries from a different tenant aren't
- * touched).
+ * touched), and the claim / acknowledge / release cycle: live mode
+ * claims entries before replay, removes them on success, releases them
+ * on failure, reports entries another replay holds as {@code CLAIMED},
+ * and concurrent batches replay disjoint entries.
  */
 class AdminControllerBulkReplayTest {
 
+    private static final Duration LEASE = Duration.ofSeconds(90);
+
     private NotificationService notificationService;
-    private DeadLetterStore deadLetterStore;
-    private MockMvc mockMvc;
+    private NotificationProperties properties;
 
     @BeforeEach
     void setUp() {
         notificationService = mock(NotificationService.class);
-        deadLetterStore = mock(DeadLetterStore.class);
-        NotificationProperties properties = new NotificationProperties();
+        properties = new NotificationProperties();
         properties.setDefaultTenant("default-tenant");
         properties.getDeadLetter().setEnabled(true);
+        properties.getDeadLetter().setReplayLease(LEASE);
+    }
 
-        AdminController controller = new AdminController(
+    private AdminController controller(DeadLetterStore store) {
+        return new AdminController(
                 properties,
                 mock(ProviderRegistry.class),
                 mock(NotificationTemplateEngine.class),
                 mock(CallerRegistry.class),
                 Optional.<RateLimiter>empty(),
-                Optional.of(deadLetterStore),
+                Optional.ofNullable(store),
                 Optional.<DeliveryEventStore>empty(),
                 notificationService,
                 mock(NotificationAuditService.class));
-        mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+    }
+
+    private MockMvc mvc(DeadLetterStore store) {
+        return MockMvcBuilders.standaloneSetup(controller(store)).build();
     }
 
     @Test
-    void dryRun_returnsPreviewWithoutCallingSendOrRemove() throws Exception {
-        when(deadLetterStore.snapshot()).thenReturn(Optional.of(List.of(
+    void dryRun_returnsPreviewWithoutClaimingSendingOrRemoving() throws Exception {
+        RecordingLeasingDeadLetterStore store = new RecordingLeasingDeadLetterStore(
                 entry("req-1", "acme"),
-                entry("req-2", "acme"))));
+                entry("req-2", "acme"));
 
-        mockMvc.perform(post("/api/v1/admin/dead-letter/replay-batch")
+        mvc(store).perform(post("/api/v1/admin/dead-letter/replay-batch")
                         .param("tenantId", "acme")
                         .param("dryRun", "true"))
                 .andExpect(status().isOk())
@@ -89,41 +111,32 @@ class AdminControllerBulkReplayTest {
                 .andExpect(jsonPath("$.replayed").doesNotExist());
 
         verify(notificationService, never()).send(any());
-        verify(deadLetterStore, never()).remove(any(), any());
+        assertThat(store.claims()).isEmpty();
+        assertThat(store.removed()).isEmpty();
+        assertThat(store.released()).isEmpty();
     }
 
     @Test
-    void live_replaysEachEntry_removesSuccessful_keepsFailed() throws Exception {
-        when(deadLetterStore.snapshot()).thenReturn(Optional.of(List.of(
+    void live_replaysEachEntry_removesSuccessful_releasesFailed() throws Exception {
+        RecordingLeasingDeadLetterStore store = new RecordingLeasingDeadLetterStore(
                 entry("req-success-1", "acme"),
                 entry("req-fail-1", "acme"),
-                entry("req-success-2", "acme"))));
-        when(deadLetterStore.remove(any(), any())).thenReturn(true);
+                entry("req-success-2", "acme"));
 
         // First and third entries succeed, second fails at the provider.
         when(notificationService.send(any())).thenAnswer(inv -> {
             NotificationRequest req = inv.getArgument(0);
-            String originalReplayOf = req.getReplayOf();
-            NotificationStatus status = "req-fail-1".equals(originalReplayOf)
-                    ? NotificationStatus.FAILED
-                    : NotificationStatus.SENT;
-            return new NotificationResponse(
-                    req.getRequestId(), null, req.getTenantId(), req.getCallerId(),
-                    req.getChannel(), "smtp", status,
-                    status == NotificationStatus.SENT ? "msg-1" : null,
-                    status == NotificationStatus.FAILED ? "PROVIDER_TIMEOUT" : null,
-                    status == NotificationStatus.FAILED ? "smtp 421" : null,
-                    Instant.now(), Instant.now(),
-                    status == NotificationStatus.SENT ? Instant.now() : null,
-                    null);
+            return "req-fail-1".equals(req.getReplayOf()) ? failed(req) : sent(req);
         });
 
-        mockMvc.perform(post("/api/v1/admin/dead-letter/replay-batch")
+        mvc(store).perform(post("/api/v1/admin/dead-letter/replay-batch")
                         .param("tenantId", "acme"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.mode").value("live"))
+                .andExpect(jsonPath("$.requested").value(3))
                 .andExpect(jsonPath("$.replayed").value(2))
                 .andExpect(jsonPath("$.stillDeadLettered").value(1))
+                .andExpect(jsonPath("$.claimed").value(0))
                 .andExpect(jsonPath("$.entries.length()").value(3))
                 .andExpect(jsonPath("$.entries[0].status").value("SENT"))
                 .andExpect(jsonPath("$.entries[0].removedFromDlq").value(true))
@@ -131,37 +144,44 @@ class AdminControllerBulkReplayTest {
                 .andExpect(jsonPath("$.entries[1].removedFromDlq").value(false))
                 .andExpect(jsonPath("$.entries[1].errorCode").value("PROVIDER_TIMEOUT"));
 
-        // Successful entries removed (2), failed entry not removed.
-        verify(deadLetterStore, times(2)).remove(any(), any());
+        // One claim for the whole batch, with the configured lease.
+        assertThat(store.claims()).singleElement().satisfies(c -> {
+            assertThat(c.tenantId()).isEqualTo("acme");
+            assertThat(c.lease()).isEqualTo(LEASE);
+            assertThat(c.requestIds()).containsExactly("req-success-1", "req-fail-1", "req-success-2");
+        });
+        // Successful entries removed (the acknowledgement), the failed one
+        // released so another attempt can take it straight away.
+        assertThat(store.removed()).containsExactly("req-success-1", "req-success-2");
+        assertThat(store.released()).containsExactly("req-fail-1");
+        assertThat(store.claim("acme", 10, LEASE))
+                .extracting(e -> e.request().getRequestId())
+                .containsExactly("req-fail-1");
     }
 
     @Test
-    void live_perEntryExceptionDoesNotShortCircuit() throws Exception {
+    void live_perEntryExceptionDoesNotShortCircuit_andReleasesThatEntry() throws Exception {
         // A thrown exception (e.g. rate-limit) on one entry should
         // still let the rest of the batch run. The HTTP code stays
         // 200; the entry shows status:FAILED with the exception
         // message.
-        when(deadLetterStore.snapshot()).thenReturn(Optional.of(List.of(
+        RecordingLeasingDeadLetterStore store = new RecordingLeasingDeadLetterStore(
                 entry("req-1", "acme"),
-                entry("req-2", "acme"))));
-        when(deadLetterStore.remove(any(), any())).thenReturn(true);
+                entry("req-2", "acme"));
         when(notificationService.send(any()))
                 .thenThrow(new RuntimeException("rate-limit hit"))
-                .thenAnswer(inv -> {
-                    NotificationRequest req = inv.getArgument(0);
-                    return new NotificationResponse(
-                            req.getRequestId(), null, req.getTenantId(), req.getCallerId(),
-                            req.getChannel(), "smtp", NotificationStatus.SENT, "msg-1",
-                            null, null, Instant.now(), Instant.now(), Instant.now(), null);
-                });
+                .thenAnswer(inv -> sent(inv.getArgument(0)));
 
-        mockMvc.perform(post("/api/v1/admin/dead-letter/replay-batch")
+        mvc(store).perform(post("/api/v1/admin/dead-letter/replay-batch")
                         .param("tenantId", "acme"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.replayed").value(1))
                 .andExpect(jsonPath("$.stillDeadLettered").value(1))
                 .andExpect(jsonPath("$.entries[0].status").value("FAILED"))
                 .andExpect(jsonPath("$.entries[0].errorMessage").exists());
+
+        assertThat(store.released()).containsExactly("req-1");
+        assertThat(store.removed()).containsExactly("req-2");
     }
 
     @Test
@@ -169,34 +189,124 @@ class AdminControllerBulkReplayTest {
         // acme has 2 entries, globex has 1. tenantId=acme should only
         // replay acme's; globex's entry must not appear in the
         // results nor be sent.
-        when(deadLetterStore.snapshot()).thenReturn(Optional.of(List.of(
+        RecordingLeasingDeadLetterStore store = new RecordingLeasingDeadLetterStore(
                 entry("req-acme-1", "acme"),
                 entry("req-globex-1", "globex"),
-                entry("req-acme-2", "acme"))));
-        when(deadLetterStore.remove(any(), any())).thenReturn(true);
-        when(notificationService.send(any())).thenAnswer(inv -> {
-            NotificationRequest req = inv.getArgument(0);
-            return new NotificationResponse(
-                    req.getRequestId(), null, req.getTenantId(), req.getCallerId(),
-                    req.getChannel(), "smtp", NotificationStatus.SENT, "msg-1",
-                    null, null, Instant.now(), Instant.now(), Instant.now(), null);
-        });
+                entry("req-acme-2", "acme"));
+        when(notificationService.send(any())).thenAnswer(inv -> sent(inv.getArgument(0)));
 
-        mockMvc.perform(post("/api/v1/admin/dead-letter/replay-batch")
+        mvc(store).perform(post("/api/v1/admin/dead-letter/replay-batch")
                         .param("tenantId", "acme"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.requested").value(2))
                 .andExpect(jsonPath("$.replayed").value(2))
+                .andExpect(jsonPath("$.claimed").value(0))
+                .andExpect(jsonPath("$.entries.length()").value(2))
                 .andExpect(jsonPath("$.entries[0].originalRequestId").value("req-acme-1"))
                 .andExpect(jsonPath("$.entries[1].originalRequestId").value("req-acme-2"));
 
         // Service only called twice — globex's entry was filtered out.
         verify(notificationService, times(2)).send(any());
+        assertThat(store.findByRequestId("globex", "req-globex-1")).isPresent();
+    }
+
+    @Test
+    void live_entryClaimedByAnotherReplay_isSkippedAndReportedAsClaimed() throws Exception {
+        RecordingLeasingDeadLetterStore store = new RecordingLeasingDeadLetterStore(
+                entry("req-1", "acme"),
+                entry("req-busy", "acme"),
+                entry("req-3", "acme"));
+        store.holdElsewhere("acme", "req-busy");
+        when(notificationService.send(any())).thenAnswer(inv -> sent(inv.getArgument(0)));
+
+        mvc(store).perform(post("/api/v1/admin/dead-letter/replay-batch")
+                        .param("tenantId", "acme"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requested").value(3))
+                .andExpect(jsonPath("$.replayed").value(2))
+                .andExpect(jsonPath("$.stillDeadLettered").value(0))
+                .andExpect(jsonPath("$.claimed").value(1))
+                .andExpect(jsonPath("$.entries.length()").value(3))
+                .andExpect(jsonPath("$.entries[2].originalRequestId").value("req-busy"))
+                .andExpect(jsonPath("$.entries[2].status").value("CLAIMED"))
+                .andExpect(jsonPath("$.entries[2].removedFromDlq").value(false))
+                .andExpect(jsonPath("$.entries[2].errorMessage").doesNotExist());
+
+        // Never sent, never removed, and not released: the lease is not ours.
+        verify(notificationService, times(2)).send(any());
+        assertThat(store.removed()).containsExactly("req-1", "req-3");
+        assertThat(store.released()).isEmpty();
+        assertThat(store.findByRequestId("acme", "req-busy")).isPresent();
+    }
+
+    @Test
+    void live_claimThatFillsTheLimit_reportsNothingAsClaimedElsewhere() throws Exception {
+        // limit=1 over two unclaimed entries: the second one simply did not
+        // fit and must not be misreported as held by another replay.
+        RecordingLeasingDeadLetterStore store = new RecordingLeasingDeadLetterStore(
+                entry("req-1", "acme"),
+                entry("req-2", "acme"));
+        when(notificationService.send(any())).thenAnswer(inv -> sent(inv.getArgument(0)));
+
+        mvc(store).perform(post("/api/v1/admin/dead-letter/replay-batch")
+                        .param("tenantId", "acme")
+                        .param("limit", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requested").value(1))
+                .andExpect(jsonPath("$.claimed").value(0))
+                .andExpect(jsonPath("$.entries.length()").value(1));
+    }
+
+    @Test
+    void concurrentBatches_replayDisjointEntries_eachExactlyOnce() throws Exception {
+        List<DeadLetterEntry> initial = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            initial.add(entry("req-" + i, "acme"));
+        }
+        RecordingLeasingDeadLetterStore store =
+                new RecordingLeasingDeadLetterStore(initial.toArray(DeadLetterEntry[]::new));
+
+        // Every send waits until both batches have claimed, so the two
+        // batches are guaranteed to overlap in time.
+        CountDownLatch bothClaimed = new CountDownLatch(2);
+        List<String> sentOriginals = new CopyOnWriteArrayList<>();
+        when(notificationService.send(any())).thenAnswer(inv -> {
+            assertThat(bothClaimed.await(10, TimeUnit.SECONDS)).isTrue();
+            NotificationRequest req = inv.getArgument(0);
+            sentOriginals.add(req.getReplayOf());
+            return sent(req);
+        });
+        DeadLetterStore countingStore = new CountingClaims(store, bothClaimed);
+        AdminController countingController = controller(countingStore);
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<ResponseEntity<Map<String, Object>>> a =
+                    pool.submit(() -> countingController.replayDeadLetterBatch("acme", 3, false));
+            Future<ResponseEntity<Map<String, Object>>> b =
+                    pool.submit(() -> countingController.replayDeadLetterBatch("acme", 3, false));
+            Map<String, Object> bodyA = a.get(30, TimeUnit.SECONDS).getBody();
+            Map<String, Object> bodyB = b.get(30, TimeUnit.SECONDS).getBody();
+
+            assertThat(bodyA).containsEntry("replayed", 3).containsEntry("claimed", 0);
+            assertThat(bodyB).containsEntry("replayed", 3).containsEntry("claimed", 0);
+        } finally {
+            pool.shutdownNow();
+        }
+
+        List<RecordingLeasingDeadLetterStore.Claim> claims = store.claims();
+        assertThat(claims).hasSize(2);
+        Set<String> first = new HashSet<>(claims.get(0).requestIds());
+        Set<String> second = new HashSet<>(claims.get(1).requestIds());
+        assertThat(first).hasSize(3).doesNotContainAnyElementsOf(second);
+        assertThat(second).hasSize(3);
+        assertThat(sentOriginals).hasSize(6).doesNotHaveDuplicates();
+        assertThat(store.size()).isZero();
     }
 
     @Test
     void missingTenantId_returns400() throws Exception {
-        mockMvc.perform(post("/api/v1/admin/dead-letter/replay-batch"))
+        mvc(new RecordingLeasingDeadLetterStore()).perform(post("/api/v1/admin/dead-letter/replay-batch"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").exists());
 
@@ -205,7 +315,7 @@ class AdminControllerBulkReplayTest {
 
     @Test
     void blankTenantId_returns400() throws Exception {
-        mockMvc.perform(post("/api/v1/admin/dead-letter/replay-batch")
+        mvc(new RecordingLeasingDeadLetterStore()).perform(post("/api/v1/admin/dead-letter/replay-batch")
                         .param("tenantId", "   "))
                 .andExpect(status().isBadRequest());
 
@@ -214,47 +324,93 @@ class AdminControllerBulkReplayTest {
 
     @Test
     void dlqDisabled_returns503() throws Exception {
-        NotificationProperties properties = new NotificationProperties();
-        AdminController controller = new AdminController(
-                properties,
-                mock(ProviderRegistry.class),
-                mock(NotificationTemplateEngine.class),
-                mock(CallerRegistry.class),
-                Optional.<RateLimiter>empty(),
-                Optional.<DeadLetterStore>empty(),     // DLQ disabled
-                Optional.<DeliveryEventStore>empty(),
-                notificationService,
-                mock(NotificationAuditService.class));
-        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
-
-        mvc.perform(post("/api/v1/admin/dead-letter/replay-batch")
+        mvc(null).perform(post("/api/v1/admin/dead-letter/replay-batch")
                         .param("tenantId", "acme"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.enabled").value(false));
     }
 
     @Test
-    void limit_clampsAt1000() throws Exception {
-        // Construct 5 entries; passing limit=10000 must clamp at 1000
-        // internally. (5 entries is fewer than the cap so all run; the
-        // test confirms no surefire-blowing error from the absurd
-        // limit value.)
-        when(deadLetterStore.snapshot()).thenReturn(Optional.of(List.of(
-                entry("req-1", "acme"))));
-        when(deadLetterStore.remove(any(), any())).thenReturn(true);
-        when(notificationService.send(any())).thenAnswer(inv -> {
-            NotificationRequest req = inv.getArgument(0);
-            return new NotificationResponse(
-                    req.getRequestId(), null, req.getTenantId(), req.getCallerId(),
-                    req.getChannel(), "smtp", NotificationStatus.SENT, "msg-1",
-                    null, null, Instant.now(), Instant.now(), Instant.now(), null);
-        });
+    void storeWithoutSnapshotOrClaim_explainsInsteadOfReplaying() throws Exception {
+        DeadLetterStore opaque = mock(DeadLetterStore.class);
+        when(opaque.snapshot()).thenReturn(Optional.empty());
+        when(opaque.claim(any(), org.mockito.ArgumentMatchers.anyInt(), any())).thenReturn(List.of());
 
-        mockMvc.perform(post("/api/v1/admin/dead-letter/replay-batch")
+        mvc(opaque).perform(post("/api/v1/admin/dead-letter/replay-batch")
+                        .param("tenantId", "acme"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("live"))
+                .andExpect(jsonPath("$.message").value(
+                        org.hamcrest.Matchers.containsString("does not support snapshot iteration")));
+
+        verify(notificationService, never()).send(any());
+    }
+
+    @Test
+    void limit_clampsAt1000() throws Exception {
+        // Passing limit=10000 must clamp at 1000 internally: the store
+        // sees a claim of 1000, and the absurd value causes no error.
+        RecordingLeasingDeadLetterStore store = new RecordingLeasingDeadLetterStore(entry("req-1", "acme"));
+        when(notificationService.send(any())).thenAnswer(inv -> sent(inv.getArgument(0)));
+
+        mvc(store).perform(post("/api/v1/admin/dead-letter/replay-batch")
                         .param("tenantId", "acme")
                         .param("limit", "10000"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.requested").value(1));
+
+        assertThat(store.claims()).singleElement()
+                .satisfies(c -> assertThat(c.limit()).isEqualTo(1_000));
+    }
+
+    /** Delegates to a store and counts down a latch after each batch claim. */
+    private record CountingClaims(DeadLetterStore delegate, CountDownLatch latch) implements DeadLetterStore {
+        @Override
+        public void add(DeadLetterEntry entry) {
+            delegate.add(entry);
+        }
+
+        @Override
+        public Optional<List<DeadLetterEntry>> snapshot() {
+            return delegate.snapshot();
+        }
+
+        @Override
+        public int size() {
+            return delegate.size();
+        }
+
+        @Override
+        public boolean remove(String tenantId, String requestId) {
+            return delegate.remove(tenantId, requestId);
+        }
+
+        @Override
+        public List<DeadLetterEntry> claim(String tenantId, int limit, Duration lease) {
+            List<DeadLetterEntry> claimed = delegate.claim(tenantId, limit, lease);
+            latch.countDown();
+            return claimed;
+        }
+
+        @Override
+        public void release(String tenantId, String requestId) {
+            delegate.release(tenantId, requestId);
+        }
+    }
+
+    private static NotificationResponse sent(NotificationRequest req) {
+        return new NotificationResponse(
+                req.getRequestId(), null, req.getTenantId(), req.getCallerId(),
+                req.getChannel(), "smtp", NotificationStatus.SENT, "msg-1",
+                null, null, Instant.now(), Instant.now(), Instant.now(), null);
+    }
+
+    private static NotificationResponse failed(NotificationRequest req) {
+        return new NotificationResponse(
+                req.getRequestId(), null, req.getTenantId(), req.getCallerId(),
+                req.getChannel(), "smtp", NotificationStatus.FAILED, null,
+                "PROVIDER_TIMEOUT", "smtp 421",
+                Instant.now(), Instant.now(), null, null);
     }
 
     private static DeadLetterEntry entry(String requestId, String tenantId) {

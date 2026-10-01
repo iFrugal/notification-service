@@ -18,6 +18,11 @@
         "reason": "Select the store family with notification.store.type (or notification.redis.idempotency.enabled).",
         "replacement": "notification.store.type"
       }
+    },
+    {
+      "name": "notification.dead-letter.replay-lease",
+      "type": "java.time.Duration",
+      "defaultValue": "5m"
     }
   ],
   "hints": [

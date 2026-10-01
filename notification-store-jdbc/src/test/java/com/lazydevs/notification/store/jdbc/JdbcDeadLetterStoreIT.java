@@ -194,6 +194,74 @@ class JdbcDeadLetterStoreIT {
     }
 
     @Test
+    void targetedClaimLeasesOnlyThatRowAndExcludesItFromEveryClaim() {
+        store.add(PostgresTestSupport.deadLetter("acme", "req-1"));
+        store.add(PostgresTestSupport.deadLetter("acme", "req-2"));
+        store.add(PostgresTestSupport.deadLetter("globex", "req-1"));
+
+        DeadLetterEntry claimed = store.claim("acme", "req-1", LONG_LEASE).orElseThrow();
+        assertThat(claimed.request().getRequestId()).isEqualTo("req-1");
+        assertThat(claimed.request().getTenantId()).isEqualTo("acme");
+
+        assertThat(store.claim("acme", "req-1", LONG_LEASE)).isEmpty();
+        assertThat(requestIds(store.claim("acme", 10, LONG_LEASE))).containsExactly("req-2");
+        assertThat(store.claim("globex", "req-1", LONG_LEASE)).isPresent();
+        assertThat(store.claim("acme", "missing", LONG_LEASE)).isEmpty();
+        assertThat(store.claim("acme", null, LONG_LEASE)).isEmpty();
+        assertThatThrownBy(() -> store.claim("acme", "req-2", Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class);
+        // Claiming never hides the row from the read path.
+        assertThat(store.findByRequestId("acme", "req-1")).isPresent();
+    }
+
+    @Test
+    void targetedClaimAfterReleaseOrLeaseExpirySucceedsAgain() {
+        store.add(PostgresTestSupport.deadLetter("acme", "req-1"));
+        store.add(PostgresTestSupport.deadLetter("acme", "req-2"));
+        assertThat(store.claim("acme", "req-1", LONG_LEASE)).isPresent();
+        assertThat(store.claim("acme", 10, Duration.ofMillis(800))).hasSize(1);
+
+        store.release("acme", "req-1");
+        assertThat(store.claim("acme", "req-1", LONG_LEASE)).isPresent();
+
+        assertThat(store.claim("acme", "req-2", LONG_LEASE)).isEmpty();
+        await().atMost(Duration.ofSeconds(5)).pollInterval(Duration.ofMillis(100))
+                .until(() -> store.claim("acme", "req-2", LONG_LEASE).isPresent());
+    }
+
+    @Test
+    void concurrentTargetedClaimsOfOneRowHaveExactlyOneWinner() throws Exception {
+        store.add(PostgresTestSupport.deadLetter("acme", "req-1"));
+
+        int threads = 8;
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            CountDownLatch ready = new CountDownLatch(threads);
+            CountDownLatch go = new CountDownLatch(1);
+            List<Future<Boolean>> results = new ArrayList<>();
+            for (int i = 0; i < threads; i++) {
+                results.add(pool.submit(() -> {
+                    ready.countDown();
+                    go.await();
+                    return store.claim("acme", "req-1", LONG_LEASE).isPresent();
+                }));
+            }
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            go.countDown();
+
+            int winners = 0;
+            for (Future<Boolean> result : results) {
+                if (Boolean.TRUE.equals(result.get(30, TimeUnit.SECONDS))) {
+                    winners++;
+                }
+            }
+            assertThat(winners).isEqualTo(1);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void releaseMakesARowClaimableAgain() {
         store.add(PostgresTestSupport.deadLetter("acme", "req-1"));
         store.add(PostgresTestSupport.deadLetter("acme", "req-2"));

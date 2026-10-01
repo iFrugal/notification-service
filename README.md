@@ -9,7 +9,7 @@
 [![Java](https://img.shields.io/badge/Java-25-orange.svg)](https://openjdk.org/projects/jdk/25/)
 
 A multi-tenant notification service with pluggable providers.
-Email (SMTP, AWS SES) and SMS (Twilio) ship with built-in providers; WhatsApp and Push exist as provider SPIs, and their built-in providers are planned (see [Planned providers](#planned-providers)).
+Email (SMTP, AWS SES, Azure Communication Services) and SMS (Twilio) ship with built-in providers; WhatsApp and Push exist as provider SPIs, and their built-in providers are planned (see [Planned providers](#planned-providers)).
 Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone Docker container**.
 
 > ### 📋 **[Feature Matrix → `docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md)**
@@ -29,7 +29,9 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 - [Configuration](#configuration)
   - [Tenant Configuration](#tenant-configuration)
   - [Channel & Provider Configuration](#channel--provider-configuration)
+  - [Email providers](#email-providers)
   - [Default Provider Selection](#default-provider-selection)
+  - [Store selection](#store-selection)
   - [Template Configuration](#template-configuration)
 - [REST API](#rest-api)
   - [Send Notification](#send-notification)
@@ -37,11 +39,15 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
   - [Admin Endpoints](#admin-endpoints)
 - [Kafka Integration](#kafka-integration)
 - [Adding Custom Providers](#adding-custom-providers)
+  - [How providers are resolved](#how-providers-are-resolved)
   - [Option 1: Spring Bean](#option-1-spring-bean)
   - [Option 2: FQCN (Reflection)](#option-2-fqcn-reflection)
 - [Templates](#templates)
 - [Multi-Tenancy](#multi-tenancy)
 - [Audit](#audit)
+- [Distributed deployment (Redis backends)](#distributed-deployment-redis-backends)
+- [JDBC store](#jdbc-store)
+- [Native image](#native-image)
 - [Design Decisions](#design-decisions)
 - [Dependencies](#dependencies)
 - [Building](#building)
@@ -51,17 +57,15 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 
 ## Features
 
-- **Multi-Channel Support**: Email, SMS, WhatsApp, Push notifications
-- **Multiple Providers per Channel**: SMTP, AWS SES, Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)), Twilio, Firebase FCM, etc.
 - **Multi-Channel Support**: Email and SMS with built-in providers; WhatsApp and Push as SPI extension points (`WhatsAppProvider`, `PushProvider`) with built-in providers planned
-- **Multiple Providers per Channel**: SMTP and AWS SES for email, Twilio for SMS; AWS SNS, WhatsApp (Twilio, Meta) and Push (FCM, APNs) providers are planned
+- **Multiple Providers per Channel**: SMTP, AWS SES and Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)) for email, Twilio for SMS; AWS SNS, WhatsApp (Twilio, Meta) and Push (FCM, APNs) providers are planned
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
 - **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)
 - **Rate Limiting**: Opt-in token-bucket throttle per `(tenant, caller, channel)` with `429 + Retry-After` (DD-12); per-channel default rules let operators bound SMS tighter than email without enumerating overrides (DD-23)
 - **Retries + DLQ**: Opt-in synchronous retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN) and exponential backoff with jitter; pluggable dead-letter store SPI (DD-13); operator replay endpoint with `replayOf` chain (DD-15); per-channel `byChannel` retry rule overrides (DD-23)
-- **OpenAPI / Swagger**: Self-documenting via `/v3/api-docs` + `/swagger-ui` (springdoc 3.0.3); schema published as a CI build artifact for client codegen
-- **Distributed mode**: Optional `notification-redis` module providing Redis-backed implementations of the idempotency, rate-limit, and DLQ SPIs for multi-pod deployments (DD-14)
+- **OpenAPI / Swagger**: Self-documenting via `/v3/api-docs` + `/swagger-ui` (springdoc, optional in library mode); schema published as a CI build artifact for client codegen
+- **Distributed mode**: Optional `notification-redis` module providing Redis-backed implementations of the idempotency, rate-limit, DLQ and delivery-event SPIs for multi-pod deployments (DD-14), or `notification-store-jdbc` for PostgreSQL-backed idempotency, DLQ and delivery events; pick the family with `notification.store.type`
 - **Webhook delivery callbacks**: Opt-in `/webhooks/{provider}/...` surface ingests Twilio status (HMAC-SHA1) and SES via SNS (X.509) callbacks; parsed events flow to a `DeliveryEventListener` SPI (DD-16)
 - **Delivery event store**: Opt-in bounded `DeliveryEventStore` SPI for `GET /admin/delivery-events` queryable history; in-memory Caffeine default + Redis backend (DD-17); `?requestId=…` joins via audit so operators query by the id they already know (DD-18)
 - **Observability**: Per-SPI actuator health indicators with near-full DLQ alerting via `OUT_OF_SERVICE` (DD-21); Micrometer metrics across the send path (sends/retries/rate-limit/DLQ/delivery) for Prometheus or any Micrometer-compatible registry (DD-22)
@@ -117,11 +121,13 @@ WhatsApp and Push have no built-in provider yet; see [Planned providers](#planne
 | Module | Description |
 |--------|-------------|
 | `notification-api` | Core interfaces, DTOs, and exceptions |
-| `notification-core` | Service implementation, provider registry, template engine |
-| `notification-rest` | REST controllers and filters |
+| `notification-core` | Service implementation, provider registry, template engine, in-memory stores |
+| `notification-rest` | REST controllers, filters and webhooks; opt-in with `notification.rest.enabled=true` |
 | `notification-kafka` | Kafka consumer for async notifications |
-| `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `sms-provider-twilio` |
-| `notification-spring-boot-starter` | Auto-configuration for library mode |
+| `notification-redis` | Redis-backed stores and rate limiter (`notification.store.type=redis`) |
+| `notification-store-jdbc` | PostgreSQL-backed stores over plain SQL (`notification.store.type=jdbc`) |
+| `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `email-provider-acs`, `sms-provider-twilio` |
+| `notification-spring-boot-starter` | The dependency to add in library mode; every module brings its own auto-configuration |
 | `notification-server` | Standalone application with Dockerfile |
 
 ### Planned providers
@@ -153,22 +159,36 @@ Add the dependency to your `pom.xml`:
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>notification-spring-boot-starter</artifactId>
-    <version>1.0.2</version>
+    <version>1.1.0</version>
 </dependency>
 
 <!-- Add providers you need -->
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>email-provider-smtp</artifactId>
-    <version>1.0.2</version>
+    <version>1.1.0</version>
+</dependency>
+
+<!-- Only if you want the HTTP API (see notification.rest.enabled below) -->
+<dependency>
+    <groupId>com.github.ifrugal</groupId>
+    <artifactId>notification-rest</artifactId>
+    <version>1.1.0</version>
 </dependency>
 ```
+
+Each module registers its own beans through Spring Boot auto-configuration, so adding the jar is all the wiring there is.
+The starter does not component-scan `com.lazydevs.notification`; if you put your own beans under that package, register them yourself.
 
 Configure in `application.yml`:
 
 ```yaml
 notification:
   default-tenant: default
+  rest:
+    enabled: true          # REST is off by default since 1.1.0; omit for a library-only host
+  store:
+    type: memory           # default; redis or jdbc for shared state (see Store selection)
   tenants:
     default:
       channels:
@@ -202,6 +222,10 @@ public void sendWelcomeEmail(String email, String name) {
     NotificationResponse response = notificationService.send(request);
 }
 ```
+
+The REST API, its tenant and caller filters and its exception handler are off by default since 1.1.0.
+Set `notification.rest.enabled=true` and add `notification-rest` to expose them; the filters then apply only under `notification.rest.base-path` (default `/api/v1`), and webhooks additionally need `notification.webhooks.enabled=true`.
+The standalone server sets `notification.rest.enabled=true` in its own `application.yml`.
 
 ### As a Standalone Service
 
@@ -292,6 +316,50 @@ notification:
                 port: 587
 ```
 
+### Email providers
+
+| Provider name | Artifact | Notes |
+|---------------|----------|-------|
+| `smtp` | `email-provider-smtp` | Jakarta Mail over any SMTP relay |
+| `ses` | `email-provider-ses` | AWS SES v2 |
+| `acs` | `email-provider-acs` | Azure Communication Services Email; see the [module README](notification-channels/notification-channel-email/email-provider-acs/README.md) |
+
+ACS is configured per tenant like every other provider; there is no global `notification.email.acs.*` namespace.
+
+```yaml
+notification:
+  tenants:
+    default:
+      channels:
+        email:
+          enabled: true
+          config:
+            from-address: DoNotReply@notify.example.com   # used when 'sender' is absent
+          providers:
+            acs:
+              properties:
+                connection-string: ${ACS_CONNECTION_STRING}
+                sender: DoNotReply@notify.example.com
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `connection-string` | - | ACS connection string (`endpoint=https://<resource>.communication.azure.com/;accesskey=<key>`). Wins over `endpoint` when both are set. |
+| `endpoint` | - | ACS resource endpoint, used together with `credential`. |
+| `credential` | - | `default` for `DefaultAzureCredential` (needs `azure-identity`), otherwise the name of a `TokenCredential` bean. Blank with `endpoint` uses the application's only `TokenCredential` bean. |
+| `sender` | channel `from-address` | Sender address. It must be a MailFrom address of a domain connected to the ACS resource. Required. |
+| `reply-to` | - | Default reply-to addresses, comma-separated or a YAML list. The recipient's own `replyTo` overrides it. |
+| `send-mode` | `wait` | `wait` polls until ACS reports a final status. `submit` returns once ACS accepted the message. |
+| `wait-timeout` | `PT60S` | ISO-8601 upper bound for `wait` mode. |
+| `sdk-retries` | `0` | Retries performed inside the Azure SDK. Keep `0` so the library's `RetryExecutor` is the only retry layer. |
+| `user-engagement-tracking-disabled` | ACS resource setting | `true` disables open and click tracking for messages from this tenant. |
+
+ACS authentication, pick one:
+
+1. **Connection string:** set `connection-string`; no extra dependency.
+2. **Managed identity, workload identity, environment or Azure CLI credentials:** set `endpoint` and `credential: default`, and add `com.azure:azure-identity`.
+3. **Your own `TokenCredential` bean:** set `endpoint` and `credential: <bean name>`, or leave `credential` blank when the application has exactly one such bean.
+
 ### Default Provider Selection
 
 When a request doesn't specify a provider:
@@ -302,6 +370,39 @@ When a request doesn't specify a provider:
 | Multiple providers, one with `default: true` | That provider is used |
 | Multiple providers, none with `default: true` | Error: provider required in request |
 | Multiple providers, 2+ with `default: true` | Startup failure |
+
+### Store selection
+
+Idempotency, rate limiting, the dead-letter queue and delivery events each keep state in a store.
+`notification.store.type` picks the store family for all of them: `memory` (default, per JVM, in `notification-core`), `redis` (needs `notification-redis`) or `jdbc` (needs `notification-store-jdbc`).
+
+```yaml
+notification:
+  store:
+    type: jdbc
+  idempotency:
+    enabled: true          # default
+  dead-letter:
+    enabled: true
+```
+
+For each feature the store resolves in this order:
+
+1. The feature flag is the master switch: `notification.idempotency.enabled` (default `true`), `notification.rate-limit.enabled`, `notification.dead-letter.enabled`, `notification.delivery-events.enabled` (default `false`).
+   A feature that is off gets no store, whatever else is set.
+2. An explicit `notification.redis.<feature>.enabled` overrides the family for that feature only: `true` selects Redis, `false` selects memory.
+3. Otherwise `notification.store.type` decides.
+
+The JDBC family has no rate limiter, so with `store.type=jdbc` rate limiting stays on the in-memory Bucket4j limiter unless `notification.redis.rate-limit.enabled=true`.
+A bean of the store SPI that you define yourself always wins over the selected family.
+
+If an enabled feature resolves to a family whose module is not on the classpath, startup fails instead of silently falling back to memory:
+
+```text
+Store family 'jdbc' is selected for dead-letter, but notification-store-jdbc is not on the classpath. Add the Maven dependency com.github.ifrugal:notification-store-jdbc (same version as notification-core).
+```
+
+`notification.redis.enabled` was never read and is no longer bound; startup logs a warning when it is set.
 
 ### Template Configuration
 
@@ -319,8 +420,8 @@ notification:
 
 ### Live API documentation
 
-The service exposes its OpenAPI 3.1 schema and an interactive Swagger UI
-out of the box (springdoc 3.0.3, Phase 9):
+The standalone server exposes its OpenAPI 3.1 schema and an interactive Swagger UI out of the box (springdoc, Phase 9).
+In library mode springdoc is an optional dependency of `notification-rest` since 1.1.0: add `org.springdoc:springdoc-openapi-starter-webmvc-ui` to your application to get the same endpoints.
 
 | Path | What |
 |------|------|
@@ -462,6 +563,8 @@ The header is optional. Requests that omit it continue to work exactly as
 before — the only effect is that the idempotency scope reduces to
 `(tenantId, null, idempotencyKey)`.
 
+Header names are matched case-insensitively, as HTTP requires: `X-Service-Id`, `x-service-id` and `X-SERVICE-ID` are the same header, and likewise for `X-Tenant-Id`.
+
 **Caller registry (optional, off by default).** When operators want to
 track or restrict which services may call the notification API, populate
 the registry:
@@ -505,7 +608,7 @@ token-bucket model. Off by default — see
 notification:
   rate-limit:
     enabled: true
-    default:
+    default-rule:
       capacity: 200             # bucket size = burst tolerance
       refill-tokens: 100        # tokens added per refill period
       refill-period: PT1S       # ISO-8601 duration
@@ -653,12 +756,21 @@ empty:
 POST /api/v1/admin/dead-letter/{requestId}/replay?tenantId=acme
 ```
 
-The replay path looks up the entry by `(tenantId, requestId)`, builds a
-fresh request from the captured payload (new `requestId`, new
-`idempotencyKey`, `replayOf` set to the original), and re-submits it
-through `NotificationService.send()`. On success the original entry is
-**removed** from the DLQ; the chain stays reconstructable through the
-audit log via `replayOf`.
+The replay path first **claims** the entry by `(tenantId, requestId)` for `notification.dead-letter.replay-lease` (default `PT5M`), so no other replay, on this or another replica, can take it meanwhile.
+It then builds a fresh request from the captured payload (new `requestId`, new `idempotencyKey`, `replayOf` set to the original) and re-submits it through `NotificationService.send()`.
+On success the original entry is **removed** from the DLQ, which acknowledges the claim; the chain stays reconstructable through the audit log via `replayOf`.
+On failure the entry stays and its claim is **released**, so a later attempt can take it straight away.
+If the replica dies mid-replay, the claim simply lapses when the lease ends.
+
+```yaml
+notification:
+  dead-letter:
+    enabled: true
+    replay-lease: PT5M     # longer than your slowest send, including retries
+```
+
+The JDBC store enforces claims across replicas with `FOR UPDATE SKIP LOCKED`.
+The in-memory and Redis stores keep the claim methods' lock-free defaults, so with them two concurrent replays of the same entry can still both send it.
 
 Successful replay (`200 OK`):
 
@@ -676,9 +788,29 @@ Successful replay (`200 OK`):
 }
 ```
 
-Status codes: `404` when the request id isn't in the DLQ; `502` when
-the replay reaches a provider but fails again (entry kept); `503` when
-the DLQ is disabled.
+Status codes: `404` when the request id isn't in the DLQ; `409` with `"status": "CLAIMED"` when another replay currently holds the entry (nothing is sent); `502` when the replay reaches a provider but fails again (entry kept and released); `500` when the send throws before reaching a provider (entry kept and released); `503` when the DLQ is disabled.
+
+**Bulk replay** (`POST /api/v1/admin/dead-letter/replay-batch?tenantId=acme&limit=100`, DD-19) claims up to `limit` entries of the tenant in one call (capped at 1000), so batches running on several replicas at once work on disjoint entries.
+Each claimed entry is replayed, then removed on success or released on failure.
+Entries of the tenant that another replay holds are skipped and listed with `"status": "CLAIMED"`; they count under `claimed`, not under `stillDeadLettered`.
+`?dryRun=true` previews from the DLQ snapshot without claiming, sending or removing anything.
+
+```json
+{
+  "mode": "live",
+  "tenantId": "acme",
+  "requested": 3,
+  "replayed": 1,
+  "stillDeadLettered": 1,
+  "claimed": 1,
+  "entries": [
+    {"originalRequestId": "req-1", "newRequestId": "req-9", "status": "SENT", "removedFromDlq": true},
+    {"originalRequestId": "req-2", "newRequestId": "req-10", "status": "FAILED", "errorCode": "PROVIDER_TIMEOUT", "errorMessage": "smtp 421", "removedFromDlq": false},
+    {"originalRequestId": "req-3", "status": "CLAIMED", "removedFromDlq": false}
+  ],
+  "message": "Bulk replay completed. Successful entries removed from DLQ; failed entries released and kept for inspection; entries claimed by another replay skipped."
+}
+```
 
 The `replayOf` field on `NotificationRequest` is **server-set only** —
 clients submitting it via `POST /api/v1/notifications` get a WARN log
@@ -909,12 +1041,33 @@ registry is enabled.
 
 ## Adding Custom Providers
 
+### How providers are resolved
+
+For every provider configured under `notification.tenants.<tenant>.channels.<channel>.providers.<name>`, `ProviderRegistry` resolves an instance at startup, calls `configure(properties)` and `init()`, and caches it for that tenant:
+
+1. `beanName` set: the Spring bean with that name.
+2. Otherwise `fqcn` set: that class, instantiated reflectively (it does not need to be a Spring bean).
+3. Otherwise the bean named `<name><Channel>Provider`, for example `smtpEmailProvider`, `acsEmailProvider` or `twilioSmsProvider`.
+
+Built-in providers come from their module's auto-configuration, which registers that conventional bean as a **prototype**, so every tenant gets its own configured instance.
+A bean you declare under the same name replaces the built-in one.
+Your own provider can follow the same convention: a prototype bean named `postmarkEmailProvider` is picked up for the provider name `postmark` with no `beanName`.
+Declare provider beans as prototypes; a singleton would be shared, and reconfigured, by every tenant that uses it.
+
+A provider that is configured but cannot be resolved fails startup.
+For a built-in whose module is missing, the message names the artifact to add:
+
+```text
+Built-in provider 'ses' for channel 'email' is not on the classpath. Add the Maven dependency com.github.ifrugal:email-provider-ses (same version as notification-core), or set 'beanName' or 'fqcn' under notification.tenants.default.channels.email.providers.ses.
+```
+
 ### Option 1: Spring Bean
 
-Create a Spring bean implementing the provider interface:
+Create a prototype Spring bean implementing the provider interface:
 
 ```java
 @Component("myCustomEmailProvider")
+@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 public class MyCustomEmailProvider implements EmailProvider {
 
     @Override
@@ -944,6 +1097,8 @@ providers:
     properties:
       api-key: ${MY_API_KEY}
 ```
+
+The starter does not component-scan, so the bean has to be in a package your application scans (or declared with `@Bean`).
 
 ### Option 2: FQCN (Reflection)
 
@@ -1056,38 +1211,36 @@ Audit records passed to the SPI include:
 
 ## Distributed deployment (Redis backends)
 
-The default `notification-core` implementations of idempotency,
-rate-limit, and DLQ are in-memory — correct for single-pod deployments
-but wrong for multi-pod ones (each pod gets its own state). For
-multi-pod / horizontally-scaled setups, pull the
-`notification-redis` module which provides Redis-backed
-implementations of all three SPIs. See
-[DD-14](docs/design-decisions/14-distributed-redis-backends.md).
+The default `notification-core` implementations of idempotency, rate limiting, the DLQ and delivery events are in-memory: correct for single-pod deployments but wrong for multi-pod ones, where each pod gets its own state.
+For multi-pod setups, pull the `notification-redis` module, which provides Redis-backed implementations of all four SPIs, or the [JDBC store](#jdbc-store) for everything except rate limiting.
+See [DD-14](docs/design-decisions/14-distributed-redis-backends.md).
 
 ```xml
 <dependency>
   <groupId>com.github.ifrugal</groupId>
   <artifactId>notification-redis</artifactId>
-  <version>${notification-service.version}</version>
+  <version>1.1.0</version>
 </dependency>
 ```
 
-Each backend is independently toggleable so operators can migrate one
-at a time:
+Select Redis for every enabled feature with `notification.store.type=redis` (see [Store selection](#store-selection)).
+The feature flags stay the master switch: Redis backs only the features that are enabled.
 
 ```yaml
 notification:
+  store:
+    type: redis
+  rate-limit:
+    enabled: true
+  dead-letter:
+    enabled: true
+  delivery-events:
+    enabled: true
   redis:
     key-prefix: "notification-svc"     # avoids collisions on shared Redis
-    idempotency:
-      enabled: true                    # closes DD-10's foreseen-Redis SPI
-    rate-limit:
-      enabled: true                    # closes DD-12's foreseen-Redis SPI
     dead-letter:
-      enabled: true                    # closes DD-13's foreseen-Redis SPI
       max-entries: 1000
     delivery-events:
-      enabled: true                    # DD-17 multi-pod store
       max-entries: 10000
 
 # Connection details — Spring Data Redis honours these
@@ -1099,10 +1252,12 @@ spring:
       password: ${REDIS_PASSWORD:}
 ```
 
-The Redis-backed beans use `@ConditionalOnMissingBean` so a future
-custom impl (Hazelcast, DynamoDB, etc.) wins automatically. They use
-`@ConditionalOnClass(LettuceConnectionFactory.class)` so deployments
-that don't pull `notification-redis` aren't affected.
+To migrate one feature at a time, leave `store.type` alone and set the per-feature override instead, for example `notification.redis.idempotency.enabled: true`.
+An explicit `false` keeps that feature in memory even with `store.type=redis`.
+Setting a per-feature Redis flag does not switch the feature itself on.
+
+The Redis-backed beans use `@ConditionalOnMissingBean`, so a custom implementation (Hazelcast, DynamoDB, etc.) wins automatically.
+`NotificationRedisAutoConfiguration` also needs Spring Data Redis and `bucket4j-redis` (Lettuce) on the classpath, which `notification-redis` brings in.
 
 **Key namespacing.** All keys are prefixed with
 `notification.redis.key-prefix` (default `notification-svc`). Multiple
@@ -1116,6 +1271,67 @@ services sharing one Redis instance should set distinct prefixes.
 
 Operators can read DLQ entries with `redis-cli LRANGE
 <prefix>:dlq 0 -1` — entries are JSON, human-readable.
+
+---
+
+## JDBC store
+
+`notification-store-jdbc` provides PostgreSQL-backed `IdempotencyStore`, `DeadLetterStore` and `DeliveryEventStore` implementations, written as plain SQL over Spring's `JdbcClient`.
+There is no ORM and no migration tool, and the library never runs DDL.
+Full details are in the [module README](notification-store-jdbc/README.md).
+
+```xml
+<dependency>
+  <groupId>com.github.ifrugal</groupId>
+  <artifactId>notification-store-jdbc</artifactId>
+  <version>1.1.0</version>
+</dependency>
+<dependency>
+  <groupId>org.postgresql</groupId>
+  <artifactId>postgresql</artifactId>
+</dependency>
+```
+
+```yaml
+notification:
+  store:
+    type: jdbc
+  dead-letter:
+    enabled: true
+  delivery-events:
+    enabled: true
+```
+
+The host application supplies the `DataSource` and the JDBC driver.
+
+| Property | Default | Meaning |
+|---|---|---|
+| `notification.store.jdbc.schema` | none | Schema that holds the tables. Unset uses the connection's search path. |
+| `notification.store.jdbc.table-prefix` | `notification_` | Prefix for every table, constraint and index name. |
+| `notification.store.jdbc.datasource-bean-name` | none | DataSource bean to use. Unset picks the single, or `@Primary`, DataSource. |
+| `notification.store.jdbc.dialect` | `POSTGRESQL` | SQL dialect. Only PostgreSQL is implemented. |
+| `notification.store.jdbc.dead-letter-retention` | `P30D` | Lifetime of a dead-letter row. |
+| `notification.store.jdbc.delivery-event-retention` | `P30D` | Lifetime of a delivery-event row. |
+| `notification.store.jdbc.purge.enabled` | `false` | Run the module's own scheduled purge of expired rows. |
+| `notification.store.jdbc.purge.interval` | `PT1H` | Delay between purge runs. |
+| `notification.store.jdbc.purge.batch-size` | `1000` | Maximum rows deleted per purge statement. |
+
+- **Schema:** the host runs the migrations.
+  The reference DDL (PostgreSQL 12+) ships in the jar as `db/postgresql/notification-store.sql`; `JdbcStoreSchema.postgresql(new JdbcStoreTables(schema, prefix)).ddl()` renders it for another schema or prefix.
+- **Purge:** expired rows are invisible to every read at once; purging only reclaims space.
+  Enable the module's daemon purge with `notification.store.jdbc.purge.enabled=true`, or call `JdbcStorePurger.purgeAll()` yourself.
+  Purges on several replicas split the work through `SKIP LOCKED`.
+- **Row-level security:** every table has a nullable `tenant_id` column, the application role needs only `SELECT, INSERT, UPDATE, DELETE`, and `JdbcStoreRlsIT` runs every store as a non-owner role under a tenant-isolation policy.
+- **Dead-letter replay:** claims are leased with `FOR UPDATE SKIP LOCKED`, so replicas replaying the same tenant never send one entry twice.
+- **No rate limiter:** rate limiting stays on the in-memory Bucket4j limiter, or on Redis with `notification.redis.rate-limit.enabled=true`.
+
+---
+
+## Native image
+
+The core registers GraalVM reflection hints for the built-in provider classes and, at AOT build time, for every provider class your configuration names with `fqcn`.
+`notification-store-jdbc` registers hints for the JSON it stores.
+Native image support is not yet claimed or tested in CI; verify a native build of your own application before relying on it.
 
 ---
 

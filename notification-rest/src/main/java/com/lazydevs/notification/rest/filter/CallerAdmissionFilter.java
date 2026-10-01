@@ -10,6 +10,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import lazydevs.services.basic.filter.RequestContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -60,7 +61,7 @@ public class CallerAdmissionFilter extends OncePerRequestFilter {
             return;
         }
 
-        String callerId = (String) RequestContext.current().get(TenantFilter.CALLER_ID_ATTRIBUTE);
+        String callerId = resolveCallerId(request);
         Decision decision = registry.admit(callerId);
 
         if (decision == Decision.REJECT) {
@@ -70,6 +71,21 @@ public class CallerAdmissionFilter extends OncePerRequestFilter {
         // ACCEPT and ACCEPT_WITH_WARNING both pass — the registry already
         // logged for the warning case.
         chain.doFilter(request, response);
+    }
+
+    /**
+     * The caller id {@link TenantFilter} stashed, else the {@code X-Service-Id}
+     * header itself via {@link HttpServletRequest#getHeader(String)}, which
+     * matches header names case-insensitively. The fallback covers chains
+     * where this filter does not run inside {@link TenantFilter}.
+     */
+    private static String resolveCallerId(HttpServletRequest request) {
+        Object stashed = RequestContext.current().get(TenantFilter.CALLER_ID_ATTRIBUTE);
+        if (stashed instanceof String callerId) {
+            return callerId;
+        }
+        String header = request.getHeader(TenantFilter.CALLER_HEADER);
+        return StringUtils.hasText(header) ? header : null;
     }
 
     private void writeForbidden(HttpServletResponse response, String callerId) throws IOException {
