@@ -1,0 +1,80 @@
+{
+  "groups": [
+    {
+      "name": "notification.store.jdbc",
+      "type": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties",
+      "description": "JDBC-backed idempotency, dead-letter and delivery-event stores. Active when notification.store.type=jdbc."
+    },
+    {
+      "name": "notification.store.jdbc.purge",
+      "type": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties$Purge",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties",
+      "sourceMethod": "getPurge()",
+      "description": "Background purge of expired rows."
+    }
+  ],
+  "properties": [
+    {
+      "name": "notification.store.jdbc.schema",
+      "type": "java.lang.String",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties",
+      "description": "Database schema that holds the tables. Unset or blank uses the connection's search path. Must be a plain SQL identifier."
+    },
+    {
+      "name": "notification.store.jdbc.table-prefix",
+      "type": "java.lang.String",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties",
+      "description": "Prefix prepended to every table, constraint and index name. Letters, digits and '_' only.",
+      "defaultValue": "notification_"
+    },
+    {
+      "name": "notification.store.jdbc.datasource-bean-name",
+      "type": "java.lang.String",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties",
+      "description": "Name of the DataSource bean the stores use. Unset or blank selects the application's single, or @Primary, DataSource."
+    },
+    {
+      "name": "notification.store.jdbc.dialect",
+      "type": "com.lazydevs.notification.store.jdbc.JdbcStoreDialect",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties",
+      "description": "SQL dialect. Only POSTGRESQL is implemented.",
+      "defaultValue": "postgresql"
+    },
+    {
+      "name": "notification.store.jdbc.dead-letter-retention",
+      "type": "java.time.Duration",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties",
+      "description": "How long a dead-letter row is kept. Expired rows are hidden from reads and deleted by the purge.",
+      "defaultValue": "30d"
+    },
+    {
+      "name": "notification.store.jdbc.delivery-event-retention",
+      "type": "java.time.Duration",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties",
+      "description": "How long a delivery-event row is kept. Expired rows are hidden from reads and deleted by the purge.",
+      "defaultValue": "30d"
+    },
+    {
+      "name": "notification.store.jdbc.purge.enabled",
+      "type": "java.lang.Boolean",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties$Purge",
+      "description": "Run a module-owned scheduled purge of expired rows. Does not require @EnableScheduling.",
+      "defaultValue": false
+    },
+    {
+      "name": "notification.store.jdbc.purge.interval",
+      "type": "java.time.Duration",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties$Purge",
+      "description": "Delay between scheduled purge runs. The first run happens one interval after startup.",
+      "defaultValue": "1h"
+    },
+    {
+      "name": "notification.store.jdbc.purge.batch-size",
+      "type": "java.lang.Integer",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties$Purge",
+      "description": "Maximum rows deleted per purge statement.",
+      "defaultValue": 1000
+    }
+  ]
+}
