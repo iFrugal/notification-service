@@ -43,12 +43,6 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- Optional: Audit support -->
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>notification-audit</artifactId>
-            <optional>true</optional>
-        </dependency>
 
         <!-- Spring Boot Autoconfigure -->
         <dependency>
