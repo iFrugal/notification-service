@@ -30,10 +30,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(classes = TestRedisApp.class)
 @TestPropertySource(properties = {
-        "notification.redis.idempotency.enabled=true",
-        "notification.redis.rate-limit.enabled=true",
-        "notification.redis.dead-letter.enabled=true",
-        "notification.redis.delivery-events.enabled=true",
+        // One switch selects Redis for every enabled feature; the
+        // per-feature notification.redis.*.enabled toggles stay unset.
+        "notification.store.type=redis",
+        "notification.idempotency.enabled=true",
+        "notification.rate-limit.enabled=true",
+        "notification.dead-letter.enabled=true",
+        "notification.delivery-events.enabled=true",
         "notification.redis.key-prefix=test-wiring",
         // Closed port — all three beans should register without
         // attempting to connect. Lazy connection keeps context refresh

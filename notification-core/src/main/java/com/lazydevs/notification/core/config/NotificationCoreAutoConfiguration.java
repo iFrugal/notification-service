@@ -8,10 +8,12 @@ import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.metrics.NotificationMetrics;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.provider.ProviderResolver;
+import com.lazydevs.notification.core.provider.ProviderRuntimeHints;
 import com.lazydevs.notification.core.retry.RetryExecutor;
 import com.lazydevs.notification.core.service.DefaultNotificationService;
 import com.lazydevs.notification.core.service.NoOpAuditService;
 import com.lazydevs.notification.core.service.NotificationAuditService;
+import com.lazydevs.notification.core.store.StoreTypeValidator;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -19,13 +21,16 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.core.io.ResourceLoader;
 
 import java.util.Optional;
 
 /**
  * Registers the core notification beans: the send pipeline, provider
- * registry, template engine, caller registry and the no-op audit default.
+ * registry, template engine, caller registry and the no-op audit default,
+ * plus the {@link StoreTypeValidator} that fails startup when the selected
+ * store family's module is missing.
  *
  * <p>Listed in {@code META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports},
  * so both the starter and the standalone server get these beans without
@@ -34,7 +39,17 @@ import java.util.Optional;
  */
 @AutoConfiguration
 @EnableConfigurationProperties(NotificationProperties.class)
+@ImportRuntimeHints(ProviderRuntimeHints.class)
 public class NotificationCoreAutoConfiguration {
+
+    /**
+     * Static so the validator, a {@code BeanFactoryPostProcessor}, does not
+     * force this configuration class to be instantiated early.
+     */
+    @Bean
+    public static StoreTypeValidator storeTypeValidator() {
+        return new StoreTypeValidator();
+    }
 
     @Bean
     public CallerRegistry callerRegistry(NotificationProperties properties) {

@@ -43,48 +43,13 @@ public class ProviderRegistry {
     private final List<NotificationProvider> allProviders = new ArrayList<>();
 
     /**
-     * Built-in provider classes (channel:name -> class)
+     * Built-in providers need no registration here: each provider module's
+     * auto-configuration registers a prototype bean under the conventional
+     * name, and {@link ProviderResolver} finds it.
      */
-    private final Map<String, Class<? extends NotificationProvider>> builtInProviders = new HashMap<>();
-
     public ProviderRegistry(NotificationProperties properties, ProviderResolver resolver) {
         this.properties = properties;
         this.resolver = resolver;
-        registerBuiltInProviders();
-    }
-
-    /**
-     * Register built-in provider mappings.
-     * These are providers that come with the notification-service.
-     */
-    private void registerBuiltInProviders() {
-        // Email providers
-        registerBuiltIn(Channel.EMAIL, "smtp", "com.lazydevs.notification.channel.email.smtp.SmtpEmailProvider");
-        registerBuiltIn(Channel.EMAIL, "ses", "com.lazydevs.notification.channel.email.ses.SesEmailProvider");
-
-        // SMS providers
-        registerBuiltIn(Channel.SMS, "twilio", "com.lazydevs.notification.channel.sms.twilio.TwilioSmsProvider");
-        registerBuiltIn(Channel.SMS, "sns", "com.lazydevs.notification.channel.sms.sns.SnsSmsProvider");
-
-        // WhatsApp providers
-        registerBuiltIn(Channel.WHATSAPP, "twilio", "com.lazydevs.notification.channel.whatsapp.twilio.TwilioWhatsAppProvider");
-        registerBuiltIn(Channel.WHATSAPP, "meta", "com.lazydevs.notification.channel.whatsapp.meta.MetaWhatsAppProvider");
-
-        // Push providers
-        registerBuiltIn(Channel.PUSH, "fcm", "com.lazydevs.notification.channel.push.fcm.FcmPushProvider");
-        registerBuiltIn(Channel.PUSH, "apns", "com.lazydevs.notification.channel.push.apns.ApnsPushProvider");
-    }
-
-    @SuppressWarnings("unchecked")
-    private void registerBuiltIn(Channel channel, String name, String className) {
-        try {
-            Class<?> clazz = Class.forName(className);
-            builtInProviders.put(channel.name() + ":" + name, (Class<? extends NotificationProvider>) clazz);
-            log.debug("Registered built-in provider: {}:{} -> {}", channel, name, className);
-        } catch (ClassNotFoundException _) {
-            // Provider module not on classpath - this is OK
-            log.debug("Built-in provider not available (module not on classpath): {}:{}", channel, name);
-        }
     }
 
     /**
@@ -178,7 +143,7 @@ public class ProviderRegistry {
                                                        String providerName, ProviderConfig config) {
         Class<? extends NotificationProvider> providerInterface = getProviderInterface(channel);
         NotificationProvider provider = resolver.resolve(
-                providerName, channel, config, providerInterface, builtInProviders);
+                tenantId, providerName, channel, config, providerInterface);
 
         // Configure with merged properties (channel config + provider config)
         Map<String, Object> mergedConfig = mergeConfig(tenantId, channel, config);

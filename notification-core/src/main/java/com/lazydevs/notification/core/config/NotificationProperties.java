@@ -1,5 +1,6 @@
 package com.lazydevs.notification.core.config;
 
+import com.lazydevs.notification.core.store.StoreType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Max;
@@ -98,6 +99,13 @@ public class NotificationProperties {
     private RedisProperties redis = new RedisProperties();
 
     /**
+     * Store family selection for the stateful features (idempotency,
+     * rate limiting, dead letters, delivery events).
+     */
+    @Valid
+    private StoreProperties store = new StoreProperties();
+
+    /**
      * Webhook ingestion configuration (see DD-16). Off by default —
      * turning it on activates {@code POST /webhooks/{provider}/...}
      * handlers for provider-side delivery callbacks.
@@ -175,10 +183,29 @@ public class NotificationProperties {
         private long maxEntries = 100_000L;
 
         /**
-         * Backing store. Currently only {@code caffeine} is implemented;
-         * a future {@code redis} option is foreseen by DD-10.
+         * Backing store. Deprecated: select the store family with
+         * {@code notification.store.type} (or
+         * {@code notification.redis.idempotency.enabled}) instead; this value
+         * is only logged by the Caffeine store.
          */
+        @Deprecated(since = "1.1.0")
         private String store = "caffeine";
+    }
+
+    /**
+     * Store family selection. See {@link com.lazydevs.notification.core.store.StoreFeature}
+     * for how the family of each feature resolves.
+     */
+    @Data
+    public static class StoreProperties {
+        /**
+         * Store family backing every enabled stateful feature: {@code memory}
+         * (in-process, notification-core), {@code redis} (notification-redis)
+         * or {@code jdbc} (notification-store-jdbc). A per-feature
+         * {@code notification.redis.<feature>.enabled} toggle, when set,
+         * overrides this for that feature.
+         */
+        private StoreType type = StoreType.MEMORY;
     }
 
     /**
@@ -585,9 +612,10 @@ public class NotificationProperties {
     }
 
     /**
-     * Redis-backed distributed-state config (DD-14). All flags off by
-     * default — the in-memory implementations from notification-core
-     * keep working unchanged.
+     * Redis-backed distributed-state config (DD-14). The per-feature
+     * toggles are unset by default, so {@code notification.store.type}
+     * decides which family backs each feature; set a toggle only to
+     * override that choice for one feature.
      *
      * <p>Connection details default to {@code localhost:6379} so a
      * developer Docker Redis just works; production deployments
@@ -596,14 +624,6 @@ public class NotificationProperties {
      */
     @Data
     public static class RedisProperties {
-        /**
-         * Master switch. When {@code true}, all per-feature flags
-         * default to true (operators can still flip individual ones
-         * back off). When {@code false}, only explicitly-enabled
-         * features activate.
-         */
-        private boolean enabled = false;
-
         /**
          * Namespace prefix for every key the module writes. Lets
          * multiple services share a Redis instance without collisions.
@@ -634,12 +654,22 @@ public class NotificationProperties {
 
         @Data
         public static class FeatureToggle {
-            private boolean enabled = false;
+            /**
+             * Per-feature store override: {@code true} backs this feature
+             * with Redis, {@code false} keeps it in memory. Unset
+             * ({@code null}, the default) follows {@code notification.store.type}.
+             */
+            private Boolean enabled;
         }
 
         @Data
         public static class DeadLetterToggle {
-            private boolean enabled = false;
+            /**
+             * Per-feature store override: {@code true} backs dead letters
+             * with Redis, {@code false} keeps them in memory. Unset
+             * ({@code null}, the default) follows {@code notification.store.type}.
+             */
+            private Boolean enabled;
 
             /**
              * Maximum entries retained in the Redis LIST. Older
@@ -653,7 +683,12 @@ public class NotificationProperties {
 
         @Data
         public static class DeliveryEventToggle {
-            private boolean enabled = false;
+            /**
+             * Per-feature store override: {@code true} backs delivery events
+             * with Redis, {@code false} keeps them in memory. Unset
+             * ({@code null}, the default) follows {@code notification.store.type}.
+             */
+            private Boolean enabled;
 
             /**
              * Maximum events retained in the Redis LIST. Higher

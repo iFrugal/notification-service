@@ -40,6 +40,16 @@
             <artifactId>spring-boot-autoconfigure</artifactId>
         </dependency>
 
+        <!-- Generates META-INF/spring-configuration-metadata.json for
+             NotificationProperties (IDE completion, deprecations). The
+             processor itself runs from the root pom's annotationProcessorPaths;
+             declared here, optional, so the dependency is explicit. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- @PostConstruct / @PreDestroy used by ProviderRegistry. Spring
              Framework 7 / Spring Boot 4 dropped this as a transitive of
              spring-context — has to be declared explicitly now. Version

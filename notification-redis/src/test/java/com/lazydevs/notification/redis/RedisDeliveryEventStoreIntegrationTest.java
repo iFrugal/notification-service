@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(classes = TestRedisApp.class)
 @TestPropertySource(properties = {
+        "notification.delivery-events.enabled=true",
         "notification.redis.delivery-events.enabled=true",
         "notification.redis.delivery-events.max-entries=3",
         "notification.redis.key-prefix=test-delivery",

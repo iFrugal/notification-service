@@ -30,6 +30,17 @@ import java.util.Optional;
  * configuration, so {@link ConditionalOnMissingBean} here reliably lets an
  * application-supplied bean (for example a Redis-backed store) win.
  *
+ * <p>The in-memory stores deliberately carry no
+ * {@code @ConditionalOnStoreType(feature, MEMORY)}: their feature flag and
+ * {@link ConditionalOnMissingBean} are enough.
+ * The Redis and JDBC store auto-configurations are ordered before this
+ * class, so when a feature resolves to one of those families its store is
+ * already registered and the in-memory default backs off.
+ * The only way a non-memory family could leave the in-memory default in
+ * place is its module being absent, and
+ * {@link com.lazydevs.notification.core.store.StoreTypeValidator} fails
+ * startup in exactly that case, so the gap is closed.
+ *
  * <p>Listed in {@code META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports},
  * which both the starter and the standalone server rely on.
  * Bean names match the class-derived names the scanned components used to have.
