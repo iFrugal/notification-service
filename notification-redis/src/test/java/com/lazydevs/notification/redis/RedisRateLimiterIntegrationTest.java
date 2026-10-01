@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(classes = TestRedisApp.class)
 @TestPropertySource(properties = {
+        "notification.rate-limit.enabled=true",
         "notification.redis.rate-limit.enabled=true",
         "notification.redis.key-prefix=test-rl",
         // Tight default so test exhausts buckets quickly.
