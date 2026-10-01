@@ -3,19 +3,17 @@ package com.lazydevs.notification.rest.webhook;
 import com.lazydevs.notification.api.delivery.DeliveryEvent;
 import com.lazydevs.notification.api.delivery.DeliveryEventListener;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 /**
  * Default {@link DeliveryEventListener} (DD-16). Logs at INFO. Useful
  * as a "wire up the webhook surface, prove the signature path works,
  * then plug in a real listener" baseline.
  *
- * <p>Registered only when {@code notification.webhooks.enabled=true}
- * <strong>and</strong> no other listener is on the classpath. Operators
- * who provide their own listener bean (their own
- * {@link DeliveryEventListener} implementation) take precedence.
+ * <p>Registered by {@code NotificationRestAutoConfiguration} only when
+ * {@code notification.webhooks.enabled=true} <strong>and</strong> no other
+ * {@link DeliveryEventListener} bean exists. Operators who provide their
+ * own listener bean take precedence, and so does any
+ * {@code DeliveryEventStore}, which is itself a listener.
  *
  * <p>Note: only one listener is registered by default. If multiple
  * listeners are required, register them as a {@code List<DeliveryEventListener>}
@@ -23,9 +21,6 @@ import org.springframework.stereotype.Component;
  * collection.
  */
 @Slf4j
-@Component
-@ConditionalOnProperty(prefix = "notification.webhooks", name = "enabled", havingValue = "true")
-@ConditionalOnMissingBean(DeliveryEventListener.class)
 public class LoggingDeliveryEventListener implements DeliveryEventListener {
 
     public LoggingDeliveryEventListener() {

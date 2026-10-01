@@ -63,6 +63,13 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Optional in notification-rest; the REST auto-configuration
+             tests need it to prove OpenApiConfig registers. -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
 </project>

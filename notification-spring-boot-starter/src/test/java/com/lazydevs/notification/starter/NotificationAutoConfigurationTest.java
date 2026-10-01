@@ -22,6 +22,7 @@ import com.lazydevs.notification.core.ratelimit.Bucket4jRateLimiter;
 import com.lazydevs.notification.core.retry.RetryExecutor;
 import com.lazydevs.notification.kafka.autoconfigure.NotificationKafkaAutoConfiguration;
 import com.lazydevs.notification.redis.autoconfigure.NotificationRedisAutoConfiguration;
+import com.lazydevs.notification.rest.autoconfigure.NotificationRestAutoConfiguration;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -70,7 +71,8 @@ class NotificationAutoConfigurationTest {
                 NotificationMetricsAutoConfiguration.class.getName(),
                 NotificationHealthAutoConfiguration.class.getName(),
                 NotificationRedisAutoConfiguration.class.getName(),
-                NotificationKafkaAutoConfiguration.class.getName());
+                NotificationKafkaAutoConfiguration.class.getName(),
+                NotificationRestAutoConfiguration.class.getName());
     }
 
     @Test

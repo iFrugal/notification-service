@@ -3,6 +3,7 @@ package com.lazydevs.notification.rest.controller;
 import com.lazydevs.notification.api.exception.IdempotencyInProgressException;
 import com.lazydevs.notification.api.exception.RateLimitExceededException;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
+import com.lazydevs.notification.rest.webhook.WebhookController;
 import lazydevs.services.basic.handler.RESTExceptionHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -28,9 +29,14 @@ import java.util.Map;
  * special case is {@link IdempotencyInProgressException} — DD-10 mandates a
  * specific 409 body shape ({@code {notificationId, status}}) that doesn't
  * match the inherited generic-error envelope, so we override it here.
+ *
+ * <p>Registered by {@code NotificationRestAutoConfiguration} and limited to
+ * the notification controllers, so it never handles exceptions thrown by
+ * the host application's own controllers.
  */
 @Slf4j
-@RestControllerAdvice
+@RestControllerAdvice(assignableTypes = {
+        NotificationController.class, AdminController.class, WebhookController.class})
 public class GlobalExceptionHandler extends RESTExceptionHandler {
 
     /**

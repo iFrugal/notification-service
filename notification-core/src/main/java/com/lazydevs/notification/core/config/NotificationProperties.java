@@ -129,7 +129,16 @@ public class NotificationProperties {
 
     @Data
     public static class RestProperties {
-        private boolean enabled = true;
+        /**
+         * REST API (controllers, filters, OpenAPI metadata, webhooks) is opt-in.
+         * Set to {@code true} to expose it; the standalone server does so in
+         * its {@code application.yml}.
+         */
+        private boolean enabled = false;
+        /**
+         * Path prefix for every notification endpoint. The tenant and
+         * caller-admission filters are restricted to {@code <base-path>/*}.
+         */
         private String basePath = "/api/v1";
     }
 
