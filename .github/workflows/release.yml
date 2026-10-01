@@ -1,7 +1,8 @@
 name: Release to Maven Central
 
-# Intentionally NOT triggered on every push to main. Releases are manual
-# (via workflow_dispatch) or tag-driven (pushing a v-prefixed tag).
+# Intentionally NOT triggered on every push to main. Releases are triggered
+# by workflow_dispatch only. The Central deployment auto-publishes after
+# validation; the workflow does not wait for publication.
 # This avoids the all-about-persistence pattern where every merge to master
 # starts a release, which is surprising and hard to roll back.
 on:
@@ -75,6 +76,7 @@ jobs:
         run: ./mvnw -B -ntp -U clean verify -Dgpg.skip=true
 
       - name: Release — prepare & perform
+        id: release
         env:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           CENTRAL_TOKEN:    ${{ secrets.CENTRAL_TOKEN }}
@@ -99,15 +101,24 @@ jobs:
           ./mvnw -B -ntp \
             -s "$HOME/.m2/settings.xml" \
             -DscmCommentPrefix="[release] [skip ci] " \
-            -Darguments="-DskipTests=true -Dcentral.autoPublish=false -Dcentral.waitUntil=uploaded" \
+            -Darguments="-DskipTests=true" \
             $DRY_RUN_FLAG \
             "${VERSION_ARGS[@]}" \
             release:clean release:prepare
 
           if [[ "${{ inputs.dry-run }}" != "true" ]]; then
+            # release:prepare writes release.properties in the project root with the
+            # tag it created. Capture it now, because release:perform removes the file.
+            TAG="$(grep '^scm.tag=' release.properties | cut -d= -f2-)"
+            if [[ -z "${TAG}" ]]; then
+              echo "::error::Could not read scm.tag from release.properties after release:prepare."
+              exit 1
+            fi
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
             ./mvnw -B -ntp \
               -s "$HOME/.m2/settings.xml" \
-              -Darguments="-DskipTests=true -Dcentral.autoPublish=false -Dcentral.waitUntil=uploaded" \
+              -Darguments="-DskipTests=true" \
               release:perform
           fi
 
@@ -115,6 +126,8 @@ jobs:
         if: ${{ inputs.dry-run != true }}
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: ${{ steps.release.outputs.tag }}
+          draft: true
           generate_release_notes: true
           fail_on_unmatched_files: false

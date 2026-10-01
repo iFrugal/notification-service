@@ -381,6 +381,21 @@
                     </execution>
                 </executions>
             </plugin>
+            <!--
+                The parent waits for "published", which can exceed the plugin's 30-minute
+                poll limit and fails the release after the upload already succeeded.
+                "validated" fails fast on Central validation errors and lets publication
+                finish asynchronously. publishingServerId is inherited from the parent.
+            -->
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>${central-publishing-maven-plugin.version}</version>
+                <configuration>
+                    <autoPublish>true</autoPublish>
+                    <waitUntil>validated</waitUntil>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 
