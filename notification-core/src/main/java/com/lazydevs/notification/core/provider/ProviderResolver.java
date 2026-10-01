@@ -13,12 +13,16 @@ import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.context.ApplicationContext;
 import org.springframework.util.StringUtils;
 
-import java.util.Map;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Resolves notification providers from configuration.
- * Uses beanName for Spring beans, fqcn for reflection-based instantiation.
+ * Uses beanName for Spring beans, fqcn for reflection-based instantiation,
+ * and otherwise the bean a built-in provider module registers under the
+ * conventional name (see {@link BuiltInProviders#beanName(Channel, String)}).
  */
 @Slf4j
 public class ProviderResolver {
@@ -35,21 +39,25 @@ public class ProviderResolver {
      * Resolution order:
      * 1. beanName specified -> Spring bean lookup
      * 2. fqcn specified -> Class instantiation via reflection
-     * 3. Built-in provider by name -> Look up in builtInProviders map
+     * 3. Otherwise the bean registered under the conventional built-in name,
+     *    for example {@code smtpEmailProvider}; built-in modules register it
+     *    as a prototype, so each call returns a fresh instance
      *
-     * @param providerName     the provider name from config
-     * @param channel          the channel
-     * @param config           the provider configuration
+     * @param tenantId          the tenant whose configuration names the provider, used in error messages
+     * @param providerName      the provider name from config
+     * @param channel           the channel
+     * @param config            the provider configuration
      * @param providerInterface the expected interface class
-     * @param builtInProviders map of built-in provider classes
      * @return the resolved provider instance (not yet configured/initialized)
+     * @throws ProviderNotFoundException when nothing provides the name, with a message
+     *                                   naming the missing Maven artifact for a known built-in
      */
     public <T extends NotificationProvider> T resolve(
+            String tenantId,
             String providerName,
             Channel channel,
             ProviderConfig config,
-            Class<T> providerInterface,
-            Map<String, Class<? extends NotificationProvider>> builtInProviders) {
+            Class<T> providerInterface) {
 
         // 1. Try Spring bean lookup
         if (StringUtils.hasText(config.getBeanName())) {
@@ -63,20 +71,34 @@ public class ProviderResolver {
             return resolveByFqcn(config.getFqcn(), providerInterface, providerName, channel);
         }
 
-        // 3. Try built-in provider lookup
-        String builtInKey = channel.name() + ":" + providerName;
-        Class<? extends NotificationProvider> builtInClass = builtInProviders.get(builtInKey);
-        if (builtInClass != null) {
-            log.debug("Resolving provider '{}' as built-in: {}", providerName, builtInClass.getName());
-            return instantiateClass(builtInClass, providerInterface, providerName, channel);
+        // 3. Built-in provider, registered by its module under the conventional bean name
+        String conventionalBeanName = BuiltInProviders.beanName(channel, providerName);
+        if (applicationContext.containsBean(conventionalBeanName)) {
+            log.debug("Resolving provider '{}' via built-in bean: {}", providerName, conventionalBeanName);
+            return resolveByBeanName(conventionalBeanName, providerInterface, providerName, channel);
         }
 
-        // 4. Not found
+        // 4. Not found: explain why
+        String channelName = channel.name().toLowerCase(Locale.ROOT);
+        Optional<BuiltInProviders.Entry> builtIn = BuiltInProviders.find(channel, providerName);
+        if (builtIn.isPresent() && builtIn.get().implemented()) {
+            throw new ProviderNotFoundException(String.format(
+                    "Built-in provider '%s' for channel '%s' is not on the classpath. "
+                            + "Add the Maven dependency com.github.ifrugal:%s (same version as notification-core), "
+                            + "or set 'beanName' or 'fqcn' under notification.tenants.%s.channels.%s.providers.%s.",
+                    providerName, channelName, builtIn.get().artifactId(), tenantId, channelName, providerName));
+        }
+        if (builtIn.isPresent()) {
+            throw new ProviderNotFoundException(String.format(
+                    "Built-in provider '%s' for channel '%s' is not implemented in this release. "
+                            + "Set 'beanName' or 'fqcn' to a custom implementation.",
+                    providerName, channelName));
+        }
         throw new ProviderNotFoundException(
                 String.format("Provider '%s' not found for channel '%s'. " +
                         "For external providers, specify 'beanName' (for Spring beans) or 'fqcn' (for class instantiation). " +
                         "Available built-in providers for %s: %s",
-                        providerName, channel, channel, getAvailableBuiltIns(channel, builtInProviders)));
+                        providerName, channel, channel, getAvailableBuiltIns(channel)));
     }
 
     private <T extends NotificationProvider> T resolveByBeanName(
@@ -152,17 +174,11 @@ public class ProviderResolver {
         }
     }
 
-    private String getAvailableBuiltIns(Channel channel, Map<String, Class<? extends NotificationProvider>> builtInProviders) {
-        StringBuilder sb = new StringBuilder("[");
-        boolean first = true;
-        for (String key : builtInProviders.keySet()) {
-            if (key.startsWith(channel.name() + ":")) {
-                if (!first) sb.append(", ");
-                sb.append(key.substring(channel.name().length() + 1));
-                first = false;
-            }
-        }
-        sb.append("]");
-        return sb.toString();
+    /** The built-in names whose module is on the classpath, judged by their registered bean. */
+    private String getAvailableBuiltIns(Channel channel) {
+        return BuiltInProviders.forChannel(channel).stream()
+                .filter(entry -> applicationContext.containsBean(entry.beanName()))
+                .map(BuiltInProviders.Entry::name)
+                .collect(Collectors.joining(", ", "[", "]"));
     }
 }

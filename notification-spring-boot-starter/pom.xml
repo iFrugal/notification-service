@@ -43,24 +43,39 @@
             <optional>true</optional>
         </dependency>
 
-
         <!-- Spring Boot Autoconfigure -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-autoconfigure</artifactId>
         </dependency>
 
-        <!-- Configuration processor for IDE support -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-configuration-processor</artifactId>
-            <optional>true</optional>
-        </dependency>
-
         <!-- Testing -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Built-in provider modules, so the starter tests prove each one
+             registers its provider bean through auto-configuration. -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>email-provider-smtp</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>email-provider-ses</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>email-provider-acs</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>sms-provider-twilio</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

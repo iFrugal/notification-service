@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(classes = TestRedisApp.class)
 @TestPropertySource(properties = {
+        "notification.dead-letter.enabled=true",
         "notification.redis.dead-letter.enabled=true",
         "notification.redis.dead-letter.max-entries=3",
         "notification.redis.key-prefix=test-dlq",

@@ -1,0 +1,42 @@
+{
+  "properties": [
+    {
+      "name": "notification.redis.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Former Redis master switch. It was never read and is no longer bound.",
+      "deprecation": {
+        "level": "error",
+        "reason": "Never read. Select the Redis store family with notification.store.type=redis.",
+        "replacement": "notification.store.type"
+      }
+    },
+    {
+      "name": "notification.idempotency.store",
+      "type": "java.lang.String",
+      "deprecation": {
+        "level": "warning",
+        "reason": "Select the store family with notification.store.type (or notification.redis.idempotency.enabled).",
+        "replacement": "notification.store.type"
+      }
+    }
+  ],
+  "hints": [
+    {
+      "name": "notification.store.type",
+      "values": [
+        {
+          "value": "memory",
+          "description": "In-process stores from notification-core. Default; state is per JVM."
+        },
+        {
+          "value": "redis",
+          "description": "Redis-backed stores. Requires com.github.ifrugal:notification-redis."
+        },
+        {
+          "value": "jdbc",
+          "description": "JDBC-backed stores. Requires com.github.ifrugal:notification-store-jdbc."
+        }
+      ]
+    }
+  ]
+}
