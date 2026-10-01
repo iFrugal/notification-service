@@ -80,6 +80,7 @@ deployment doesn't transitively inherit AWS or Twilio SDKs.
 |----------|----------|-------------|----------------------------------------|
 | SMTP | `email-provider-smtp` | Self-hosted SMTP relay or Gmail / SendGrid SMTP | `host`, `port`, `username`, `password`, `starttls` |
 | AWS SES | `email-provider-ses` | AWS-native email | `aws-region`, `aws-access-key`, `aws-secret-key` (or IAM role on EC2) |
+| Azure Communication Services | `email-provider-acs` | Azure-native email (ACS Email) | `sender` plus `connection-string`, or `endpoint` + `credential` (`default` for managed identity via azure-identity, or a `TokenCredential` bean name); optional `reply-to`, `send-mode` (`wait`/`submit`), `wait-timeout`, `sdk-retries`, `user-engagement-tracking-disabled`. See the [module README](../notification-channels/notification-channel-email/email-provider-acs/README.md) |
 
 ```xml
 <dependency>

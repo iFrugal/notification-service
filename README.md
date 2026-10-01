@@ -51,6 +51,8 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 
 ## Features
 
+- **Multi-Channel Support**: Email, SMS, WhatsApp, Push notifications
+- **Multiple Providers per Channel**: SMTP, AWS SES, Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)), Twilio, Firebase FCM, etc.
 - **Multi-Channel Support**: Email and SMS with built-in providers; WhatsApp and Push as SPI extension points (`WhatsAppProvider`, `PushProvider`) with built-in providers planned
 - **Multiple Providers per Channel**: SMTP and AWS SES for email, Twilio for SMS; AWS SNS, WhatsApp (Twilio, Meta) and Push (FCM, APNs) providers are planned
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header

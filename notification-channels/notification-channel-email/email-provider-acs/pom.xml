@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.ifrugal</groupId>
+        <artifactId>notification-channel-email</artifactId>
+        <version>1.0.3-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>email-provider-acs</artifactId>
+    <packaging>jar</packaging>
+
+    <name>${project.artifactId}</name>
+    <description>Email Provider - Azure Communication Services Email implementation</description>
+
+    <dependencies>
+        <!-- ACS Email SDK. azure-core-http-netty is excluded in the root
+             dependencyManagement (Netty 4.1 clashes with Boot 4.1's Netty 4.2). -->
+        <dependency>
+            <groupId>com.azure</groupId>
+            <artifactId>azure-communication-email</artifactId>
+        </dependency>
+
+        <!-- HTTP transport: java.net.http.HttpClient, no Netty -->
+        <dependency>
+            <groupId>com.azure</groupId>
+            <artifactId>azure-core-http-jdk-httpclient</artifactId>
+        </dependency>
+
+        <!-- Optional: DefaultAzureCredential / managed identity. Applications
+             that authenticate with a connection string do not need it. -->
+        <dependency>
+            <groupId>com.azure</groupId>
+            <artifactId>azure-identity</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Optional: AcsEmailProviderAutoConfiguration registers the prototype
+             bean 'acsEmailProvider'. The provider itself has no Spring dependency
+             (fqcn / reflective users construct it with the no-arg constructor). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Testing: ApplicationContextRunner -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+</project>

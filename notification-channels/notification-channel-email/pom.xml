@@ -18,6 +18,7 @@
     <modules>
         <module>email-provider-smtp</module>
         <module>email-provider-ses</module>
+        <module>email-provider-acs</module>
     </modules>
 
 </project>
