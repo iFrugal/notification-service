@@ -6,8 +6,10 @@ package com.lazydevs.notification.channel.email.acs;
  * @param operationId  ACS operation id (the provider message id); {@code null}
  *                     only when ACS accepted the request but the id could not be read
  * @param status       the observed state
- * @param errorCode    ACS error code for {@link Status#FAILED}, or a library code for a timeout
- * @param errorMessage ACS error message for {@link Status#FAILED}, or a timeout note
+ * @param errorCode    ACS error code for {@link Status#FAILED}, or a library code for
+ *                     {@link Status#UNCONFIRMED}
+ * @param errorMessage ACS error message for {@link Status#FAILED}, or a note on why
+ *                     the status is {@link Status#UNCONFIRMED}
  */
 public record AcsSendOutcome(String operationId, Status status, String errorCode, String errorMessage) {
 
@@ -23,11 +25,29 @@ public record AcsSendOutcome(String operationId, Status status, String errorCode
         FAILED,
         /** The operation was canceled. */
         CANCELED,
-        /** {@code wait} mode gave up before ACS reached a final state. */
-        TIMED_OUT
+        /**
+         * {@code wait} mode gave up before ACS reached a final state.
+         * {@link SdkAcsEmailGateway} reports {@link #UNCONFIRMED} instead since 1.1.1;
+         * {@link AcsEmailProvider} treats both the same way.
+         */
+        TIMED_OUT,
+        /**
+         * ACS accepted the request, but the final status could not be confirmed:
+         * the {@code wait} mode timeout expired or a status poll failed.
+         * The message may still be delivered, so it must not be sent again.
+         */
+        UNCONFIRMED
     }
 
-    static AcsSendOutcome of(String operationId, Status status) {
+    /**
+     * An outcome without error details, for example in a test double of
+     * {@link AcsEmailGateway}.
+     *
+     * @param operationId the ACS operation id, may be {@code null}
+     * @param status      the observed state
+     * @return the outcome
+     */
+    public static AcsSendOutcome of(String operationId, Status status) {
         return new AcsSendOutcome(operationId, status, null, null);
     }
 }

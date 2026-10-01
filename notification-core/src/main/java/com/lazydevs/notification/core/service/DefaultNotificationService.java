@@ -14,10 +14,12 @@ import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.model.FailureType;
+import com.lazydevs.notification.api.model.NotificationAudit;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.model.SendResult;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
+import com.lazydevs.notification.api.util.PiiMasking;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.retry.RetryExecutor;
@@ -153,7 +155,7 @@ public class DefaultNotificationService implements NotificationService {
         NotificationResponse response = null;
         try {
             // Record audit (received)
-            auditService.recordReceived(request);
+            fillRecipientSummary(auditService.recordReceived(request), request);
 
             // Render template
             RenderedContent content = templateEngine.render(request);
@@ -206,15 +208,18 @@ public class DefaultNotificationService implements NotificationService {
                 log.info("Notification sent: requestId={}, provider={}, messageId={}",
                         request.getRequestId(), provider.getProviderName(), result.messageId());
             } else {
+                // Keep the provider message id: a provider that identified the
+                // send before it failed (ACS operation id) needs it for reconciliation.
                 response = NotificationResponse.failed(
                         request,
                         provider.getProviderName(),
+                        result.messageId(),
                         result.errorCode(),
                         result.errorMessage(),
                         receivedAt);
 
                 log.warn("Notification failed: requestId={}, error={}: {}",
-                        request.getRequestId(), result.errorCode(), result.errorMessage());
+                        request.getRequestId(), result.errorCode(), PiiMasking.redact(result.errorMessage()));
 
                 // DD-13: push to DLQ when configured. We push regardless of
                 // attempts taken — both "permanent failure on first try" and
@@ -233,7 +238,7 @@ public class DefaultNotificationService implements NotificationService {
 
         } catch (NotificationException e) {
             log.error("Notification error: requestId={}, error={}: {}",
-                    request.getRequestId(), e.getErrorCode(), e.getMessage());
+                    request.getRequestId(), e.getErrorCode(), PiiMasking.redact(e.getMessage()));
 
             response = NotificationResponse.failed(
                     request,
@@ -282,6 +287,17 @@ public class DefaultNotificationService implements NotificationService {
                                 "INTERNAL_ERROR", "Dispatch terminated without a response", receivedAt);
                 idempotencyStore.get().markComplete(idemKey, toRecord);
             }
+        }
+    }
+
+    /**
+     * Fill {@link NotificationAudit#getRecipientSummary()} with the masked
+     * recipient when the audit implementation left it empty, so the record
+     * never needs the raw address or number (DD-07).
+     */
+    private static void fillRecipientSummary(NotificationAudit audit, NotificationRequest request) {
+        if (audit != null && !StringUtils.hasText(audit.getRecipientSummary())) {
+            audit.setRecipientSummary(PiiMasking.mask(request.getRecipient()));
         }
     }
 

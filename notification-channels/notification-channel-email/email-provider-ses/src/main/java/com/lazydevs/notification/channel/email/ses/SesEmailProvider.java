@@ -7,6 +7,7 @@ import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.FailureTypes;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.SendResult;
+import com.lazydevs.notification.api.util.PiiMasking;
 import lombok.extern.slf4j.Slf4j;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.exception.SdkClientException;
@@ -17,9 +18,13 @@ import software.amazon.awssdk.services.sesv2.model.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * AWS SES email provider implementation.
+ *
+ * <p>{@link #withClient(SesV2Client)} builds an instance over your own client, for
+ * testing an integration without AWS.
  */
 @Slf4j
 public class SesEmailProvider implements EmailProvider {
@@ -32,6 +37,33 @@ public class SesEmailProvider implements EmailProvider {
     private String configurationSetName;
 
     private SesV2Client sesClient;
+    /** Set when the client came from {@link #withClient(SesV2Client)}; the caller owns it. */
+    private boolean clientInjected;
+
+    /**
+     * Reflective / bean construction; {@link #init()} builds the SES client.
+     */
+    public SesEmailProvider() {
+        // Settings arrive through configure(...).
+    }
+
+    /**
+     * A provider that sends through {@code client}, for example a Mockito mock of
+     * {@link SesV2Client}.
+     * Call {@link #configure(Map)} for the sender settings as usual; {@link #init()}
+     * keeps the given client instead of building one, and {@link #destroy()} does not
+     * close it.
+     *
+     * @param client the SES v2 client
+     * @return the provider
+     * @since 1.1.1
+     */
+    public static SesEmailProvider withClient(SesV2Client client) {
+        SesEmailProvider provider = new SesEmailProvider();
+        provider.sesClient = Objects.requireNonNull(client, "client");
+        provider.clientInjected = true;
+        return provider;
+    }
 
     @Override
     public String getProviderName() {
@@ -45,11 +77,15 @@ public class SesEmailProvider implements EmailProvider {
         this.fromName = getString(properties, "from-name", getString(properties, "fromName", null));
         this.configurationSetName = getString(properties, "configuration-set", null);
 
-        log.debug("SES provider configured: region={}, from={}", region, fromAddress);
+        log.debug("SES provider configured: region={}, from={}", region, PiiMasking.maskEmail(fromAddress));
     }
 
     @Override
     public void init() {
+        if (clientInjected) {
+            log.info("AWS SES email provider initialized with a supplied client");
+            return;
+        }
         sesClient = SesV2Client.builder()
                 .region(Region.of(region))
                 .build();
@@ -59,7 +95,7 @@ public class SesEmailProvider implements EmailProvider {
 
     @Override
     public void destroy() {
-        if (sesClient != null) {
+        if (sesClient != null && !clientInjected) {
             sesClient.close();
             log.debug("SES client closed");
         }
@@ -125,15 +161,17 @@ public class SesEmailProvider implements EmailProvider {
             // Send
             SendEmailResponse response = sesClient.sendEmail(sendRequestBuilder.build());
 
-            log.debug("Email sent via SES: to={}, messageId={}", recipient.to(), response.messageId());
+            log.debug("Email sent via SES: to={}, messageId={}",
+                    PiiMasking.maskEmail(recipient.to()), response.messageId());
 
             return SendResult.success(response.messageId());
 
         } catch (Exception e) {
+            String error = PiiMasking.redact(e.getMessage());
             log.error("Failed to send email via SES: to={}, error={}",
-                    recipient.to(), e.getMessage());
+                    PiiMasking.maskEmail(recipient.to()), error);
             return SendResult.failure(
-                    e.getClass().getSimpleName(), e.getMessage(), classifySes(e));
+                    e.getClass().getSimpleName(), error, classifySes(e));
         }
     }
 
@@ -206,7 +244,7 @@ public class SesEmailProvider implements EmailProvider {
             sesClient.getAccount(b -> {});
             return true;
         } catch (Exception e) {
-            log.warn("SES health check failed: {}", e.getMessage());
+            log.warn("SES health check failed: {}", PiiMasking.redact(e.getMessage()));
             return false;
         }
     }

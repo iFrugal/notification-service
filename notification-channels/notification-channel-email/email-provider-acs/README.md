@@ -102,14 +102,44 @@ The provider message id (`SendResult.messageId`) is the ACS operation id in both
 - **`wait`** (default) polls until ACS reports `Succeeded` or `Failed`, at most `wait-timeout`.
   `Succeeded` is a success.
   `Failed` is a `PERMANENT` failure that carries the ACS error code and message.
-  A timeout is a `TRANSIENT` failure that keeps the operation id.
-  The message may still be delivered after a timeout, so a retry can produce a duplicate.
-  Use the operation id to reconcile.
+  A timeout, or a failed status poll, after ACS accepted the message is a success with `acsStatus` `UNCONFIRMED`; see [Idempotency and ambiguous results](#idempotency-and-ambiguous-results).
 - **`submit`** returns as soon as ACS accepted the message.
-  The SDK's poller does not expose the operation id from the submit response, so this mode costs one extra status poll per message to read it.
+  The provider chooses the operation id itself, so this mode makes no status call at all.
   The final delivery result is not observed.
   Use ACS delivery reports through Event Grid if you need it.
   `SendResult.providerMetadata.acsStatus` is `SUBMITTED`.
+
+## Idempotency and ambiguous results
+
+**Deterministic `Operation-Id`.**
+The provider sends every message with an `Operation-Id` request header on `POST /emails:send`.
+The id is a name-based UUID (version 3) over the tenant id, the request id and a SHA-256 fingerprint of the message: to, cc and bcc addresses, subject, plain-text body, HTML body and attachment names.
+A retry of the same message, by the library's `RetryExecutor` or by the SDK's own retry policy, therefore reuses the same id.
+Batch items share one request id but differ in their recipients or content, so they get different ids.
+A request without a request id gets a random id per attempt.
+`DefaultNotificationService` always assigns a request id, so this only affects direct calls to the provider.
+
+**Reuse semantics are not documented by Microsoft.**
+The ACS REST API describes `Operation-Id` only as an id "provided by the customer to identify the long running operation".
+It does not document what ACS does when the same id is submitted twice.
+If you rely on ACS to drop a resubmitted message, verify that behaviour on your own Communication Services resource first.
+Independently of that, the provider never resends a message that ACS already accepted, as described below.
+
+**`UNCONFIRMED`.**
+Once `beginSend` has returned, ACS has accepted the message.
+If `wait` mode then times out, or a status poll fails, the outcome is ambiguous: the message may still be delivered.
+The provider reports a success, so the retry predicate never resends it, with:
+
+- `SendResult.messageId` set to the operation id;
+- `SendResult.providerMetadata.acsStatus` set to `UNCONFIRMED`;
+- `SendResult.providerMetadata.acsReason` set to `ACS_WAIT_TIMEOUT` or `ACS_POLL_FAILED`;
+- a `WARN` log line naming the operation id.
+
+The notification response and the audit record show `SENT` with the operation id as `providerMessageId`.
+To reconcile, subscribe to ACS email delivery reports (Event Grid `Microsoft.Communication.EmailDeliveryReportReceived`), which carry the same message id, or read the operation status with `GET /emails/operations/{operationId}`.
+
+**Failures before acceptance** (the send request itself failed) keep the classification in the table below.
+The `SendResult` and the `FAILED` response still carry the operation id, so the failed attempt can be traced, and a retry derives the same id again.
 
 ## Failure classification and retries
 
@@ -181,3 +211,24 @@ The module uses no reflection of its own.
 `azure-core` ships its own native-image configuration.
 `credential: default` pulls MSAL (`msal4j`) through `azure-identity`, and MSAL may need additional reachability metadata.
 Verify a native build with your chosen authentication option.
+
+## Testing your integration
+
+`AcsEmailProvider.withGateway(settings, gateway)` builds a ready provider over your own `AcsEmailGateway`, so a test exercises the real message mapping, operation id and result handling without Azure.
+`configure(...)` and `init()` are no-ops on such an instance.
+
+```java
+AcsEmailGateway gateway = mock(AcsEmailGateway.class);
+when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op-1", AcsSendOutcome.Status.SUCCEEDED));
+
+AcsEmailProvider provider = AcsEmailProvider.withGateway(
+        AcsEmailProperties.fromMap(Map.of(
+                "connection-string", "endpoint=https://x.communication.azure.com/;accesskey=a2V5",
+                "sender", "DoNotReply@example.com")),
+        gateway);
+
+SendResult result = provider.send(request, RenderedContent.email("Subject", "<p>Hi</p>", "Hi"));
+// verify(gateway).send(messageCaptor.capture(), operationIdCaptor.capture()) to inspect the EmailMessage
+```
+
+The provider calls `send(EmailMessage, UUID)`; stub that method, not the one-argument form.

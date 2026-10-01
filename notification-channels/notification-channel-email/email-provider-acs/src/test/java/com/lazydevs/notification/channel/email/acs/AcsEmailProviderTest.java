@@ -12,21 +12,26 @@ import com.lazydevs.notification.api.model.EmailRecipient;
 import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.SendResult;
+import com.lazydevs.notification.api.retry.RetryPredicate;
 import com.lazydevs.notification.channel.email.acs.AcsEmailProperties.SendMode;
 import com.lazydevs.notification.channel.email.acs.AcsSendOutcome.Status;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -70,7 +75,7 @@ class AcsEmailProviderTest {
 
     private EmailMessage captureSent() {
         ArgumentCaptor<EmailMessage> captor = ArgumentCaptor.forClass(EmailMessage.class);
-        verify(gateway).send(captor.capture());
+        verify(gateway).send(captor.capture(), any());
         return captor.getValue();
     }
 
@@ -86,7 +91,7 @@ class AcsEmailProviderTest {
 
     @Test
     void happyPath_returnsOperationIdAsMessageId() {
-        when(gateway.send(any())).thenReturn(AcsSendOutcome.of("op-123", Status.SUCCEEDED));
+        when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op-123", Status.SUCCEEDED));
 
         SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
 
@@ -98,7 +103,7 @@ class AcsEmailProviderTest {
 
     @Test
     void submitted_isSuccessWithOperationId() {
-        when(gateway.send(any())).thenReturn(AcsSendOutcome.of("op-456", Status.SUBMITTED));
+        when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op-456", Status.SUBMITTED));
 
         SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
 
@@ -109,7 +114,7 @@ class AcsEmailProviderTest {
 
     @Test
     void failedStatus_mapsToPermanentFailureWithAcsError() {
-        when(gateway.send(any())).thenReturn(
+        when(gateway.send(any(), any())).thenReturn(
                 new AcsSendOutcome("op-9", Status.FAILED, "EmailDroppedAllRecipientsSuppressed", "suppressed"));
 
         SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
@@ -123,7 +128,7 @@ class AcsEmailProviderTest {
 
     @Test
     void failedStatusWithoutErrorDetails_usesDefaultCode() {
-        when(gateway.send(any())).thenReturn(AcsSendOutcome.of("op-9", Status.FAILED));
+        when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op-9", Status.FAILED));
 
         SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
 
@@ -132,21 +137,94 @@ class AcsEmailProviderTest {
     }
 
     @Test
-    void timeout_mapsToTransientAndKeepsOperationId() {
-        when(gateway.send(any())).thenReturn(
+    void unconfirmed_isSuccessWithOperationId_andIsNeverRetried() {
+        when(gateway.send(any(), any())).thenReturn(
+                new AcsSendOutcome("op-slow", Status.UNCONFIRMED, "ACS_WAIT_TIMEOUT", "no final status"));
+
+        SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.messageId()).isEqualTo("op-slow");
+        assertThat(result.failureType()).isNull();
+        assertThat(result.providerMetadata())
+                .containsEntry("acsStatus", "UNCONFIRMED")
+                .containsEntry("acsReason", "ACS_WAIT_TIMEOUT");
+        assertThat(RetryPredicate.DEFAULT.shouldRetry(result, 1)).isFalse();
+    }
+
+    @Test
+    void legacyTimedOut_isTreatedAsUnconfirmed() {
+        when(gateway.send(any(), any())).thenReturn(
                 new AcsSendOutcome("op-slow", Status.TIMED_OUT, "ACS_WAIT_TIMEOUT", "no final status"));
 
         SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
 
-        assertThat(result.success()).isFalse();
+        assertThat(result.success()).isTrue();
         assertThat(result.messageId()).isEqualTo("op-slow");
-        assertThat(result.errorCode()).isEqualTo("ACS_WAIT_TIMEOUT");
+        assertThat(result.providerMetadata()).containsEntry("acsStatus", "UNCONFIRMED");
+    }
+
+    @Test
+    void sendsTheDerivedOperationId_andReusesItOnRetry() {
+        when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op", Status.SUCCEEDED));
+        NotificationRequest request = request(to("user@example.com"));
+        request.setTenantId("acme");
+        request.setRequestId("req-1");
+
+        provider.send(request, htmlAndText());
+        provider.send(request, htmlAndText());
+
+        ArgumentCaptor<EmailMessage> message = ArgumentCaptor.forClass(EmailMessage.class);
+        ArgumentCaptor<UUID> ids = ArgumentCaptor.forClass(UUID.class);
+        verify(gateway, times(2)).send(message.capture(), ids.capture());
+        UUID expected = AcsEmailProvider.operationIdFor("acme", "req-1", message.getValue());
+        assertThat(ids.getAllValues()).containsExactly(expected, expected);
+    }
+
+    @Test
+    void withoutRequestId_eachSendGetsAFreshOperationId() {
+        when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op", Status.SUCCEEDED));
+        NotificationRequest request = request(to("user@example.com"));
+
+        provider.send(request, htmlAndText());
+        provider.send(request, htmlAndText());
+
+        ArgumentCaptor<UUID> ids = ArgumentCaptor.forClass(UUID.class);
+        verify(gateway, times(2)).send(any(), ids.capture());
+        assertThat(ids.getAllValues().get(0)).isNotNull().isNotEqualTo(ids.getAllValues().get(1));
+    }
+
+    @Test
+    void preSubmissionIoError_isTransient_andCarriesTheOperationId() {
+        when(gateway.send(any(), any())).thenThrow(new UncheckedIOException(new IOException("Connection reset")));
+        NotificationRequest request = request(to("user@example.com"));
+        request.setTenantId("acme");
+        request.setRequestId("req-io");
+
+        SendResult result = provider.send(request, htmlAndText());
+
+        ArgumentCaptor<EmailMessage> message = ArgumentCaptor.forClass(EmailMessage.class);
+        verify(gateway).send(message.capture(), any());
+        assertThat(result.success()).isFalse();
         assertThat(result.failureType()).isEqualTo(FailureType.TRANSIENT);
+        assertThat(result.messageId())
+                .isEqualTo(AcsEmailProvider.operationIdFor("acme", "req-io", message.getValue()).toString());
+    }
+
+    @Test
+    void legacyGateway_withoutTheOperationIdMethod_stillWorks() {
+        AcsEmailGateway legacy = msg -> AcsSendOutcome.of("acs-chosen", Status.SUCCEEDED);
+        AcsEmailProvider withLegacy = new AcsEmailProvider(settings(List.of(), null), legacy);
+
+        SendResult result = withLegacy.send(request(to("user@example.com")), htmlAndText());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.messageId()).isEqualTo("acs-chosen");
     }
 
     @Test
     void canceled_mapsToUnknown() {
-        when(gateway.send(any())).thenReturn(AcsSendOutcome.of("op-c", Status.CANCELED));
+        when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op-c", Status.CANCELED));
 
         SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
 
@@ -159,7 +237,7 @@ class AcsEmailProviderTest {
     void sdkException_isClassified() {
         HttpResponse response = mock(HttpResponse.class);
         when(response.getStatusCode()).thenReturn(429);
-        when(gateway.send(any())).thenThrow(new HttpResponseException("Too many requests", response));
+        when(gateway.send(any(), any())).thenThrow(new HttpResponseException("Too many requests", response));
 
         SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
 
@@ -172,7 +250,7 @@ class AcsEmailProviderTest {
     void unauthorized_isPermanentWithCredentialHint() {
         HttpResponse response = mock(HttpResponse.class);
         when(response.getStatusCode()).thenReturn(401);
-        when(gateway.send(any())).thenThrow(new HttpResponseException("Denied", response));
+        when(gateway.send(any(), any())).thenThrow(new HttpResponseException("Denied", response));
 
         SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
 
@@ -182,7 +260,7 @@ class AcsEmailProviderTest {
 
     @Test
     void mapping_senderSubjectRecipientsAndBodies() {
-        when(gateway.send(any())).thenReturn(AcsSendOutcome.of("op", Status.SUCCEEDED));
+        when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op", Status.SUCCEEDED));
         EmailRecipient recipient = new EmailRecipient(null, "to@example.com",
                 List.of("cc1@example.com", " ", "cc2@example.com"), List.of("bcc@example.com"), null, "ignored");
 
@@ -203,7 +281,7 @@ class AcsEmailProviderTest {
 
     @Test
     void mapping_subjectFallsBackToRecipient_andHtmlOnlyLeavesTextUnset() {
-        when(gateway.send(any())).thenReturn(AcsSendOutcome.of("op", Status.SUCCEEDED));
+        when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op", Status.SUCCEEDED));
 
         provider.send(request(to("to@example.com")), RenderedContent.emailHtml(null, "<b>x</b>"));
 
@@ -218,7 +296,7 @@ class AcsEmailProviderTest {
     @Test
     void mapping_defaultReplyToAndTrackingFlagFromSettings() {
         provider = new AcsEmailProvider(settings(List.of("support@example.com", "ops@example.com"), true), gateway);
-        when(gateway.send(any())).thenReturn(AcsSendOutcome.of("op", Status.SUCCEEDED));
+        when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op", Status.SUCCEEDED));
 
         provider.send(request(to("to@example.com")), htmlAndText());
 
@@ -230,7 +308,7 @@ class AcsEmailProviderTest {
     @Test
     void mapping_recipientReplyToOverridesDefault() {
         provider = new AcsEmailProvider(settings(List.of("support@example.com"), null), gateway);
-        when(gateway.send(any())).thenReturn(AcsSendOutcome.of("op", Status.SUCCEEDED));
+        when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op", Status.SUCCEEDED));
         EmailRecipient recipient = new EmailRecipient(null, "to@example.com", null, null,
                 "owner@example.com", "s");
 
@@ -241,7 +319,7 @@ class AcsEmailProviderTest {
 
     @Test
     void mapping_inlineAttachments() {
-        when(gateway.send(any())).thenReturn(AcsSendOutcome.of("op", Status.SUCCEEDED));
+        when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op", Status.SUCCEEDED));
         NotificationRequest request = request(to("to@example.com"));
         request.setAttachments(List.of(
                 new NotificationRequest.Attachment("invoice.pdf", "application/pdf",
@@ -326,6 +404,46 @@ class AcsEmailProviderTest {
         reflective.init();
 
         assertThat(reflective.gateway()).isNotNull().isNotSameAs(first);
+    }
+
+    @Test
+    void withGateway_isReady_andConfigureAndInitAreNoOps() {
+        AcsEmailGateway seam = new AcsEmailGateway() {
+            @Override
+            public AcsSendOutcome send(EmailMessage message) {
+                throw new AssertionError("the provider must call send(message, operationId)");
+            }
+
+            @Override
+            public AcsSendOutcome send(EmailMessage message, UUID operationId) {
+                return AcsSendOutcome.of(operationId.toString(), Status.SUBMITTED);
+            }
+        };
+        AcsEmailProvider seamProvider = AcsEmailProvider.withGateway(
+                AcsEmailProperties.fromMap(Map.of("connection-string",
+                        "endpoint=https://x.communication.azure.com/;accesskey=a2V5", "sender", SENDER)),
+                seam);
+
+        seamProvider.configure(Map.of());
+        seamProvider.init();
+        NotificationRequest request = request(to("user@example.com"));
+        request.setTenantId("acme");
+        request.setRequestId("req-seam");
+        SendResult result = seamProvider.send(request, htmlAndText());
+
+        assertThat(seamProvider.isHealthy()).isTrue();
+        assertThat(result.success()).isTrue();
+        assertThat(result.messageId()).isEqualTo(AcsEmailProvider.operationIdFor("acme", "req-seam",
+                seamProvider.toEmailMessage(request, htmlAndText())).toString());
+    }
+
+    @Test
+    void withGateway_rejectsNulls() {
+        AcsEmailProperties settings = settings(List.of(), null);
+        assertThatThrownBy(() -> AcsEmailProvider.withGateway(settings, null))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("gateway");
+        assertThatThrownBy(() -> AcsEmailProvider.withGateway(null, gateway))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("settings");
     }
 
     @Test

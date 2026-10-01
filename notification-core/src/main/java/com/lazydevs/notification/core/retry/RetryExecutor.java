@@ -3,6 +3,7 @@ package com.lazydevs.notification.core.retry;
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.model.SendResult;
 import com.lazydevs.notification.api.retry.RetryPredicate;
+import com.lazydevs.notification.api.util.PiiMasking;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import com.lazydevs.notification.core.config.NotificationProperties.RetryProperties;
 import com.lazydevs.notification.core.config.NotificationProperties.RetryRule;
@@ -124,7 +125,8 @@ public class RetryExecutor {
                     : SendResult.failure("NULL_RESULT",
                             "Provider returned null on attempt " + attempt);
         } catch (RuntimeException e) {
-            log.debug("Attempt {} threw {}: {}", attempt, e.getClass().getSimpleName(), e.getMessage());
+            log.debug("Attempt {} threw {}: {}", attempt, e.getClass().getSimpleName(),
+                    PiiMasking.redact(e.getMessage()));
             return SendResult.failure(e);
         }
     }

@@ -7,17 +7,23 @@ import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.FailureTypes;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.SendResult;
+import com.lazydevs.notification.api.util.PiiMasking;
 import jakarta.mail.*;
 import jakarta.mail.internet.*;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
 
 /**
  * SMTP email provider implementation.
  * Supports Gmail, generic SMTP servers, etc.
+ *
+ * <p>{@link #withSender(SmtpSender)} builds an instance that hands the finished
+ * message to your own {@link SmtpSender} instead of {@link Transport#send}, for
+ * testing an integration without an SMTP server.
  */
 @Slf4j
 public class SmtpEmailProvider implements EmailProvider {
@@ -37,6 +43,31 @@ public class SmtpEmailProvider implements EmailProvider {
     private int timeout = 10000;
 
     private Session session;
+    private SmtpSender sender = Transport::send;
+    private boolean senderInjected;
+
+    /**
+     * Reflective / bean construction; messages go out through {@link Transport#send}.
+     */
+    public SmtpEmailProvider() {
+        // Settings arrive through configure(...).
+    }
+
+    /**
+     * A provider that hands every message to {@code sender}.
+     * Call {@link #configure(Map)} for the sender address as usual; {@code host} is
+     * optional for such an instance, and {@link #init()} only builds the mail session.
+     *
+     * @param sender receives each finished message
+     * @return the provider
+     * @since 1.1.1
+     */
+    public static SmtpEmailProvider withSender(SmtpSender sender) {
+        SmtpEmailProvider provider = new SmtpEmailProvider();
+        provider.sender = Objects.requireNonNull(sender, "sender");
+        provider.senderInjected = true;
+        return provider;
+    }
 
     @Override
     public String getProviderName() {
@@ -56,17 +87,21 @@ public class SmtpEmailProvider implements EmailProvider {
         this.connectionTimeout = getInt(properties, "connection-timeout", 10000);
         this.timeout = getInt(properties, "timeout", 10000);
 
-        log.debug("SMTP provider configured: host={}, port={}, from={}", host, port, fromAddress);
+        log.debug("SMTP provider configured: host={}, port={}, from={}", host, port,
+                PiiMasking.maskEmail(fromAddress));
     }
 
     @Override
     public void init() {
-        if (host == null || host.isBlank()) {
+        boolean hasHost = host != null && !host.isBlank();
+        if (!hasHost && !senderInjected) {
             throw new IllegalStateException("SMTP host is required");
         }
 
         Properties props = new Properties();
-        props.put("mail.smtp.host", host);
+        if (hasHost) {
+            props.put("mail.smtp.host", host);
+        }
         props.put("mail.smtp.port", String.valueOf(port));
         props.put("mail.smtp.auth", String.valueOf(auth));
         props.put("mail.smtp.starttls.enable", String.valueOf(startTls));
@@ -187,23 +222,24 @@ public class SmtpEmailProvider implements EmailProvider {
             }
 
             // Send
-            Transport.send(message);
+            sender.send(message);
 
             String messageId = message.getMessageID();
             if (messageId == null) {
                 messageId = UUID.randomUUID().toString();
             }
 
-            log.debug("Email sent via SMTP: to={}, subject={}, messageId={}",
-                    recipient.to(), subject, messageId);
+            log.debug("Email sent via SMTP: to={}, messageId={}",
+                    PiiMasking.maskEmail(recipient.to()), messageId);
 
             return SendResult.success(messageId);
 
         } catch (Exception e) {
+            String error = PiiMasking.redact(e.getMessage());
             log.error("Failed to send email via SMTP: to={}, error={}",
-                    recipient.to(), e.getMessage());
+                    PiiMasking.maskEmail(recipient.to()), error);
             return SendResult.failure(
-                    e.getClass().getSimpleName(), e.getMessage(), classifySmtp(e));
+                    e.getClass().getSimpleName(), error, classifySmtp(e));
         }
     }
 
@@ -266,13 +302,17 @@ public class SmtpEmailProvider implements EmailProvider {
 
     @Override
     public boolean isHealthy() {
+        if (senderInjected) {
+            // The supplied sender owns the transport; there is no server to probe.
+            return session != null;
+        }
         try {
             Transport transport = session.getTransport("smtp");
             transport.connect();
             transport.close();
             return true;
         } catch (Exception e) {
-            log.warn("SMTP health check failed: {}", e.getMessage());
+            log.warn("SMTP health check failed: {}", PiiMasking.redact(e.getMessage()));
             return false;
         }
     }

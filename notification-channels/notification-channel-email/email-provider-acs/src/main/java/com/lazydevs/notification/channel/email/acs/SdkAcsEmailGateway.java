@@ -4,15 +4,21 @@ import com.azure.communication.email.EmailClient;
 import com.azure.communication.email.models.EmailMessage;
 import com.azure.communication.email.models.EmailSendResult;
 import com.azure.communication.email.models.EmailSendStatus;
+import com.azure.core.http.HttpHeaderName;
+import com.azure.core.http.HttpHeaders;
+import com.azure.core.http.policy.AddHeadersFromContextPolicy;
 import com.azure.core.models.ResponseError;
+import com.azure.core.util.Context;
 import com.azure.core.util.polling.PollResponse;
 import com.azure.core.util.polling.SyncPoller;
+import com.lazydevs.notification.api.util.PiiMasking;
 import com.lazydevs.notification.channel.email.acs.AcsEmailProperties.SendMode;
 import com.lazydevs.notification.channel.email.acs.AcsSendOutcome.Status;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -20,17 +26,31 @@ import java.util.concurrent.TimeoutException;
  *
  * <p>{@code EmailClient.beginSend} performs the send request eagerly, so once
  * it returns ACS has accepted the message.
- * The {@code SyncPoller} does not expose that first response, so reading the
- * operation id costs one status poll:
+ * {@link #send(EmailMessage, UUID)} sends the caller's operation id as the
+ * {@code Operation-Id} request header (through azure-core's
+ * {@link AddHeadersFromContextPolicy}, which runs before the SDK retry policy,
+ * so SDK retries carry the same id):
  * <ul>
+ *   <li>{@link SendMode#SUBMIT} - returns the supplied id right after acceptance,
+ *       without a status call.</li>
  *   <li>{@link SendMode#WAIT} - {@code waitForCompletion(waitTimeout)}; the final
- *       response carries the id. On timeout one extra {@code poll()} recovers
- *       the id on a best-effort basis.</li>
- *   <li>{@link SendMode#SUBMIT} - exactly one {@code poll()} to read the id, then return.</li>
+ *       response carries the id. A timeout or a failed status poll is reported as
+ *       {@link Status#UNCONFIRMED} with the id, never as an error, because the
+ *       message was already accepted.</li>
  * </ul>
+ *
+ * <p>{@link #send(EmailMessage)} lets ACS choose the id; reading it then costs
+ * one status poll in {@code SUBMIT} mode, and after a {@code WAIT} timeout or
+ * poll error one extra poll recovers it on a best-effort basis.
  */
 @Slf4j
 public class SdkAcsEmailGateway implements AcsEmailGateway {
+
+    /** ACS request header naming the long-running send operation. */
+    static final HttpHeaderName OPERATION_ID = HttpHeaderName.fromString("Operation-Id");
+
+    private static final String CODE_WAIT_TIMEOUT = "ACS_WAIT_TIMEOUT";
+    private static final String CODE_POLL_FAILED = "ACS_POLL_FAILED";
 
     private final EmailClient client;
     private final SendMode sendMode;
@@ -49,12 +69,34 @@ public class SdkAcsEmailGateway implements AcsEmailGateway {
 
     @Override
     public AcsSendOutcome send(EmailMessage message) {
-        // Throws HttpResponseException etc. when ACS rejects the request.
-        SyncPoller<EmailSendResult, EmailSendResult> poller = client.beginSend(message);
-        return sendMode == SendMode.SUBMIT ? submitted(poller) : awaitCompletion(poller);
+        return send(message, null);
     }
 
-    private static AcsSendOutcome submitted(SyncPoller<EmailSendResult, EmailSendResult> poller) {
+    @Override
+    public AcsSendOutcome send(EmailMessage message, UUID operationId) {
+        // Throws HttpResponseException etc. when ACS rejects the request.
+        SyncPoller<EmailSendResult, EmailSendResult> poller = operationId == null
+                ? client.beginSend(message)
+                : client.beginSend(message, operationIdContext(operationId));
+        String suppliedId = operationId == null ? null : operationId.toString();
+        return sendMode == SendMode.SUBMIT ? submitted(poller, suppliedId) : awaitCompletion(poller, suppliedId);
+    }
+
+    /**
+     * A {@link Context} that makes azure-core add {@code Operation-Id: <operationId>}
+     * to the send request (and harmlessly to the status polls that reuse the context).
+     */
+    static Context operationIdContext(UUID operationId) {
+        return new Context(AddHeadersFromContextPolicy.AZURE_REQUEST_HTTP_HEADERS_KEY,
+                new HttpHeaders().set(OPERATION_ID, operationId.toString()));
+    }
+
+    private static AcsSendOutcome submitted(SyncPoller<EmailSendResult, EmailSendResult> poller,
+                                            String suppliedId) {
+        if (suppliedId != null) {
+            // The id is ours, so no status call is needed to learn it.
+            return AcsSendOutcome.of(suppliedId, Status.SUBMITTED);
+        }
         PollResponse<EmailSendResult> response;
         try {
             response = poller.poll();
@@ -62,26 +104,33 @@ public class SdkAcsEmailGateway implements AcsEmailGateway {
             // ACS already accepted the message. Reporting a failure here would make
             // the retry executor send it a second time, so report the submission
             // without an id instead.
-            log.warn("ACS accepted the email but reading the operation id failed: {}", e.getMessage());
+            log.warn("ACS accepted the email but reading the operation id failed: {}",
+                    PiiMasking.redact(e.getMessage()));
             return AcsSendOutcome.of(null, Status.SUBMITTED);
         }
-        return toOutcome(response == null ? null : response.getValue());
+        return toOutcome(response == null ? null : response.getValue(), null);
     }
 
-    private AcsSendOutcome awaitCompletion(SyncPoller<EmailSendResult, EmailSendResult> poller) {
+    private AcsSendOutcome awaitCompletion(SyncPoller<EmailSendResult, EmailSendResult> poller,
+                                           String suppliedId) {
         PollResponse<EmailSendResult> response;
         try {
             response = poller.waitForCompletion(waitTimeout);
         } catch (RuntimeException e) {
-            if (!isTimeout(e)) {
-                throw e;
+            // beginSend returned, so ACS accepted the message: whatever went wrong
+            // while waiting, resending could deliver it twice.
+            String operationId = suppliedId != null ? suppliedId : recoverOperationId(poller);
+            if (isTimeout(e)) {
+                log.warn("ACS email operation {} did not reach a final status within {}", operationId, waitTimeout);
+                return new AcsSendOutcome(operationId, Status.UNCONFIRMED, CODE_WAIT_TIMEOUT,
+                        "ACS did not report a final status within " + waitTimeout);
             }
-            String operationId = recoverOperationId(poller);
-            log.warn("ACS email operation {} did not reach a final status within {}", operationId, waitTimeout);
-            return new AcsSendOutcome(operationId, Status.TIMED_OUT, "ACS_WAIT_TIMEOUT",
-                    "ACS did not report a final status within " + waitTimeout);
+            String error = PiiMasking.redact(e.getMessage());
+            log.warn("ACS accepted email operation {} but reading its status failed: {}", operationId, error);
+            return new AcsSendOutcome(operationId, Status.UNCONFIRMED, CODE_POLL_FAILED,
+                    "ACS accepted the message but reading its status failed: " + error);
         }
-        return toOutcome(response == null ? null : response.getValue());
+        return toOutcome(response == null ? null : response.getValue(), suppliedId);
     }
 
     private static String recoverOperationId(SyncPoller<EmailSendResult, EmailSendResult> poller) {
@@ -89,30 +138,32 @@ public class SdkAcsEmailGateway implements AcsEmailGateway {
             PollResponse<EmailSendResult> response = poller.poll();
             return response == null || response.getValue() == null ? null : response.getValue().getId();
         } catch (RuntimeException e) {
-            log.debug("Could not read the ACS operation id after the wait timeout: {}", e.getMessage());
+            log.debug("Could not read the ACS operation id after the wait failed: {}",
+                    PiiMasking.redact(e.getMessage()));
             return null;
         }
     }
 
-    private static AcsSendOutcome toOutcome(EmailSendResult result) {
+    private static AcsSendOutcome toOutcome(EmailSendResult result, String suppliedId) {
         if (result == null) {
-            return AcsSendOutcome.of(null, Status.SUBMITTED);
+            return AcsSendOutcome.of(suppliedId, Status.SUBMITTED);
         }
+        String id = result.getId() != null ? result.getId() : suppliedId;
         EmailSendStatus status = result.getStatus();
         if (EmailSendStatus.SUCCEEDED.equals(status)) {
-            return AcsSendOutcome.of(result.getId(), Status.SUCCEEDED);
+            return AcsSendOutcome.of(id, Status.SUCCEEDED);
         }
         if (EmailSendStatus.FAILED.equals(status)) {
             ResponseError error = result.getError();
-            return new AcsSendOutcome(result.getId(), Status.FAILED,
+            return new AcsSendOutcome(id, Status.FAILED,
                     error == null ? null : error.getCode(),
                     error == null ? null : error.getMessage());
         }
         if (EmailSendStatus.CANCELED.equals(status)) {
-            return AcsSendOutcome.of(result.getId(), Status.CANCELED);
+            return AcsSendOutcome.of(id, Status.CANCELED);
         }
         // NOT_STARTED, RUNNING, or a status this SDK version does not know yet.
-        return AcsSendOutcome.of(result.getId(), Status.SUBMITTED);
+        return AcsSendOutcome.of(id, Status.SUBMITTED);
     }
 
     /**

@@ -128,6 +128,26 @@ class DefaultNotificationServiceRetryTest {
     }
 
     @Test
+    void failureWithProviderMessageId_keepsTheIdInResponseAuditAndDeadLetter() {
+        stubRender();
+        stubProviderResolution();
+        when(provider.send(any(), any()))
+                .thenReturn(SendResult.failure("ACS_SEND_FAILED", "rejected",
+                        FailureType.PERMANENT, "op-7"));
+        NotificationRequest request = baseRequest();
+
+        NotificationResponse response = service.send(request);
+
+        assertThat(response.status()).isEqualTo(NotificationStatus.FAILED);
+        assertThat(response.providerMessageId()).isEqualTo("op-7");
+        verify(auditService).updateStatus(request.getRequestId(), NotificationStatus.FAILED,
+                "op-7", "ACS_SEND_FAILED", "rejected");
+        ArgumentCaptor<DeadLetterEntry> captor = ArgumentCaptor.forClass(DeadLetterEntry.class);
+        verify(deadLetterStore).add(captor.capture());
+        assertThat(captor.getValue().response().providerMessageId()).isEqualTo("op-7");
+    }
+
+    @Test
     void exhaustedRetries_recordedToDLQ_withMaxAttempts() {
         stubRender();
         stubProviderResolution();

@@ -112,7 +112,7 @@ need is again the audit backend's own problem.
 ### Why response is the raw NotificationAudit shape (not a redaction)
 
 `NotificationAudit` already stores the recipient in masked form
-(`j***@example.com`, `+1***890`) per DD-07. No further redaction is
+(`to=j***@example.com cc=0 bcc=0`, `phone=+1***90`) per DD-07. No further redaction is
 needed; the response can be the audit record as-is. Unlike DD-13
 DLQ entries (which hold the full `NotificationRequest`), audit is
 already PII-safe by construction.

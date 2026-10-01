@@ -7,17 +7,28 @@ import com.lazydevs.notification.api.model.FailureTypes;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.SendResult;
 import com.lazydevs.notification.api.model.SmsRecipient;
+import com.lazydevs.notification.api.util.PiiMasking;
 import com.twilio.Twilio;
 import com.twilio.exception.ApiException;
 import com.twilio.exception.AuthenticationException;
+import com.twilio.http.TwilioRestClient;
 import com.twilio.rest.api.v2010.account.Message;
+import com.twilio.rest.api.v2010.account.MessageCreator;
 import com.twilio.type.PhoneNumber;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Twilio SMS provider implementation.
+ *
+ * <p>The default instance initialises the process-wide Twilio SDK with
+ * {@code Twilio.init}, so every instance in the JVM shares the last account
+ * configured.
+ * {@link #withClient(TwilioRestClient)} builds an instance that sends through its own
+ * client instead, without touching the global SDK state; use it for tests (a mocked
+ * client) and when one JVM needs more than one Twilio account.
  */
 @Slf4j
 public class TwilioSmsProvider implements SmsProvider {
@@ -26,6 +37,34 @@ public class TwilioSmsProvider implements SmsProvider {
     private String authToken;
     private String fromNumber;
     private boolean initialized = false;
+    /** Set by {@link #withClient(TwilioRestClient)}; {@code null} means the global SDK client. */
+    private TwilioRestClient client;
+
+    /**
+     * Reflective / bean construction; {@link #init()} calls {@code Twilio.init}.
+     */
+    public TwilioSmsProvider() {
+        // Settings arrive through configure(...).
+    }
+
+    /**
+     * A provider that sends through {@code client}, for example a Mockito mock of
+     * {@link TwilioRestClient} or one built with its own {@code HttpClient}.
+     * Call {@link #configure(Map)} for the {@code from} number as usual; the
+     * account settings are not needed, and {@link #init()} does not call
+     * {@code Twilio.init}.
+     * The instance can send right away.
+     *
+     * @param client the Twilio REST client
+     * @return the provider
+     * @since 1.1.1
+     */
+    public static TwilioSmsProvider withClient(TwilioRestClient client) {
+        TwilioSmsProvider provider = new TwilioSmsProvider();
+        provider.client = Objects.requireNonNull(client, "client");
+        provider.initialized = true;
+        return provider;
+    }
 
     @Override
     public String getProviderName() {
@@ -38,11 +77,15 @@ public class TwilioSmsProvider implements SmsProvider {
         this.authToken = getString(properties, "auth-token", getString(properties, "authToken", null));
         this.fromNumber = getString(properties, "from", null);
 
-        log.debug("Twilio SMS provider configured: from={}", fromNumber);
+        log.debug("Twilio SMS provider configured: from={}", PiiMasking.maskPhone(fromNumber));
     }
 
     @Override
     public void init() {
+        if (client != null) {
+            log.info("Twilio SMS provider initialized with a supplied client");
+            return;
+        }
         if (accountSid == null || authToken == null) {
             throw new IllegalStateException("Twilio account-sid and auth-token are required");
         }
@@ -70,13 +113,15 @@ public class TwilioSmsProvider implements SmsProvider {
         SmsRecipient recipient = (SmsRecipient) request.getRecipient();
 
         try {
-            Message message = Message.creator(
+            MessageCreator creator = Message.creator(
                     new PhoneNumber(recipient.phoneNumber()),
                     new PhoneNumber(fromNumber),
                     content.textBody()
-            ).create();
+            );
+            Message message = client != null ? creator.create(client) : creator.create();
 
-            log.debug("SMS sent via Twilio: to={}, sid={}", recipient.phoneNumber(), message.getSid());
+            log.debug("SMS sent via Twilio: to={}, sid={}",
+                    PiiMasking.maskPhone(recipient.phoneNumber()), message.getSid());
 
             return SendResult.success(message.getSid(), Map.of(
                     "status", message.getStatus().toString(),
@@ -84,10 +129,11 @@ public class TwilioSmsProvider implements SmsProvider {
             ));
 
         } catch (Exception e) {
+            String error = PiiMasking.redact(e.getMessage());
             log.error("Failed to send SMS via Twilio: to={}, error={}",
-                    recipient.phoneNumber(), e.getMessage());
+                    PiiMasking.maskPhone(recipient.phoneNumber()), error);
             return SendResult.failure(
-                    e.getClass().getSimpleName(), e.getMessage(), classifyTwilio(e));
+                    e.getClass().getSimpleName(), error, classifyTwilio(e));
         }
     }
 

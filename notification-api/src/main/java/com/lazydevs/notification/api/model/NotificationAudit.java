@@ -73,7 +73,10 @@ public class NotificationAudit {
     private String provider;
 
     /**
-     * Masked recipient (e.g., "j***@example.com", "+1***890")
+     * Masked recipient from
+     * {@link com.lazydevs.notification.api.util.PiiMasking#mask(Recipient)},
+     * e.g. {@code "to=j***@example.com cc=0 bcc=0"} or {@code "phone=+1***90"}.
+     * Never the raw address or number.
      */
     private String recipientSummary;
 
