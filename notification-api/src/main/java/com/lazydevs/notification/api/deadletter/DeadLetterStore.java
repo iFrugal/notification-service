@@ -141,6 +141,38 @@ public interface DeadLetterStore {
     }
 
     /**
+     * Claim one specific entry, identified by tenant and original request
+     * id, under the same lease contract as
+     * {@link #claim(String, int, Duration)}: while the lease is live no
+     * other {@code claim} call (targeted or not) returns it, and the caller
+     * acknowledges with {@link #remove(String, String)} or gives it back
+     * with {@link #release(String, String)}.
+     *
+     * <p>Returns {@link Optional#empty()} when the entry does not exist
+     * <em>or</em> is currently leased by another claimer; callers that need
+     * to tell the two apart follow up with
+     * {@link #findByRequestId(String, String)}.
+     *
+     * <p>The default returns {@link #findByRequestId(String, String)} and,
+     * like the default {@link #claim(String, int, Duration)}, takes
+     * <strong>no lease</strong>: it is only safe for single-replica stores.
+     * A store that overrides {@link #claim(String, int, Duration)} with real
+     * leases must override this method too, or single-entry replay bypasses
+     * its leases. Added after the SPI's initial release, so existing
+     * implementations compile unchanged.
+     *
+     * @param tenantId  tenant of the entry; {@code null} for entries
+     *                  without a tenant
+     * @param requestId original request id of the entry
+     * @param lease     how long the claim is held before the entry becomes
+     *                  claimable again
+     * @return the claimed entry, or empty if absent or claimed elsewhere
+     */
+    default Optional<DeadLetterEntry> claim(String tenantId, String requestId, Duration lease) {
+        return findByRequestId(tenantId, requestId);
+    }
+
+    /**
      * Give up the lease taken by {@link #claim(String, int, Duration)} on a
      * single entry so it can be claimed again immediately, typically after
      * a failed replay. Releasing an entry that is not claimed, or does not

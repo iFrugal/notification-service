@@ -2,11 +2,15 @@ package com.lazydevs.notification.rest.filter;
 
 import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.caller.CallerRegistry.Decision;
+import com.lazydevs.notification.core.config.NotificationProperties;
 import jakarta.servlet.FilterChain;
+import lazydevs.persistence.connection.multitenant.TenantContext;
 import lazydevs.services.basic.filter.RequestContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
@@ -105,5 +109,70 @@ class CallerAdmissionFilterTest {
         String body = res.getContentAsString();
         assertThat(body).contains("\"error\":\"unknown_caller\"");
         assertThat(body).contains("\"callerId\":\"billing-svc\"");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"X-Service-Id", "x-service-id", "X-SERVICE-ID"})
+    void withoutStashedCaller_readsTheHeaderCaseInsensitively(String headerName) throws Exception {
+        RequestContext.reset();
+        when(registry.isEnabled()).thenReturn(true);
+        when(registry.admit(any())).thenReturn(Decision.REJECT);
+        when(registry.admit("billing-svc")).thenReturn(Decision.ACCEPT);
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/v1/notifications");
+        req.addHeader(headerName, "billing-svc");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilter(req, res, chain);
+
+        verify(registry).admit("billing-svc");
+        verify(chain, times(1)).doFilter(req, res);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"X-Service-Id", "x-service-id", "X-SERVICE-ID"})
+    void behindTenantFilter_admitsAKnownCallerWhateverTheSpelling(String headerName) throws Exception {
+        RequestContext.reset();
+        when(registry.isEnabled()).thenReturn(true);
+        when(registry.admit(any())).thenReturn(Decision.REJECT);
+        when(registry.admit("billing-svc")).thenReturn(Decision.ACCEPT);
+        TenantFilter tenantFilter = new TenantFilter(new NotificationProperties());
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/v1/notifications");
+        req.addHeader(headerName, "billing-svc");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        FilterChain terminal = mock(FilterChain.class);
+
+        try {
+            tenantFilter.doFilter(req, res, (rq, rs) -> filter.doFilter(rq, rs, terminal));
+        } finally {
+            TenantContext.reset();
+        }
+
+        verify(registry).admit("billing-svc");
+        verify(terminal, times(1)).doFilter(any(), any());
+        assertThat(res.getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void behindTenantFilter_rejectsAnUnknownCallerSentInMixedCase() throws Exception {
+        RequestContext.reset();
+        when(registry.isEnabled()).thenReturn(true);
+        when(registry.admit(any())).thenReturn(Decision.REJECT);
+        TenantFilter tenantFilter = new TenantFilter(new NotificationProperties());
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/v1/notifications");
+        req.addHeader("X-Service-Id", "rogue-svc");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        FilterChain terminal = mock(FilterChain.class);
+
+        try {
+            tenantFilter.doFilter(req, res, (rq, rs) -> filter.doFilter(rq, rs, terminal));
+        } finally {
+            TenantContext.reset();
+        }
+
+        verify(registry).admit("rogue-svc");
+        verify(terminal, never()).doFilter(any(), any());
+        assertThat(res.getStatus()).isEqualTo(403);
+        assertThat(res.getContentAsString()).contains("\"callerId\":\"rogue-svc\"");
     }
 }

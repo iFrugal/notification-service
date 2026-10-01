@@ -17,15 +17,19 @@ import com.lazydevs.notification.core.template.NotificationTemplateEngine;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -39,11 +43,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Tests for the DD-15 DLQ replay endpoint
  * ({@code POST /admin/dead-letter/{requestId}/replay}).
  *
+ * <p>The endpoint claims the entry before sending, removes it on success
+ * (the acknowledgement) and releases it on failure, so the store mock is
+ * stubbed on the targeted {@code claim} rather than {@code findByRequestId}.
+ *
  * <p>Standalone {@link MockMvcBuilders#standaloneSetup} so we don't pull
  * the full Boot 4 split test-autoconfig into this module's test
  * classpath — same pattern the other controller tests use.
  */
 class AdminControllerReplayTest {
+
+    private static final Duration LEASE = Duration.ofSeconds(90);
 
     private NotificationService notificationService;
     private DeadLetterStore deadLetterStore;
@@ -57,6 +67,7 @@ class AdminControllerReplayTest {
         properties = new NotificationProperties();
         properties.setDefaultTenant("default-tenant");
         properties.getDeadLetter().setEnabled(true);
+        properties.getDeadLetter().setReplayLease(LEASE);
 
         AdminController controller = new AdminController(
                 properties,
@@ -74,15 +85,9 @@ class AdminControllerReplayTest {
     @Test
     void replay_happyPath_returnsNewRequestIdAndRemovesEntry() throws Exception {
         DeadLetterEntry entry = entry("req-orig", "acme");
-        when(deadLetterStore.findByRequestId("acme", "req-orig")).thenReturn(Optional.of(entry));
+        when(deadLetterStore.claim("acme", "req-orig", LEASE)).thenReturn(Optional.of(entry));
         when(deadLetterStore.remove("acme", "req-orig")).thenReturn(true);
-        when(notificationService.send(any())).thenAnswer(inv -> {
-            NotificationRequest req = inv.getArgument(0);
-            return new NotificationResponse(
-                    req.getRequestId(), null, req.getTenantId(), req.getCallerId(),
-                    req.getChannel(), "smtp", NotificationStatus.SENT, "msg-1",
-                    null, null, Instant.now(), Instant.now(), Instant.now(), null);
-        });
+        when(notificationService.send(any())).thenAnswer(inv -> sent(inv.getArgument(0)));
 
         mockMvc.perform(post("/api/v1/admin/dead-letter/req-orig/replay")
                         .param("tenantId", "acme"))
@@ -110,9 +115,27 @@ class AdminControllerReplayTest {
     }
 
     @Test
-    void replay_failedSend_returns502AndKeepsEntry() throws Exception {
+    void replay_success_claimsThenSendsThenRemoves_neverReleases() throws Exception {
         DeadLetterEntry entry = entry("req-orig", "acme");
-        when(deadLetterStore.findByRequestId("acme", "req-orig")).thenReturn(Optional.of(entry));
+        when(deadLetterStore.claim("acme", "req-orig", LEASE)).thenReturn(Optional.of(entry));
+        when(deadLetterStore.remove("acme", "req-orig")).thenReturn(true);
+        when(notificationService.send(any())).thenAnswer(inv -> sent(inv.getArgument(0)));
+
+        mockMvc.perform(post("/api/v1/admin/dead-letter/req-orig/replay")
+                        .param("tenantId", "acme"))
+                .andExpect(status().isOk());
+
+        InOrder order = inOrder(deadLetterStore, notificationService);
+        order.verify(deadLetterStore).claim("acme", "req-orig", LEASE);
+        order.verify(notificationService).send(any());
+        order.verify(deadLetterStore).remove("acme", "req-orig");
+        verify(deadLetterStore, never()).release(any(), any());
+    }
+
+    @Test
+    void replay_failedSend_returns502KeepsAndReleasesEntry() throws Exception {
+        DeadLetterEntry entry = entry("req-orig", "acme");
+        when(deadLetterStore.claim("acme", "req-orig", LEASE)).thenReturn(Optional.of(entry));
         when(notificationService.send(any())).thenAnswer(inv -> {
             NotificationRequest req = inv.getArgument(0);
             return new NotificationResponse(
@@ -130,12 +153,15 @@ class AdminControllerReplayTest {
                 .andExpect(jsonPath("$.errorMessage").value("smtp 421 — try again later"));
 
         // Original entry must NOT have been removed on a failed replay —
-        // operators see it's still in the queue.
+        // operators see it's still in the queue - and its claim is given
+        // back so another attempt can take it without waiting for the lease.
         verify(deadLetterStore, never()).remove(any(), any());
+        verify(deadLetterStore).release("acme", "req-orig");
     }
 
     @Test
     void replay_unknownRequestId_returns404() throws Exception {
+        when(deadLetterStore.claim(eq("acme"), eq("nope"), any(Duration.class))).thenReturn(Optional.empty());
         when(deadLetterStore.findByRequestId(eq("acme"), eq("nope"))).thenReturn(Optional.empty());
 
         mockMvc.perform(post("/api/v1/admin/dead-letter/nope/replay")
@@ -146,6 +172,30 @@ class AdminControllerReplayTest {
 
         verify(notificationService, never()).send(any());
         verify(deadLetterStore, never()).remove(any(), any());
+        verify(deadLetterStore, never()).release(any(), any());
+    }
+
+    @Test
+    void replay_entryClaimedByAnotherReplay_returns409AndSendsNothing() throws Exception {
+        // The entry exists, but another replica's replay holds its lease,
+        // so the targeted claim comes back empty.
+        when(deadLetterStore.claim("acme", "req-orig", LEASE)).thenReturn(Optional.empty());
+        when(deadLetterStore.findByRequestId("acme", "req-orig"))
+                .thenReturn(Optional.of(entry("req-orig", "acme")));
+
+        mockMvc.perform(post("/api/v1/admin/dead-letter/req-orig/replay")
+                        .param("tenantId", "acme"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.status").value("CLAIMED"))
+                .andExpect(jsonPath("$.originalRequestId").value("req-orig"))
+                .andExpect(jsonPath("$.tenantId").value("acme"))
+                .andExpect(jsonPath("$.message").value(
+                        org.hamcrest.Matchers.containsString("claimed by another replay")));
+
+        verify(notificationService, never()).send(any());
+        verify(deadLetterStore, never()).remove(any(), any());
+        // Not ours to release: the other replay still holds the lease.
+        verify(deadLetterStore, never()).release(any(), any());
     }
 
     @Test
@@ -175,26 +225,20 @@ class AdminControllerReplayTest {
     void replay_tenantIdDefaultsToConfiguredDefaultTenant() throws Exception {
         // No tenantId param → should resolve to properties.defaultTenant.
         DeadLetterEntry entry = entry("req-x", "default-tenant");
-        when(deadLetterStore.findByRequestId("default-tenant", "req-x")).thenReturn(Optional.of(entry));
+        when(deadLetterStore.claim("default-tenant", "req-x", LEASE)).thenReturn(Optional.of(entry));
         when(deadLetterStore.remove("default-tenant", "req-x")).thenReturn(true);
-        when(notificationService.send(any())).thenAnswer(inv -> {
-            NotificationRequest req = inv.getArgument(0);
-            return new NotificationResponse(
-                    req.getRequestId(), null, req.getTenantId(), req.getCallerId(),
-                    req.getChannel(), "smtp", NotificationStatus.SENT, "msg-1",
-                    null, null, Instant.now(), Instant.now(), Instant.now(), null);
-        });
+        when(notificationService.send(any())).thenAnswer(inv -> sent(inv.getArgument(0)));
 
         mockMvc.perform(post("/api/v1/admin/dead-letter/req-x/replay"))
                 .andExpect(status().isOk());
 
-        verify(deadLetterStore).findByRequestId("default-tenant", "req-x");
+        verify(deadLetterStore).claim("default-tenant", "req-x", LEASE);
     }
 
     @Test
-    void replay_serviceThrows_returns500AndKeepsEntry() throws Exception {
+    void replay_serviceThrows_returns500KeepsAndReleasesEntry() throws Exception {
         DeadLetterEntry entry = entry("req-orig", "acme");
-        when(deadLetterStore.findByRequestId("acme", "req-orig")).thenReturn(Optional.of(entry));
+        when(deadLetterStore.claim("acme", "req-orig", LEASE)).thenReturn(Optional.of(entry));
         when(notificationService.send(any())).thenThrow(new RuntimeException("kaboom"));
 
         mockMvc.perform(post("/api/v1/admin/dead-letter/req-orig/replay")
@@ -204,11 +248,31 @@ class AdminControllerReplayTest {
                         org.hamcrest.Matchers.containsString("Replay errored")));
 
         verify(deadLetterStore, never()).remove(any(), any());
+        verify(deadLetterStore).release("acme", "req-orig");
+    }
+
+    @Test
+    void replay_usesTheConfiguredLease() throws Exception {
+        properties.getDeadLetter().setReplayLease(Duration.ofMinutes(17));
+        when(deadLetterStore.claim(anyString(), anyString(), any(Duration.class))).thenReturn(Optional.empty());
+
+        mockMvc.perform(post("/api/v1/admin/dead-letter/req-orig/replay")
+                        .param("tenantId", "acme"))
+                .andExpect(status().isNotFound());
+
+        verify(deadLetterStore).claim("acme", "req-orig", Duration.ofMinutes(17));
     }
 
     // -----------------------------------------------------------------
     //  Helpers
     // -----------------------------------------------------------------
+
+    private static NotificationResponse sent(NotificationRequest req) {
+        return new NotificationResponse(
+                req.getRequestId(), null, req.getTenantId(), req.getCallerId(),
+                req.getChannel(), "smtp", NotificationStatus.SENT, "msg-1",
+                null, null, Instant.now(), Instant.now(), Instant.now(), null);
+    }
 
     private static DeadLetterEntry entry(String requestId, String tenantId) {
         NotificationRequest req = NotificationRequest.builder()
