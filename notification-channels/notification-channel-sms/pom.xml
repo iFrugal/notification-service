@@ -17,7 +17,6 @@
 
     <modules>
         <module>sms-provider-twilio</module>
-        <module>sms-provider-sns</module>
     </modules>
 
 </project>

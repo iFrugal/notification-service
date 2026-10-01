@@ -34,12 +34,6 @@
             <artifactId>notification-kafka</artifactId>
         </dependency>
 
-        <!-- Audit -->
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>notification-audit</artifactId>
-        </dependency>
-
         <!-- All Email Providers -->
         <dependency>
             <groupId>${project.groupId}</groupId>
@@ -54,30 +48,6 @@
         <dependency>
             <groupId>${project.groupId}</groupId>
             <artifactId>sms-provider-twilio</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>sms-provider-sns</artifactId>
-        </dependency>
-
-        <!-- All WhatsApp Providers -->
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>whatsapp-provider-twilio</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>whatsapp-provider-meta</artifactId>
-        </dependency>
-
-        <!-- All Push Providers -->
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>push-provider-fcm</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>push-provider-apns</artifactId>
         </dependency>
 
         <!-- Persistence Implementations (user chooses one) -->
