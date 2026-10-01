@@ -18,8 +18,6 @@
     <modules>
         <module>notification-channel-email</module>
         <module>notification-channel-sms</module>
-        <module>notification-channel-whatsapp</module>
-        <module>notification-channel-push</module>
     </modules>
 
     <!-- Common dependency for all channel modules -->

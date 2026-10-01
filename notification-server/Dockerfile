@@ -9,7 +9,6 @@ WORKDIR /build
 COPY pom.xml .
 COPY notification-api/pom.xml notification-api/
 COPY notification-core/pom.xml notification-core/
-COPY notification-audit/pom.xml notification-audit/
 COPY notification-kafka/pom.xml notification-kafka/
 COPY notification-rest/pom.xml notification-rest/
 COPY notification-channels/pom.xml notification-channels/
@@ -18,13 +17,6 @@ COPY notification-channels/notification-channel-email/email-provider-smtp/pom.xm
 COPY notification-channels/notification-channel-email/email-provider-ses/pom.xml notification-channels/notification-channel-email/email-provider-ses/
 COPY notification-channels/notification-channel-sms/pom.xml notification-channels/notification-channel-sms/
 COPY notification-channels/notification-channel-sms/sms-provider-twilio/pom.xml notification-channels/notification-channel-sms/sms-provider-twilio/
-COPY notification-channels/notification-channel-sms/sms-provider-sns/pom.xml notification-channels/notification-channel-sms/sms-provider-sns/
-COPY notification-channels/notification-channel-whatsapp/pom.xml notification-channels/notification-channel-whatsapp/
-COPY notification-channels/notification-channel-whatsapp/whatsapp-provider-twilio/pom.xml notification-channels/notification-channel-whatsapp/whatsapp-provider-twilio/
-COPY notification-channels/notification-channel-whatsapp/whatsapp-provider-meta/pom.xml notification-channels/notification-channel-whatsapp/whatsapp-provider-meta/
-COPY notification-channels/notification-channel-push/pom.xml notification-channels/notification-channel-push/
-COPY notification-channels/notification-channel-push/push-provider-fcm/pom.xml notification-channels/notification-channel-push/push-provider-fcm/
-COPY notification-channels/notification-channel-push/push-provider-apns/pom.xml notification-channels/notification-channel-push/push-provider-apns/
 COPY notification-spring-boot-starter/pom.xml notification-spring-boot-starter/
 COPY notification-server/pom.xml notification-server/
 
