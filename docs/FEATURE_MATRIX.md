@@ -31,7 +31,7 @@ This is the single dependency that brings the service in:
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>notification-spring-boot-starter</artifactId>
-    <version>1.0.2</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -42,13 +42,15 @@ This is the single dependency that brings the service in:
 | Multi-tenant routing (`X-Tenant-Id`) | 🟢 | DD-03 |
 | Provider registry + lifecycle | 🟢 | DD-05 / DD-06 |
 | In-memory idempotency store (Caffeine) | 🟢 | DD-10; `notification.idempotency.enabled` defaults to `true` |
-| REST transport (`/api/v1/notifications`, `/api/v1/admin/*`) | 🟢 | DD Phase 9 — module is `<optional>true</optional>` in the starter; **pulled by default when present** |
+| REST transport (`/api/v1/notifications`, `/api/v1/admin/*`) | 🔵 📦 | Off by default since 1.1.0. Add `notification-rest` (optional in the starter) and set `notification.rest.enabled: true` |
 
 **Minimum `application.yml`:**
 
 ```yaml
 notification:
   default-tenant: default
+  rest:
+    enabled: true                  # only if you added notification-rest and want the HTTP API
   tenants:
     default:
       channels:
@@ -65,6 +67,8 @@ notification:
 ```
 
 You also need **at least one provider JAR** (next section).
+Each provider module registers its provider through its own auto-configuration, as a prototype bean named `<name><Channel>Provider` (for example `smtpEmailProvider`).
+A provider that is configured but whose module is missing fails startup with a message naming the artifact to add.
 
 ---
 
@@ -86,7 +90,7 @@ deployment doesn't transitively inherit AWS or Twilio SDKs.
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>email-provider-smtp</artifactId>
-    <version>1.0.2</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -153,30 +157,31 @@ The aggregator poms `notification-channel-whatsapp` and `notification-channel-pu
 ## 3. Cross-cutting features
 
 Each row = one independently-toggleable feature. Default-off unless noted.
-All have an in-memory default; most have an optional Redis backend.
+All have an in-memory default; the stateful ones can move to Redis or PostgreSQL with `notification.store.type` (see [section 4](#4-distributed-mode-multi-pod)).
 
-| Feature | DD | Default | Enable flag | In-memory default | Optional Redis backend |
-|---------|----|---------|-------------|-------------------|------------------------|
-| **Idempotency** | DD-10 | 🟢 On | `notification.idempotency.enabled: true` | Caffeine (in `notification-core`, always present) | `notification.redis.idempotency.enabled: true` |
-| **Caller identity** (`X-Service-Id`) | DD-11 | 🟢 On (registry off) | `notification.caller-registry.enabled: true` to enforce | n/a | n/a |
-| **Rate limiting** | DD-12 | 🔵 Off | `notification.rate-limit.enabled: true` | Bucket4j (in `notification-core`) | `notification.redis.rate-limit.enabled: true` |
-| **Retries** | DD-13 | 🔵 Off | `notification.retry.enabled: true` | Built-in | n/a |
-| **Dead-letter queue** | DD-13 | 🔵 Off | `notification.dead-letter.enabled: true` | Caffeine LRU (in `notification-core`) | `notification.redis.dead-letter.enabled: true` |
-| **Per-channel retry + rate-limit overrides** | DD-23 | n/a | composes on top of retry / rate-limit when those are enabled | n/a | n/a |
-| **Webhook ingestion** (Twilio + SES) | DD-16 | 🔵 Off | `notification.webhooks.enabled: true` + per-provider | n/a | n/a |
-| **Delivery event store** | DD-17 | 🔵 Off | `notification.delivery-events.enabled: true` | Caffeine LRU | `notification.redis.delivery-events.enabled: true` |
-| **Audit persistence** | DD-07 | 🔵 Off | `notification.audit.enabled: true` | No-op (logs only) | Bring your own via `persistence-api` |
+| Feature | DD | Default | Enable flag | In-memory default | Redis (`store.type: redis`) | JDBC (`store.type: jdbc`) |
+|---------|----|---------|-------------|-------------------|-----------------------------|---------------------------|
+| **Idempotency** | DD-10 | 🟢 On | `notification.idempotency.enabled: true` | Caffeine (in `notification-core`, always present) | `RedisIdempotencyStore` | `JdbcIdempotencyStore` |
+| **Caller identity** (`X-Service-Id`) | DD-11 | 🟢 On (registry off) | `notification.caller-registry.enabled: true` to enforce | n/a | n/a | n/a |
+| **Rate limiting** | DD-12 | 🔵 Off | `notification.rate-limit.enabled: true` | Bucket4j (in `notification-core`) | `RedisRateLimiter` | None: memory or Redis only |
+| **Retries** | DD-13 | 🔵 Off | `notification.retry.enabled: true` | Built-in | n/a | n/a |
+| **Dead-letter queue** | DD-13 | 🔵 Off | `notification.dead-letter.enabled: true` | Caffeine LRU (in `notification-core`) | `RedisDeadLetterStore` | `JdbcDeadLetterStore` (replica-safe replay) |
+| **Per-channel retry + rate-limit overrides** | DD-23 | n/a | composes on top of retry / rate-limit when those are enabled | n/a | n/a | n/a |
+| **Webhook ingestion** (Twilio + SES) | DD-16 | 🔵 Off | `notification.webhooks.enabled: true` + per-provider; needs REST | n/a | n/a | n/a |
+| **Delivery event store** | DD-17 | 🔵 Off | `notification.delivery-events.enabled: true` | Caffeine LRU | `RedisDeliveryEventStore` | `JdbcDeliveryEventStore` |
+| **Audit persistence** | DD-07 | 🔵 Off | `notification.audit.enabled: true` | No-op (logs only) | Bring your own via `persistence-api` | Bring your own |
 
 ### 3a. Idempotency (DD-10)
 
 **Already on by default with a Caffeine in-memory store.** Customers want
-multi-pod? Flip the Redis backend:
+multi-pod?
+Switch the store family to Redis (or `jdbc`, see section 4):
 
 ```xml
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>notification-redis</artifactId>
-    <version>1.0.2</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -187,10 +192,11 @@ notification:
     ttl: 24h
     max-entries: 100000
 
+  store:
+    type: redis                    # ⚠️ requires Redis reachable
+
   redis:
     key-prefix: notification-svc
-    idempotency:
-      enabled: true                # ⚠️ requires Redis reachable
 
 spring:
   data:
@@ -250,6 +256,7 @@ notification:
   dead-letter:
     enabled: true
     max-entries: 1000              # in-memory bound; Redis tunes separately
+    replay-lease: PT5M             # how long a replay holds its claim on an entry
 ```
 
 Operator endpoints (DD-15 + DD-19):
@@ -257,14 +264,19 @@ Operator endpoints (DD-15 + DD-19):
 - `POST /api/v1/admin/dead-letter/{requestId}/replay` — single replay
 - `POST /api/v1/admin/dead-letter/replay-batch?tenantId=acme&dryRun=true` — bulk
 
+Replay claims each entry for `replay-lease` before sending, removes it on success and releases it on failure.
+An entry another replay holds is skipped: `409` with `status: CLAIMED` for a single replay, a `CLAIMED` row counted under `claimed` in a batch.
+Only the JDBC store enforces claims across replicas; the in-memory and Redis stores do not lease.
+
 For distributed (multi-pod) DLQ:
 
 ```yaml
 notification:
+  store:
+    type: jdbc                     # or redis
   redis:
     dead-letter:
-      enabled: true
-      max-entries: 10000
+      max-entries: 10000           # Redis list cap, when Redis backs the DLQ
 ```
 
 ### 3d. Webhooks — provider delivery callbacks (DD-16 + DD-17)
@@ -303,28 +315,85 @@ Query operator endpoints:
 
 For deployments running 2+ pods, the in-memory stores (idempotency,
 rate-limit buckets, DLQ, delivery events) live in each pod separately.
-Add the Redis backend so all pods share one source of truth.
+Add the Redis or the JDBC backend so all pods share one source of truth.
 
-### 4a. Add the JAR
+### 4a. How the starter wires stores
+
+The starter does not component-scan.
+Every module (core, REST, Kafka, Redis, JDBC and each provider) registers its beans through its own `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`, so adding a jar is the wiring.
+The Redis and JDBC auto-configurations run before the core in-memory defaults, so a selected Redis or JDBC store wins and the default backs off; a bean of the same SPI that you declare yourself wins over both.
+Beans of your own under `com.lazydevs.notification.*` are not picked up by the starter; register them yourself.
+
+`notification.store.type` (`memory` by default, `redis` or `jdbc`) selects the family; per feature:
+
+1. The feature flag (`notification.<feature>.enabled`) is the master switch.
+   A disabled feature gets no store.
+2. An explicit `notification.redis.<feature>.enabled` overrides the family for that feature: `true` is Redis, `false` is memory.
+   It does not switch the feature on.
+3. Otherwise `notification.store.type` decides.
+
+An enabled feature whose selected family's module is missing fails startup, naming the artifact to add.
+
+### 4b. Redis
 
 ```xml
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>notification-redis</artifactId>
-    <version>1.0.2</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
-### 4b. Enable per-feature
+```yaml
+notification:
+  store:
+    type: redis
+```
 
-| Redis-backed | Property | What it replaces |
-|--------------|----------|-------------------|
-| Idempotency | `notification.redis.idempotency.enabled: true` | `CaffeineIdempotencyStore` |
-| Rate limiting | `notification.redis.rate-limit.enabled: true` | `Bucket4jRateLimiter` (in-process) |
-| Dead-letter queue | `notification.redis.dead-letter.enabled: true` | `InMemoryDeadLetterStore` |
-| Delivery event store | `notification.redis.delivery-events.enabled: true` | `InMemoryDeliveryEventStore` |
+| Redis-backed | Selected by | What it replaces |
+|--------------|-------------|-------------------|
+| Idempotency | `store.type: redis`, or `notification.redis.idempotency.enabled: true` | `CaffeineIdempotencyStore` |
+| Rate limiting | `store.type: redis`, or `notification.redis.rate-limit.enabled: true` | `Bucket4jRateLimiter` (in-process) |
+| Dead-letter queue | `store.type: redis`, or `notification.redis.dead-letter.enabled: true` | `InMemoryDeadLetterStore` |
+| Delivery event store | `store.type: redis`, or `notification.redis.delivery-events.enabled: true` | `InMemoryDeliveryEventStore` |
 
-### 4c. Connection
+### 4c. JDBC (PostgreSQL)
+
+```xml
+<dependency>
+    <groupId>com.github.ifrugal</groupId>
+    <artifactId>notification-store-jdbc</artifactId>
+    <version>1.1.0</version>
+</dependency>
+<dependency>
+    <groupId>org.postgresql</groupId>
+    <artifactId>postgresql</artifactId>
+</dependency>
+```
+
+```yaml
+notification:
+  store:
+    type: jdbc
+    jdbc:
+      schema: notify                 # optional; default is the search path
+      table-prefix: notification_    # default
+      datasource-bean-name: appDs    # optional; default is the single or @Primary DataSource
+      purge:
+        enabled: true                # optional scheduled purge of expired rows
+```
+
+| JDBC-backed | Implementation | What it replaces |
+|-------------|----------------|-------------------|
+| Idempotency | `JdbcIdempotencyStore` | `CaffeineIdempotencyStore` |
+| Dead-letter queue | `JdbcDeadLetterStore` (claims leased with `FOR UPDATE SKIP LOCKED`) | `InMemoryDeadLetterStore` |
+| Delivery event store | `JdbcDeliveryEventStore` | `InMemoryDeliveryEventStore` |
+| Rate limiting | None: memory or Redis only | n/a |
+
+The host runs the migrations from the reference DDL in the jar (`db/postgresql/notification-store.sql`).
+See the [module README](../notification-store-jdbc/README.md) for the schema, grants, row-level security and purge.
+
+### 4d. Redis connection
 
 Uses Spring Data Redis defaults — point it at your Redis:
 
@@ -341,7 +410,7 @@ notification:
     key-prefix: notification-svc     # avoid collisions on shared Redis
 ```
 
-### 4d. Read raw entries
+### 4e. Read raw entries
 
 Operators can `redis-cli LRANGE notification-svc:dlq 0 -1` directly —
 all stored values are human-readable JSON for forensics. Same for
@@ -353,15 +422,15 @@ delivery events under `<prefix>:delivery-events`.
 
 ### 5a. Health indicators (DD-21)
 
-Auto-registered when the corresponding SPI is enabled. Each indicator
-participates in the rolled-up `/actuator/health`:
+Registered whenever the corresponding store or limiter bean exists, whether it is a default, a Redis or JDBC store, or your own bean.
+Each indicator participates in the rolled-up `/actuator/health`:
 
-| Indicator | Surfaces at | Enabled when |
-|-----------|-------------|--------------|
-| DLQ | `/actuator/health/dlq` | `notification.dead-letter.enabled: true` |
-| Idempotency | `/actuator/health/idempotency` | `notification.idempotency.enabled: true` |
-| Rate limiter | `/actuator/health/rateLimit` | `notification.rate-limit.enabled: true` |
-| Delivery events | `/actuator/health/deliveryEvents` | `notification.delivery-events.enabled: true` |
+| Indicator | Surfaces at | Present when a bean of |
+|-----------|-------------|------------------------|
+| DLQ | `/actuator/health/dlq` | `DeadLetterStore` exists (e.g. `notification.dead-letter.enabled: true`) |
+| Idempotency | `/actuator/health/idempotency` | `IdempotencyStore` exists (e.g. `notification.idempotency.enabled: true`) |
+| Rate limiter | `/actuator/health/rateLimit` | `RateLimiter` exists (e.g. `notification.rate-limit.enabled: true`) |
+| Delivery events | `/actuator/health/deliveryEvents` | `DeliveryEventStore` exists (e.g. `notification.delivery-events.enabled: true`) |
 
 DLQ flips to `Status.OUT_OF_SERVICE` at near-fullness — configurable:
 
@@ -373,9 +442,9 @@ notification:
 
 ### 5b. Micrometer metrics (DD-22)
 
-Auto-registered when `MeterRegistry` is on the classpath (it is, on
-`notification-server`). No flag needed — Boot's
-`management.metrics.enable.notification=false` disables.
+Registered when a `MeterRegistry` bean exists, which Spring Boot actuator's metrics auto-configuration provides (it does on `notification-server`).
+Micrometer on the classpath without a registry bean is not enough.
+No flag needed; Boot's `management.metrics.enable.notification=false` disables.
 
 | Meter | Type | Tags |
 |-------|------|------|
@@ -399,7 +468,7 @@ Standalone deployments ship with a Prometheus registry — scrape
 
 | Transport | JAR | Default | Enable | Notes |
 |-----------|-----|---------|--------|-------|
-| **REST** | `notification-rest` (pulled by starter) | 🟢 On | `notification.rest.enabled: true` (default) | Endpoints under `${notification.rest.base-path:/api/v1}/notifications` and `/admin/...` |
+| **REST** | `notification-rest` (📦 add explicitly; optional in the starter) | 🔵 Off since 1.1.0 | `notification.rest.enabled: true` | Endpoints under `${notification.rest.base-path:/api/v1}/notifications` and `/admin/...`; the tenant and caller filters run only under the base path, and webhooks need REST |
 | **Kafka** | `notification-kafka` (📦 add explicitly) | 🔵 Off | `notification.kafka.enabled: true` | Honours `X-Tenant-Id` + `X-Service-Id` headers |
 | **Programmatic** | `notification-api` (always) | 🟢 On | n/a | Inject `NotificationService` directly |
 
@@ -409,7 +478,7 @@ Standalone deployments ship with a Prometheus registry — scrape
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>notification-kafka</artifactId>
-    <version>1.0.2</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -450,7 +519,8 @@ DD-07. Admin browse (DD-20) at:
 
 ## 8. OpenAPI / Swagger UI (Phase 9)
 
-🟢 On by default via springdoc 3 (transitive of `notification-rest`).
+🟢 On in `notification-server`.
+In library mode springdoc is optional in `notification-rest` since 1.1.0: add `org.springdoc:springdoc-openapi-starter-webmvc-ui` to your application (with `notification.rest.enabled: true`) to get the schema and the UI.
 
 - Schema: `${notification.rest.base-path:/api/v1}/../v3/api-docs`
 - Swagger UI: `/swagger-ui/index.html`
@@ -478,17 +548,17 @@ Copy-paste-able starting points. Each is the **full** dependency list.
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>notification-spring-boot-starter</artifactId>
-        <version>1.0.2</version>
+        <version>1.1.0</version>
     </dependency>
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>notification-rest</artifactId>
-        <version>1.0.2</version>
+        <version>1.1.0</version>
     </dependency>
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>email-provider-smtp</artifactId>
-        <version>1.0.2</version>
+        <version>1.1.0</version>
     </dependency>
 </dependencies>
 ```
@@ -496,6 +566,8 @@ Copy-paste-able starting points. Each is the **full** dependency list.
 ```yaml
 notification:
   default-tenant: default
+  rest:
+    enabled: true                  # REST is off by default since 1.1.0
   tenants:
     default:
       channels:
@@ -519,28 +591,31 @@ notification:
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>notification-spring-boot-starter</artifactId>
-        <version>1.0.2</version>
+        <version>1.1.0</version>
     </dependency>
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>notification-rest</artifactId>
-        <version>1.0.2</version>
+        <version>1.1.0</version>
     </dependency>
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>email-provider-ses</artifactId>
-        <version>1.0.2</version>
+        <version>1.1.0</version>
     </dependency>
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>sms-provider-twilio</artifactId>
-        <version>1.0.2</version>
+        <version>1.1.0</version>
     </dependency>
 </dependencies>
 ```
 
 ```yaml
 notification:
+  rest:
+    enabled: true
+
   rate-limit:
     enabled: true
     default-rule: { capacity: 200, refill-tokens: 100, refill-period: 1s }
@@ -576,12 +651,14 @@ Same dependencies as 9b **plus**:
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>notification-redis</artifactId>
-    <version>1.0.2</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
 ```yaml
 notification:
+  rest: { enabled: true }
+  store: { type: redis }           # every enabled feature below moves to Redis
   rate-limit: { enabled: true, ... }
   retry: { enabled: true, ... }
   dead-letter: { enabled: true }
@@ -590,10 +667,8 @@ notification:
 
   redis:
     key-prefix: notification-svc
-    idempotency: { enabled: true }
-    rate-limit:  { enabled: true }
-    dead-letter:  { enabled: true, max-entries: 10000 }
-    delivery-events: { enabled: true, max-entries: 50000 }
+    dead-letter:  { max-entries: 10000 }
+    delivery-events: { max-entries: 50000 }
 
 spring:
   data:
@@ -610,7 +685,8 @@ spring:
 | Property | Default | Effect |
 |----------|---------|--------|
 | `notification.default-tenant` | `default` | Fallback `tenantId` when `X-Tenant-Id` header absent |
-| `notification.rest.enabled` | `true` | REST controllers |
+| `notification.rest.enabled` | `false` | REST controllers, filters, exception handler, OpenAPI metadata, webhooks (since 1.1.0) |
+| `notification.store.type` | `memory` | Store family for every enabled stateful feature: `memory`, `redis` or `jdbc` |
 | `notification.rest.base-path` | `/api/v1` | Path prefix for all REST + admin + webhook surfaces |
 | `notification.kafka.enabled` | `false` | Kafka consumer |
 | `notification.audit.enabled` | `false` | Audit (default impl is no-op even when true; wire your own) |
@@ -628,6 +704,7 @@ spring:
 | `notification.retry.by-channel.<name>.*` | — | Per-channel override (DD-23) |
 | `notification.dead-letter.enabled` | `false` | DLQ recording |
 | `notification.dead-letter.max-entries` | `1000` | In-memory bound |
+| `notification.dead-letter.replay-lease` | `PT5M` | How long a replay holds its claim on a DLQ entry |
 | `notification.webhooks.enabled` | `false` | `/webhooks/*` surface |
 | `notification.webhooks.twilio.enabled` | `false` | Twilio status callbacks |
 | `notification.webhooks.twilio.auth-token` | — | Required when verification on |
@@ -636,12 +713,20 @@ spring:
 | `notification.delivery-events.enabled` | `false` | Persistent delivery event store |
 | `notification.delivery-events.max-entries` | `5000` | In-memory bound |
 | `notification.redis.key-prefix` | `notification-svc` | Namespace on shared Redis |
-| `notification.redis.idempotency.enabled` | `false` | Redis-backed idempotency |
-| `notification.redis.rate-limit.enabled` | `false` | Redis-backed rate limit |
-| `notification.redis.dead-letter.enabled` | `false` | Redis-backed DLQ |
+| `notification.redis.idempotency.enabled` | unset | Per-feature override of `store.type`: `true` Redis, `false` memory |
+| `notification.redis.rate-limit.enabled` | unset | Per-feature override of `store.type`: `true` Redis, `false` memory |
+| `notification.redis.dead-letter.enabled` | unset | Per-feature override of `store.type`: `true` Redis, `false` memory |
 | `notification.redis.dead-letter.max-entries` | `1000` | Redis list cap |
-| `notification.redis.delivery-events.enabled` | `false` | Redis-backed delivery events |
+| `notification.redis.delivery-events.enabled` | unset | Per-feature override of `store.type`: `true` Redis, `false` memory |
 | `notification.redis.delivery-events.max-entries` | `10000` | Redis list cap |
+| `notification.store.jdbc.schema` | none | Schema of the JDBC tables; unset uses the search path |
+| `notification.store.jdbc.table-prefix` | `notification_` | Prefix of every JDBC table, constraint and index |
+| `notification.store.jdbc.datasource-bean-name` | none | DataSource bean for the JDBC stores; unset picks the single or `@Primary` one |
+| `notification.store.jdbc.dead-letter-retention` | `P30D` | Lifetime of a dead-letter row |
+| `notification.store.jdbc.delivery-event-retention` | `P30D` | Lifetime of a delivery-event row |
+| `notification.store.jdbc.purge.enabled` | `false` | Scheduled purge of expired JDBC rows |
+| `notification.store.jdbc.purge.interval` | `PT1H` | Delay between purge runs |
+| `notification.store.jdbc.purge.batch-size` | `1000` | Rows deleted per purge statement |
 | `notification.health.dlq-near-full-percent` | `80` | DLQ → `OUT_OF_SERVICE` threshold |
 
 ---

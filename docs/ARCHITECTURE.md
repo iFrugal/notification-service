@@ -84,24 +84,52 @@ bean that registers conditionally):
 
 ## The SPI catalogue
 
-Every cross-cutting concern is a Service Provider Interface in
-`notification-api` with a default implementation in `notification-core`.
-Operators wanting a different backend (multi-pod, custom storage)
-register their own bean — the default's `@ConditionalOnMissingBean`
-steps aside.
+Every cross-cutting concern is a Service Provider Interface in `notification-api` with a default implementation in `notification-core`.
+The defaults are `@Bean` methods in `NotificationCoreDefaultsAutoConfiguration` guarded by `@ConditionalOnMissingBean`, so a bean you register yourself, or one from the Redis or JDBC module, takes their place.
 
-| SPI | Module | Default impl | Redis backend (DD-14) | Purpose |
-|-----|--------|--------------|----------------------|---------|
-| `IdempotencyStore` | `notification-api` | `CaffeineIdempotencyStore` | `RedisIdempotencyStore` | Dedup against `(tenantId, callerId, idempotencyKey)` |
-| `RateLimiter` | `notification-api` | `Bucket4jRateLimiter` | `RedisRateLimiter` | Token bucket over `(tenantId, callerId, channel)` |
-| `DeadLetterStore` | `notification-api` | `InMemoryDeadLetterStore` | `RedisDeadLetterStore` | Bounded buffer of retry-exhausted/permanent failures |
-| `RetryPredicate` | `notification-api` | classifies by `FailureType` | — | Decides retry on `(SendResult, attempt)` |
-| `DeliveryEventListener` | `notification-api` | `LoggingDeliveryEventListener` | — | Fan-out point for provider delivery callbacks |
-| `DeliveryEventStore` | `notification-api` | `InMemoryDeliveryEventStore` | `RedisDeliveryEventStore` | Persistent store; **is also a listener** via default method |
-| `NotificationAuditService` | `notification-core` | `NoOpAuditService` | — | Audit persistence; operators wire their own backend |
+| SPI | Module | Default impl | Redis backend (DD-14) | JDBC backend | Purpose |
+|-----|--------|--------------|----------------------|--------------|---------|
+| `IdempotencyStore` | `notification-api` | `CaffeineIdempotencyStore` | `RedisIdempotencyStore` | `JdbcIdempotencyStore` | Dedup against `(tenantId, callerId, idempotencyKey)` |
+| `RateLimiter` | `notification-api` | `Bucket4jRateLimiter` | `RedisRateLimiter` | - | Token bucket over `(tenantId, callerId, channel)` |
+| `DeadLetterStore` | `notification-api` | `InMemoryDeadLetterStore` | `RedisDeadLetterStore` | `JdbcDeadLetterStore` | Bounded buffer of retry-exhausted/permanent failures; `claim` / `release` lease entries for replay |
+| `RetryPredicate` | `notification-api` | classifies by `FailureType` | - | - | Decides retry on `(SendResult, attempt)` |
+| `DeliveryEventListener` | `notification-api` | `LoggingDeliveryEventListener` | - | - | Fan-out point for provider delivery callbacks |
+| `DeliveryEventStore` | `notification-api` | `InMemoryDeliveryEventStore` | `RedisDeliveryEventStore` | `JdbcDeliveryEventStore` | Persistent store; **is also a listener** via default method |
+| `NotificationAuditService` | `notification-core` | `NoOpAuditService` | - | - | Audit persistence; operators wire their own backend |
+
+Dead-letter replay (DD-15, DD-19) claims entries before sending, acknowledges with `remove` and gives them back with `release`, under `notification.dead-letter.replay-lease`.
+`JdbcDeadLetterStore` makes claims hold across replicas with `FOR UPDATE SKIP LOCKED`; the SPI's default `claim` methods, which the in-memory and Redis stores inherit, take no lease.
 
 All SPIs except audit are opt-in via `notification.<feature>.enabled`.
 Audit is built-in but defaults to no-op.
+
+## Wiring: per-module auto-configuration
+
+Nothing is component-scanned.
+Each module lists its own auto-configuration in `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`, and the starter's `NotificationAutoConfiguration` registers no beans of its own:
+
+| Module | Auto-configuration | Ordering |
+|--------|--------------------|----------|
+| `notification-core` | `NotificationCoreAutoConfiguration`, `NotificationCoreDefaultsAutoConfiguration`, `NotificationHealthAutoConfiguration`, `NotificationMetricsAutoConfiguration` | Health after the defaults and Redis; metrics after Boot's meter registry |
+| `notification-redis` | `NotificationRedisAutoConfiguration` | After Boot's Redis, **before** the core defaults |
+| `notification-store-jdbc` | `JdbcStoreAutoConfiguration` | After Boot's `DataSource`, **before** the core defaults |
+| `notification-rest` | `NotificationRestAutoConfiguration` | **After** the core defaults and Redis, so its `@ConditionalOnMissingBean` on the logging delivery-event listener sees any store |
+| `notification-kafka` | `NotificationKafkaAutoConfiguration` | Before Boot's Kafka |
+| each provider module | `SmtpEmailProviderAutoConfiguration`, `SesEmailProviderAutoConfiguration`, `AcsEmailProviderAutoConfiguration`, `TwilioSmsProviderAutoConfiguration` | Unordered |
+
+Running the Redis and JDBC auto-configurations before the core defaults is what lets their stores win: the in-memory default's `@ConditionalOnMissingBean` then sees the selected store and backs off.
+REST registers nothing unless `notification.rest.enabled=true` in a servlet application, and restricts its tenant and caller filters to `<notification.rest.base-path>/*`.
+
+**Store selection.**
+`notification.store.type` (`memory`, `redis`, `jdbc`) picks the family per enabled feature, with `notification.redis.<feature>.enabled` as a per-feature override and the feature flag as the master switch (`StoreFeature`, `@ConditionalOnStoreType`).
+`StoreTypeValidator`, a `BeanFactoryPostProcessor` registered by the core, fails startup before any bean is created when an enabled feature resolves to a family whose module is missing, naming the artifact.
+
+**Providers.**
+Each provider module registers its provider as a prototype bean named `<name><Channel>Provider` (for example `acsEmailProvider`).
+`ProviderResolver` resolves a configured provider by `beanName`, then `fqcn`, then that conventional bean name.
+`BuiltInProviders` is the catalog of known provider names, their classes and artifacts; it loads no class and serves to explain a miss (module absent, or provider not implemented yet) and to feed the GraalVM hints in `ProviderRuntimeHints`.
+`ProviderFqcnAotProcessor` adds the same hints at AOT build time for every class the configuration names with `fqcn`.
+A configured provider that cannot be resolved fails startup in `ProviderRegistry`.
 
 ## Transport surfaces
 
@@ -110,7 +138,7 @@ same `NotificationService.send()`:
 
 | Transport | Module | Module config | Notes |
 |-----------|--------|---------------|-------|
-| REST | `notification-rest` | `notification.rest.enabled` (default true) | OpenAPI/Swagger via springdoc (DD Phase 9) |
+| REST | `notification-rest` | `notification.rest.enabled` (default false since 1.1.0) | OpenAPI/Swagger via springdoc, optional in library mode (DD Phase 9) |
 | Kafka | `notification-kafka` | `notification.kafka.enabled` (default false) | Honours `X-Tenant-Id` + `X-Service-Id` headers |
 | Programmatic | `notification-api` | always available | Inject `NotificationService` directly |
 
@@ -119,6 +147,8 @@ The REST and Kafka transports both honour the same header conventions:
 - `X-Tenant-Id` (DD-03) — required for multi-tenant routing
 - `X-Service-Id` (DD-11) — optional caller identity; feeds idempotency
   + audit + caller registry
+
+On REST, header names are matched case-insensitively: `TenantFilter` replaces the case-sensitive header map that `BasicRequestFilter` builds with a case-insensitive copy, and `CallerAdmissionFilter` falls back to `HttpServletRequest.getHeader`.
 
 ## Observability surfaces
 
@@ -161,17 +191,19 @@ notification-core                 Default impls, business logic, autoconfig
 notification-rest                 REST controllers, filters, webhook surface
 notification-kafka                Kafka consumer
 notification-redis                Redis-backed SPI implementations (DD-14)
+notification-store-jdbc           PostgreSQL-backed stores over plain SQL
 notification-channels/*           Channel + provider implementations
   notification-channel-email
     email-provider-smtp
     email-provider-ses
+    email-provider-acs
   notification-channel-sms
     sms-provider-twilio
-notification-spring-boot-starter  Auto-configuration for library use
+notification-spring-boot-starter  The library-mode dependency; registers no beans itself
 notification-server               Standalone Docker app
 ```
 
-Total: 14 modules, including the root and aggregator poms.
+Total: 16 modules, including the root and aggregator poms.
 The strict separation lets consumers pull only the providers they use, so an SMTP-only deployment doesn't transitively inherit AWS or Twilio SDKs.
 AWS SNS SMS, WhatsApp (Twilio, Meta) and push (FCM, APNs) providers are planned; until they ship, the `SmsProvider`, `WhatsAppProvider` and `PushProvider` SPIs in `notification-api` are the extension points.
 Audit has no module of its own: the `NotificationAuditService` SPI and its `NoOpAuditService` default live in `notification-core`.
@@ -204,7 +236,8 @@ must not be trusted from clients:
 
 The project follows semantic versioning. The current snapshot is
 `1.0.3-SNAPSHOT`; `1.0.2` is the most-recent released version on
-Maven Central. Release automation is wired via GitHub Actions
+Maven Central, and the next release is `1.1.0`.
+Release automation is wired via GitHub Actions
 (see `.github/workflows/release.yml`). Maven Central publishing
 goes through the Central Portal via
 `central-publishing-maven-plugin`. GPG signing on the
@@ -219,14 +252,11 @@ release artifacts is done by `crazy-max/ghaction-import-gpg`.
   [`docs/PROGRESS.md`](./PROGRESS.md) (the live tracker of in-flight
   and queued work) and the relevant
   [`docs/design-decisions/NN-*.md`](./design-decisions/) for context.
-- **Add a new SPI** → follow the pattern: interface in
-  `notification-api`, default `@ConditionalOnProperty` impl in
-  `notification-core` (and optionally a Redis impl in
-  `notification-redis`), property block on
-  `NotificationProperties`, autoconfig pickup via component scan.
-- **Add a new provider** → see "Adding Custom Providers" in the
-  [README](../README.md). The choice between Spring bean and FQCN
-  reflection is documented in DD-05 / DD-06.
+- **Add a new SPI** → follow the pattern: interface in `notification-api`, default `@Bean` with `@ConditionalOnProperty` and `@ConditionalOnMissingBean` in `NotificationCoreDefaultsAutoConfiguration`, optionally Redis and JDBC impls guarded by `@ConditionalOnStoreType` in their modules' auto-configurations, and a property block on `NotificationProperties`.
+- **Add a new provider** → see "Adding Custom Providers" in the [README](../README.md).
+  A built-in provider module ships an auto-configuration that registers a prototype bean named `<name><Channel>Provider` under `@ConditionalOnMissingBean(name = ...)`, so an application bean of the same name replaces it, plus an entry in `BuiltInProviders`.
+  A custom provider needs no auto-configuration: a prototype bean selected by `beanName` (or named by the same convention), or a class named by `fqcn`.
+  The choice between Spring bean and FQCN reflection is documented in DD-05 / DD-06.
 - **Add a new channel** → new `notification-channel-{name}` module
   plus at least one provider impl. Channels are an enum in
   `notification-api` so a new channel requires an api-module edit.

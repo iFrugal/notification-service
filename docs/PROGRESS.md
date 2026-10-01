@@ -20,11 +20,11 @@ collaborator) can pick up where the last one left off.
 - **Repository:** `iFrugal/notification-service`
 - **Working version (current):** `1.0.3-SNAPSHOT`
 - **Latest released on Maven Central:** `1.0.2`
-- **Next release:** `1.1.0` (planned)
-- **Java:** 25 LTS · **Spring Boot:** 4.0.5 · **Build:** Maven 3.9.9 (`./mvnw`)
+- **Next release:** `1.1.0`, ready (see Phase 20; run the release workflow with `release-version: 1.1.0`, because the tree is at `1.0.3-SNAPSHOT`)
+- **Java:** 25 LTS · **Spring Boot:** 4.1.1 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-10-01 IST (version rows refreshed after the 1.0.2 release).
+- **Last updated:** 2026-10-01 IST (1.1.0 integration branch green; release notes in `docs/RELEASE_NOTES_1.1.0.md`).
 
 > **Release procedure note:** The release workflow at
 > `.github/workflows/release.yml` is **`workflow_dispatch`-only**
@@ -446,6 +446,22 @@ collaborator) can pick up where the last one left off.
         `1.0.2-SNAPSHOT` in a follow-on `[release] [skip ci]
         prepare for next development iteration` commit, and
         auto-creates the GitHub Release page from the tag.
+
+### Phase 20 - 1.1.0 release ← ready
+
+Release notes, which become the GitHub release body: [`RELEASE_NOTES_1.1.0.md`](./RELEASE_NOTES_1.1.0.md).
+
+- [x] `notification-store-jdbc`: PostgreSQL-backed idempotency, dead-letter and delivery-event stores over plain SQL, reference DDL in the jar, optional purge, verified under row-level security (`JdbcStoreRlsIT`)
+- [x] `email-provider-acs`: Azure Communication Services Email, with connection-string, `DefaultAzureCredential` and `TokenCredential`-bean authentication
+- [x] Per-module auto-configuration replaces component scanning (core, Redis, Kafka, REST, JDBC and every provider module)
+- [x] `notification.store.type` (`memory`, `redis`, `jdbc`) selects the store family, with `StoreTypeValidator` failing startup when the module is missing; replaces the never-read `notification.redis.enabled`
+- [x] Built-in providers registered by their module's auto-configuration (`BuiltInProviders` catalog), replacing `Class.forName` registration; GraalVM hints for provider classes and configured `fqcn` values
+- [x] REST opt-in: `notification.rest.enabled` defaults to `false`; filters scoped to the REST base path, exception handler scoped to the notification controllers, springdoc optional
+- [x] `DeadLetterStore.claim` and `release` (additive SPI); single and batch replay claim, acknowledge with `remove` and release on failure, under `notification.dead-letter.replay-lease` (default `PT5M`)
+- [x] `X-Tenant-Id`, `X-Service-Id` and the base filter's `x-user-id`, `x-role`, `x-request-id` matched case-insensitively
+- [x] Six empty artifacts no longer published (`sms-provider-sns`, `whatsapp-provider-twilio`, `whatsapp-provider-meta`, `push-provider-fcm`, `push-provider-apns`, `notification-audit`)
+- [x] Reactor `./mvnw -B clean verify` green on the integration branch (495 tests)
+- [ ] Merge the integration branch, then run "Release to Maven Central" with `release-version: 1.1.0`, dry-run first
 
 ### Out-of-scope / parked
 
