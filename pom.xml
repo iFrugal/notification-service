@@ -81,8 +81,9 @@
              and azure-core 1.58.1, older than what email 1.1.5 needs.
              azure-core is managed so every Azure artifact agrees on one
              version. azure-core-http-netty is excluded below because it
-             pins Netty 4.1, which clashes with Spring Boot 4.1's Netty 4.2;
-             the JDK HttpClient transport replaces it. -->
+             pins Netty 4.1, which clashes with Spring Boot 4.1's Netty 4.2.
+             The application chooses the HTTP client; the JDK one is managed
+             here as the recommended choice. -->
         <azure-communication-email.version>1.1.5</azure-communication-email.version>
         <azure-core.version>1.59.1</azure-core.version>
         <azure-core-http-jdk-httpclient.version>1.1.7</azure-core-http-jdk-httpclient.version>

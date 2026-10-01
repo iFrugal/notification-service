@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.boot.test.context.FilteredClassLoader;
+import org.springframework.core.io.ClassPathResource;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -27,7 +28,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * {@link AcsEmailClientFactory}: which authentication path is taken, and the
- * fail-fast messages for misconfiguration.
+ * fail-fast messages for misconfiguration. The test classpath carries the
+ * optional azure-core-http-jdk-httpclient, so azure-core discovers the JDK client.
  */
 class AcsEmailClientFactoryTest {
 
@@ -174,6 +176,57 @@ class AcsEmailClientFactoryTest {
                 .isInstanceOf(ProviderConfigurationException.class)
                 .hasMessageContaining("no TokenCredential bean named 'missing'")
                 .hasMessageContaining("[credA]");
+    }
+
+    @Test
+    void noHttpClientProviderClass_failsFastBeforeBuilding() {
+        // META-INF/services still lists JdkHttpClientProvider, but the class cannot be loaded.
+        AcsEmailClientFactory factory = new AcsEmailClientFactory(null,
+                new FilteredClassLoader("com.azure.core.http.jdk.httpclient"), () -> builder);
+
+        assertThatThrownBy(() -> factory.createClient(settings("connection-string", CONNECTION_STRING), null))
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessageStartingWith("No Azure HTTP client is on the classpath")
+                .hasMessageContaining("com.azure:azure-core-http-jdk-httpclient")
+                .hasMessageContaining("AZURE_HTTP_CLIENT_IMPLEMENTATION");
+        verify(builder, never()).buildClient();
+    }
+
+    @Test
+    void noHttpClientProviderRegistration_failsFast() {
+        AcsEmailClientFactory factory = new AcsEmailClientFactory(null,
+                new FilteredClassLoader(new ClassPathResource("META-INF/services/com.azure.core.http.HttpClientProvider")),
+                () -> builder);
+
+        assertThatThrownBy(() -> factory.createClient(settings("connection-string", CONNECTION_STRING), null))
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessage(AcsEmailClientFactory.NO_HTTP_CLIENT_MESSAGE);
+        verify(builder, never()).buildClient();
+    }
+
+    @Test
+    void httpClientProviderDetection_findsTheTestClasspathProvider() {
+        assertThat(AcsEmailClientFactory.isHttpClientProviderPresent(LOADER)).isTrue();
+        // null falls back to azure-core's own class loader instead of failing
+        assertThat(AcsEmailClientFactory.isHttpClientProviderPresent(null)).isTrue();
+        assertThat(AcsEmailClientFactory.isHttpClientProviderPresent(
+                new FilteredClassLoader("com.azure.core.http.jdk.httpclient"))).isFalse();
+    }
+
+    @Test
+    void sharedHttpClient_isReusedAcrossClients() {
+        AcsEmailProperties settings = settings("connection-string", CONNECTION_STRING);
+        EmailClientBuilder other = mock(EmailClientBuilder.class, RETURNS_SELF);
+        when(other.buildClient()).thenReturn(client);
+
+        factory(Map.of()).createClient(settings, null);
+        new AcsEmailClientFactory(Map.of(), LOADER, () -> other).createClient(settings, null);
+
+        ArgumentCaptor<HttpClient> first = ArgumentCaptor.forClass(HttpClient.class);
+        ArgumentCaptor<HttpClient> second = ArgumentCaptor.forClass(HttpClient.class);
+        verify(builder).httpClient(first.capture());
+        verify(other).httpClient(second.capture());
+        assertThat(second.getValue()).isSameAs(first.getValue());
     }
 
     @Test

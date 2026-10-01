@@ -10,6 +10,12 @@ Provider name `acs` on the `EMAIL` channel.
     <version>${notification-service.version}</version>
 </dependency>
 
+<!-- Required: exactly one Azure HTTP client, see "HTTP client" below -->
+<dependency>
+    <groupId>com.azure</groupId>
+    <artifactId>azure-core-http-jdk-httpclient</artifactId>
+</dependency>
+
 <!-- Only when authenticating with credential: default (managed identity etc.) -->
 <dependency>
     <groupId>com.azure</groupId>
@@ -138,13 +144,29 @@ ACS needs attachment bytes inline.
 An attachment that only has a `url` is rejected as a `PERMANENT` failure instead of being dropped.
 The request model has no per-message sender or custom header fields, so neither is mapped.
 
-## Transport
+## HTTP client
 
-The module excludes `azure-core-http-netty` and uses `azure-core-http-jdk-httpclient`, which is built on `java.net.http.HttpClient`.
-The Netty transport pins Netty 4.1, which clashes with the Netty 4.2 that Spring Boot 4.1 manages.
-This module brings in no Netty and no reactor-netty.
+The module pins no Azure HTTP client implementation, so the application chooses one.
+It excludes `azure-core-http-netty` from the ACS SDK and declares no other HTTP client as a required dependency.
+`azure-core` discovers the implementation on the classpath through `ServiceLoader` (`com.azure.core.http.HttpClientProvider`).
+Add exactly one of these:
+
+| Artifact | Notes |
+|----------|-------|
+| `com.azure:azure-core-http-jdk-httpclient` | Built on `java.net.http.HttpClient`, no Netty. Recommended on Spring Boot 4. |
+| `com.azure:azure-core-http-okhttp` | OkHttp. |
+| `com.azure:azure-core-http-vertx` | Vert.x. |
+| `com.azure:azure-core-http-netty` | Pins Netty 4.1, which conflicts with the Netty 4.2 that Spring Boot 4.1 manages. Avoid it on Spring Boot 4. |
+
+When more than one is on the classpath, set `AZURE_HTTP_CLIENT_IMPLEMENTATION` to the full class name of the provider to use, for example `com.azure.core.http.jdk.httpclient.JdkHttpClientProvider` or `com.azure.core.http.netty.NettyAsyncHttpClientProvider`.
+It is read as a system property first, then as an environment variable, when `azure-core` first creates an HTTP client.
+Without it, `azure-core` uses the first provider that `ServiceLoader` returns.
+
+If no HTTP client is on the classpath, `init()` fails fast with an `IllegalStateException` that starts with `No Azure HTTP client is on the classpath` and lists the options above.
+At application startup `ProviderRegistry` wraps it in a `ProviderConfigurationException` that carries the same message.
+
+All ACS clients in one JVM share one HTTP client instance.
 `azure-core` still depends on `reactor-core`, whose version comes from the Spring Boot BOM.
-All ACS clients in one JVM share one JDK `HttpClient`.
 
 ## Rate limits
 
