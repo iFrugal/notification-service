@@ -12,7 +12,6 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -43,7 +42,9 @@ import java.util.Map;
  *       {@code SignatureVersion}).</li>
  * </ul>
  *
- * <p>The whole controller is gated on
+ * <p>The whole controller is registered by
+ * {@code NotificationRestAutoConfiguration} only when both
+ * {@code notification.rest.enabled=true} and
  * {@code notification.webhooks.enabled=true}; each per-provider path
  * additionally requires its own enabled flag, returning {@code 404}
  * when the provider isn't configured (rather than {@code 200} with
@@ -59,7 +60,6 @@ import java.util.Map;
 @Slf4j
 @RestController
 @RequestMapping("${notification.rest.base-path:/api/v1}${notification.webhooks.base-path:/webhooks}")
-@ConditionalOnProperty(prefix = "notification.webhooks", name = "enabled", havingValue = "true")
 @Tag(name = "Webhooks",
         description = "Provider delivery-callback ingestion (DD-16). "
                 + "Each handler verifies the provider's signature scheme "

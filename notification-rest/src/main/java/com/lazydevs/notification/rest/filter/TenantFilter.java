@@ -5,9 +5,6 @@ import lazydevs.persistence.connection.multitenant.TenantContext;
 import lazydevs.services.basic.filter.BasicRequestFilter;
 import lazydevs.services.basic.filter.RequestContext;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.Ordered;
-import org.springframework.core.annotation.Order;
-import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 /**
@@ -28,8 +25,6 @@ import org.springframework.util.StringUtils;
  * extraction (always-on) decoupled from enforcement (opt-in).
  */
 @Slf4j
-@Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
 public class TenantFilter extends BasicRequestFilter {
 
     public static final String TENANT_HEADER = "x-tenant-id";

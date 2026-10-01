@@ -3,6 +3,7 @@ package com.lazydevs.notification.starter;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.annotation.ImportCandidates;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration;
 import org.springframework.util.ClassUtils;
@@ -41,7 +42,8 @@ final class StarterContextRunners {
 
     /**
      * A servlet web application, because the starter's test classpath carries
-     * the optional notification-rest module and its filters need Spring MVC.
+     * the optional notification-rest module and its filters need Spring MVC
+     * once {@code notification.rest.enabled=true}.
      */
     static WebApplicationContextRunner starterRunner() {
         return starterRunnerWithout();
@@ -57,5 +59,11 @@ final class StarterContextRunners {
         return new WebApplicationContextRunner()
                 .withConfiguration(notificationAutoConfigurations(excludedAutoConfigurations))
                 .withConfiguration(AutoConfigurations.of(WebMvcAutoConfiguration.class));
+    }
+
+    /** A non-web application embedding the starter, such as a batch job or a Kafka consumer. */
+    static ApplicationContextRunner starterNonWebRunner() {
+        return new ApplicationContextRunner()
+                .withConfiguration(notificationAutoConfigurations());
     }
 }

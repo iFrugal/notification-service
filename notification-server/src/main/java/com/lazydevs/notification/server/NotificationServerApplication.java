@@ -1,27 +1,19 @@
 package com.lazydevs.notification.server;
 
-import com.lazydevs.notification.core.config.NotificationProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 /**
  * Standalone notification service application.
  * For Docker deployment.
  *
- * <p>{@code @EnableConfigurationProperties(NotificationProperties.class)}
- * is needed here because this module deliberately doesn't depend on
- * {@code notification-spring-boot-starter} — keeping the standalone
- * deployable independent of the embeddable-library packaging. The
- * starter pulls the same enablement via its auto-configuration; this
- * server pulls it explicitly so {@link NotificationProperties} (the
- * config bean every conditional in {@code notification-core} reads)
- * is available regardless of which deployment shape an operator picks.
+ * <p>Scans only its own package, which holds nothing but this class.
+ * Every notification bean comes from the modules' auto-configurations
+ * (core also enables {@code NotificationProperties}), the same way the
+ * starter gets them; the REST API is switched on by
+ * {@code notification.rest.enabled=true} in {@code application.yml}.
  */
-@SpringBootApplication(scanBasePackages = {
-        "com.lazydevs.notification"
-})
-@EnableConfigurationProperties(NotificationProperties.class)
+@SpringBootApplication
 public class NotificationServerApplication {
 
     public static void main(String[] args) {

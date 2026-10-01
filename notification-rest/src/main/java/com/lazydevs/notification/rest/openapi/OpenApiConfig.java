@@ -10,9 +10,9 @@ import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.parameters.HeaderParameter;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 /**
  * OpenAPI 3 service-level metadata for the notification REST API.
@@ -34,8 +34,13 @@ import org.springframework.context.annotation.Configuration;
  * springdoc property) so deployments that opt out of the schema endpoint
  * also opt out of building this metadata. Default is on — same as
  * springdoc itself.
+ *
+ * <p>Imported by {@code NotificationRestAutoConfiguration}, so it only
+ * applies when REST is enabled.
+ * Springdoc is an optional dependency of notification-rest; without the
+ * swagger models on the classpath this configuration is skipped.
  */
-@Configuration
+@ConditionalOnClass(OpenAPI.class)
 @ConditionalOnProperty(prefix = "springdoc.api-docs", name = "enabled",
         havingValue = "true", matchIfMissing = true)
 public class OpenApiConfig {

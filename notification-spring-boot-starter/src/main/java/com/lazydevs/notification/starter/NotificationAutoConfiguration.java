@@ -3,29 +3,22 @@ package com.lazydevs.notification.starter;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.autoconfigure.AutoConfigurationExcludeFilter;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.ComponentScan;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.FilterType;
 
 /**
- * Spring Boot auto-configuration for notification service.
+ * Spring Boot auto-configuration entry point for the notification service.
  *
- * <p>Core, Redis and Kafka beans come from their modules' own
- * auto-configurations, listed in each module's
- * {@code META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports}.
- * Only the optional REST module is still component-scanned; auto-configurations
- * are excluded from that scan, as {@code @SpringBootApplication} does.
+ * <p>This class registers no beans and scans no packages.
+ * Every bean comes from the per-module auto-configurations listed in each
+ * module's {@code META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports}:
+ * core, Redis and Kafka, and the opt-in REST API
+ * ({@code notification.rest.enabled=true}).
+ * The class stays so that existing {@code spring.autoconfigure.exclude}
+ * entries naming it still resolve.
  */
 @Slf4j
 @AutoConfiguration
-@Configuration
 @EnableConfigurationProperties(NotificationProperties.class)
-@ComponentScan(basePackages = {
-        "com.lazydevs.notification.rest"
-}, excludeFilters = @ComponentScan.Filter(type = FilterType.CUSTOM,
-        classes = AutoConfigurationExcludeFilter.class))
 public class NotificationAutoConfiguration {
 
     public NotificationAutoConfiguration() {
