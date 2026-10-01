@@ -9,9 +9,6 @@ import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -22,11 +19,10 @@ import java.util.Optional;
  * {@code notification.idempotency.ttl}.
  *
  * <p>Activates when {@code notification.idempotency.enabled=true} (the
- * default) <em>and</em> {@code notification.idempotency.store=caffeine}
- * (also the default). Users wiring a different backend (e.g. Redis) can
- * either set {@code store=redis} to deactivate this bean or supply their
- * own {@code IdempotencyStore} bean — the {@code @ConditionalOnMissingBean}
- * lets them win unconditionally.
+ * default). Users wiring a different backend (e.g. Redis) can supply their
+ * own {@code IdempotencyStore} bean; the {@code @ConditionalOnMissingBean}
+ * lets them win unconditionally. Registered by
+ * {@link com.lazydevs.notification.core.config.NotificationCoreDefaultsAutoConfiguration}.
  *
  * <p>The store is per-JVM, so a multi-replica service-mode deployment
  * will <strong>not</strong> see cross-replica deduplication. DD-10
@@ -34,10 +30,6 @@ import java.util.Optional;
  * {@code RedisIdempotencyStore}.
  */
 @Slf4j
-@Component
-@ConditionalOnProperty(prefix = "notification.idempotency", name = "enabled",
-        havingValue = "true", matchIfMissing = true)
-@ConditionalOnMissingBean(IdempotencyStore.class)
 public class CaffeineIdempotencyStore implements IdempotencyStore {
 
     private final Cache<IdempotencyKey, IdempotencyRecord> cache;

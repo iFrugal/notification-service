@@ -11,9 +11,6 @@ import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.Comparator;
@@ -42,13 +39,10 @@ import java.util.Map;
  *
  * <p>Bean is registered only when {@code notification.rate-limit.enabled=true}
  * — keeps Bucket4j inert in deployments that don't care, and lets a
- * Redis-backed bean (DD-13, future) replace it via
- * {@link ConditionalOnMissingBean}.
+ * Redis-backed bean (DD-13, future) replace it via {@code @ConditionalOnMissingBean}
+ * in {@link com.lazydevs.notification.core.config.NotificationCoreDefaultsAutoConfiguration}.
  */
 @Slf4j
-@Component
-@ConditionalOnProperty(prefix = "notification.rate-limit", name = "enabled", havingValue = "true")
-@ConditionalOnMissingBean(RateLimiter.class)
 public class Bucket4jRateLimiter implements RateLimiter {
 
     /**

@@ -7,9 +7,6 @@ import com.lazydevs.notification.core.config.NotificationProperties;
 import com.lazydevs.notification.core.config.NotificationProperties.RetryProperties;
 import com.lazydevs.notification.core.config.NotificationProperties.RetryRule;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.concurrent.ThreadLocalRandom;
@@ -33,7 +30,8 @@ import java.util.function.Supplier;
  * {@code notification.retry.enabled=true} — keeps the executor inert in
  * deployments that don't want retries. {@code @ConditionalOnMissingBean}
  * lets a future Resilience4j-backed bean replace it without changing
- * the service.
+ * the service. Registered by
+ * {@link com.lazydevs.notification.core.config.NotificationCoreDefaultsAutoConfiguration}.
  *
  * <p>Why a custom helper rather than Resilience4j? See DD-13 §"Why a
  * custom helper rather than Resilience4j" — narrow semantics, no
@@ -41,9 +39,6 @@ import java.util.function.Supplier;
  * resilience4j-retry chain.
  */
 @Slf4j
-@Component
-@ConditionalOnProperty(prefix = "notification.retry", name = "enabled", havingValue = "true")
-@ConditionalOnMissingBean(RetryExecutor.class)
 public class RetryExecutor {
 
     private final RetryProperties config;

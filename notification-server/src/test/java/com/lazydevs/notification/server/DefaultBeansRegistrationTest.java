@@ -1,0 +1,67 @@
+package com.lazydevs.notification.server;
+
+import com.lazydevs.notification.api.NotificationService;
+import com.lazydevs.notification.api.deadletter.DeadLetterStore;
+import com.lazydevs.notification.api.delivery.DeliveryEventStore;
+import com.lazydevs.notification.api.idempotency.IdempotencyStore;
+import com.lazydevs.notification.api.ratelimit.RateLimiter;
+import com.lazydevs.notification.core.deadletter.InMemoryDeadLetterStore;
+import com.lazydevs.notification.core.delivery.InMemoryDeliveryEventStore;
+import com.lazydevs.notification.core.idempotency.CaffeineIdempotencyStore;
+import com.lazydevs.notification.core.ratelimit.Bucket4jRateLimiter;
+import com.lazydevs.notification.core.retry.RetryExecutor;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
+import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Proves the default SPI implementations register in the standalone
+ * server, which component-scans {@code com.lazydevs.notification} and
+ * does not use the starter.
+ *
+ * <p>Boots {@link NotificationServerApplication} with its real
+ * {@code application.yml} and full auto-configuration, but in a mock
+ * servlet context, so no port is opened.
+ */
+class DefaultBeansRegistrationTest {
+
+    private final WebApplicationContextRunner runner = new WebApplicationContextRunner()
+            .withInitializer(new ConfigDataApplicationContextInitializer())
+            .withUserConfiguration(NotificationServerApplication.class)
+            .withPropertyValues(
+                    "notification.kafka.enabled=false",
+                    "notification.audit.enabled=false");
+
+    @Test
+    void withShippedConfiguration_registersCaffeineIdempotencyStore() {
+        runner.run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).hasSingleBean(NotificationService.class);
+            assertThat(context).hasSingleBean(IdempotencyStore.class);
+            assertThat(context.getBean(IdempotencyStore.class)).isInstanceOf(CaffeineIdempotencyStore.class);
+        });
+    }
+
+    @Test
+    void withAllFeaturesEnabled_registersExactlyOneDefaultOfEachSpi() {
+        runner.withPropertyValues(
+                        "notification.dead-letter.enabled=true",
+                        "notification.rate-limit.enabled=true",
+                        "notification.retry.enabled=true",
+                        "notification.delivery-events.enabled=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(IdempotencyStore.class);
+                    assertThat(context.getBean(IdempotencyStore.class)).isInstanceOf(CaffeineIdempotencyStore.class);
+                    assertThat(context).hasSingleBean(DeadLetterStore.class);
+                    assertThat(context.getBean(DeadLetterStore.class)).isInstanceOf(InMemoryDeadLetterStore.class);
+                    assertThat(context).hasSingleBean(DeliveryEventStore.class);
+                    assertThat(context.getBean(DeliveryEventStore.class)).isInstanceOf(InMemoryDeliveryEventStore.class);
+                    assertThat(context).hasSingleBean(RateLimiter.class);
+                    assertThat(context.getBean(RateLimiter.class)).isInstanceOf(Bucket4jRateLimiter.class);
+                    assertThat(context).hasSingleBean(RetryExecutor.class);
+                });
+    }
+}
