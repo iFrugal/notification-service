@@ -28,6 +28,13 @@
             <artifactId>notification-rest</artifactId>
         </dependency>
 
+        <!-- OpenAPI schema (/v3/api-docs) and Swagger UI for the REST API.
+             Optional in notification-rest, so the server opts in here. -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+        </dependency>
+
         <!-- Kafka -->
         <dependency>
             <groupId>${project.groupId}</groupId>

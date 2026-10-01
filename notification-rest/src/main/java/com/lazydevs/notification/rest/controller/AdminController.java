@@ -26,7 +26,6 @@ import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.ratelimit.Bucket4jRateLimiter;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -38,7 +37,6 @@ import java.util.*;
 @Slf4j
 @RestController
 @RequestMapping("${notification.rest.base-path:/api/v1}/admin")
-@ConditionalOnProperty(prefix = "notification.rest", name = "enabled", havingValue = "true", matchIfMissing = true)
 @Tag(name = "Admin",
         description = "Operator-facing introspection endpoints — current "
                 + "tenant configuration, caller registry state, rate-limit "

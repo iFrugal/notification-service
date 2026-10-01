@@ -40,15 +40,18 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
-        <!-- Springdoc OpenAPI — exposes /v3/api-docs (schema) and
-             /swagger-ui (interactive docs) at runtime. Lives here
-             because that's where the controllers are; consumers using
-             the spring-boot starter automatically get the same UI when
-             they pull notification-rest. Disable in production with
-             springdoc.api-docs.enabled=false / springdoc.swagger-ui.enabled=false. -->
+        <!-- Springdoc OpenAPI - exposes /v3/api-docs (schema) and
+             /swagger-ui (interactive docs) at runtime. Optional so a host
+             that embeds the starter does not get those endpoints unless it
+             adds springdoc itself; notification-server declares it
+             explicitly. The controllers' swagger annotations are ignored
+             when it is absent, and OpenApiConfig is skipped. Disable in
+             production with springdoc.api-docs.enabled=false /
+             springdoc.swagger-ui.enabled=false. -->
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <optional>true</optional>
         </dependency>
 
 

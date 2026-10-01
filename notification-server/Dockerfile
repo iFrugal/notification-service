@@ -1,7 +1,7 @@
 # Multi-stage build for notification-service
 
 # Stage 1: Build
-FROM maven:3.9-eclipse-temurin-17-alpine AS builder
+FROM maven:3.9-eclipse-temurin-25-alpine AS builder
 
 WORKDIR /build
 
@@ -11,10 +11,12 @@ COPY notification-api/pom.xml notification-api/
 COPY notification-core/pom.xml notification-core/
 COPY notification-kafka/pom.xml notification-kafka/
 COPY notification-rest/pom.xml notification-rest/
+COPY notification-redis/pom.xml notification-redis/
 COPY notification-channels/pom.xml notification-channels/
 COPY notification-channels/notification-channel-email/pom.xml notification-channels/notification-channel-email/
 COPY notification-channels/notification-channel-email/email-provider-smtp/pom.xml notification-channels/notification-channel-email/email-provider-smtp/
 COPY notification-channels/notification-channel-email/email-provider-ses/pom.xml notification-channels/notification-channel-email/email-provider-ses/
+COPY notification-channels/notification-channel-email/email-provider-acs/pom.xml notification-channels/notification-channel-email/email-provider-acs/
 COPY notification-channels/notification-channel-sms/pom.xml notification-channels/notification-channel-sms/
 COPY notification-channels/notification-channel-sms/sms-provider-twilio/pom.xml notification-channels/notification-channel-sms/sms-provider-twilio/
 COPY notification-spring-boot-starter/pom.xml notification-spring-boot-starter/
@@ -30,7 +32,7 @@ COPY . .
 RUN mvn clean package -DskipTests -B
 
 # Stage 2: Runtime
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:25-jre-alpine
 
 LABEL maintainer="ifrugal"
 LABEL description="Multi-tenant Notification Service"

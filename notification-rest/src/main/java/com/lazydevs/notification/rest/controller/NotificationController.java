@@ -11,7 +11,6 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,7 +22,6 @@ import java.util.List;
 @Slf4j
 @RestController
 @RequestMapping("${notification.rest.base-path:/api/v1}/notifications")
-@ConditionalOnProperty(prefix = "notification.rest", name = "enabled", havingValue = "true", matchIfMissing = true)
 @Tag(name = "Notifications",
         description = "Send single, batch, and async notifications. "
                 + "Subject to idempotency (DD-10), rate limiting (DD-12), "
