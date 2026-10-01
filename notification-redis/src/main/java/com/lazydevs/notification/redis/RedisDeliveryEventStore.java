@@ -7,9 +7,7 @@ import com.lazydevs.notification.api.delivery.DeliveryEvent;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,9 +34,6 @@ import java.util.Optional;
  * operator-inspection surface; not a correctness boundary.
  */
 @Slf4j
-@Component
-@ConditionalOnProperty(prefix = "notification.redis.delivery-events",
-        name = "enabled", havingValue = "true")
 public class RedisDeliveryEventStore implements DeliveryEventStore {
 
     private final StringRedisTemplate redis;

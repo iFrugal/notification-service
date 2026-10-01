@@ -18,10 +18,8 @@ import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.codec.ByteArrayCodec;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
-import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -46,9 +44,6 @@ import java.util.function.Supplier;
  * {@link BucketProxy} instances — actual token state lives in Redis.
  */
 @Slf4j
-@Component
-@ConditionalOnProperty(prefix = "notification.redis.rate-limit",
-        name = "enabled", havingValue = "true")
 public class RedisRateLimiter implements RateLimiter {
 
     private final RateLimitProperties config;

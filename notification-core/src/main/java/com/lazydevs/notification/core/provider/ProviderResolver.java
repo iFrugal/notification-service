@@ -11,7 +11,6 @@ import lazydevs.mapper.utils.reflection.ReflectionUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.context.ApplicationContext;
-import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.util.Map;
@@ -22,7 +21,6 @@ import java.util.function.Function;
  * Uses beanName for Spring beans, fqcn for reflection-based instantiation.
  */
 @Slf4j
-@Component
 public class ProviderResolver {
 
     private final ApplicationContext applicationContext;

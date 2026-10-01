@@ -15,7 +15,6 @@ import com.lazydevs.notification.core.config.NotificationProperties.ChannelConfi
 import com.lazydevs.notification.core.config.NotificationProperties.ProviderConfig;
 import com.lazydevs.notification.core.config.NotificationProperties.TenantConfig;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -27,7 +26,6 @@ import java.util.concurrent.ConcurrentHashMap;
  * Manages provider lifecycle and lookup by tenant/channel/provider.
  */
 @Slf4j
-@Component
 public class ProviderRegistry {
 
     private final NotificationProperties properties;

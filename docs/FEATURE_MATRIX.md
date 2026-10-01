@@ -31,7 +31,7 @@ This is the single dependency that brings the service in:
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>notification-spring-boot-starter</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 
@@ -86,7 +86,7 @@ deployment doesn't transitively inherit AWS or Twilio SDKs.
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>email-provider-smtp</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 
@@ -113,21 +113,40 @@ notification:
 | Provider | Artifact | When to use | Required properties |
 |----------|----------|-------------|---------------------|
 | Twilio | `sms-provider-twilio` | Global SMS, premium quality | `account-sid`, `auth-token`, `from-number` |
-| AWS SNS | `sms-provider-sns` | AWS-native SMS, cheaper for transactional | `aws-region`, AWS creds |
+| AWS SNS | Planned (no artifact) | AWS-native SMS, cheaper for transactional | Not defined yet |
 
 ### 2c. WhatsApp channel
 
+No built-in WhatsApp provider ships yet.
+The `WhatsAppProvider` SPI in `notification-api` exists today; implement it and register it as a bean or FQCN to send WhatsApp messages now.
+
 | Provider | Artifact | When to use | Required properties |
 |----------|----------|-------------|---------------------|
-| Twilio | `whatsapp-provider-twilio` | Twilio's WhatsApp Business API | `account-sid`, `auth-token`, `from-number` (WhatsApp sandbox or approved sender) |
-| Meta | `whatsapp-provider-meta` | Direct Meta WhatsApp Cloud API | `phone-number-id`, `access-token`, `business-account-id` |
+| Twilio | Planned (no artifact) | Twilio's WhatsApp Business API | Not defined yet |
+| Meta | Planned (no artifact) | Direct Meta WhatsApp Cloud API | Not defined yet |
 
 ### 2d. Push channel
 
+No built-in push provider ships yet.
+The `PushProvider` SPI in `notification-api` exists today; implement it and register it as a bean or FQCN to send push notifications now.
+
 | Provider | Artifact | When to use | Required properties |
 |----------|----------|-------------|---------------------|
-| Firebase FCM | `push-provider-fcm` | Cross-platform (Android + iOS + web) push | `credentials-file` (path to FCM service-account JSON) |
-| Apple APNs | `push-provider-apns` | iOS-only push direct to Apple | `key-file`, `key-id`, `team-id`, `bundle-id` |
+| Firebase FCM | Planned (no artifact) | Cross-platform (Android + iOS + web) push | Not defined yet |
+| Apple APNs | Planned (no artifact) | iOS-only push direct to Apple | Not defined yet |
+
+### 2e. Planned providers
+
+Planned order: FCM (HTTP v1 API) first, then the Meta WhatsApp Cloud API with a signed webhook.
+AWS SNS SMS, Twilio WhatsApp and Apple APNs are planned but not scheduled yet.
+The `SmsProvider`, `WhatsAppProvider` and `PushProvider` SPIs are the extension points in the meantime.
+
+### 2f. Unpublished artifacts
+
+The artifactIds `sms-provider-sns`, `whatsapp-provider-twilio`, `whatsapp-provider-meta`, `push-provider-fcm`, `push-provider-apns` and `notification-audit` exist on Maven Central for versions 1.0.0 to 1.0.2, but only as empty jars with no classes.
+They are not published from 1.1.0 on.
+If your build declares any of them, remove the dependency; you lose nothing, because they never contained code.
+The aggregator poms `notification-channel-whatsapp` and `notification-channel-push` are dropped for the same reason.
 
 ---
 
@@ -157,7 +176,7 @@ multi-pod? Flip the Redis backend:
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>notification-redis</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 
@@ -292,7 +311,7 @@ Add the Redis backend so all pods share one source of truth.
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>notification-redis</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 
@@ -390,7 +409,7 @@ Standalone deployments ship with a Prometheus registry — scrape
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>notification-kafka</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 
@@ -459,17 +478,17 @@ Copy-paste-able starting points. Each is the **full** dependency list.
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>notification-spring-boot-starter</artifactId>
-        <version>1.0.1</version>
+        <version>1.0.2</version>
     </dependency>
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>notification-rest</artifactId>
-        <version>1.0.1</version>
+        <version>1.0.2</version>
     </dependency>
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>email-provider-smtp</artifactId>
-        <version>1.0.1</version>
+        <version>1.0.2</version>
     </dependency>
 </dependencies>
 ```
@@ -500,22 +519,22 @@ notification:
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>notification-spring-boot-starter</artifactId>
-        <version>1.0.1</version>
+        <version>1.0.2</version>
     </dependency>
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>notification-rest</artifactId>
-        <version>1.0.1</version>
+        <version>1.0.2</version>
     </dependency>
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>email-provider-ses</artifactId>
-        <version>1.0.1</version>
+        <version>1.0.2</version>
     </dependency>
     <dependency>
         <groupId>com.github.ifrugal</groupId>
         <artifactId>sms-provider-twilio</artifactId>
-        <version>1.0.1</version>
+        <version>1.0.2</version>
     </dependency>
 </dependencies>
 ```
@@ -557,7 +576,7 @@ Same dependencies as 9b **plus**:
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>notification-redis</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 

@@ -10,11 +10,9 @@ import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.connection.RedisStringCommands.SetOption;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.types.Expiration;
-import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
@@ -28,17 +26,12 @@ import java.util.Optional;
  * {@code SET NX EX} which Redis guarantees as one operation — no Lua
  * script needed.
  *
- * <p>Bean is opt-in via {@code @ConditionalOnProperty}. Operators who
- * want a custom {@link IdempotencyStore} should register their own
- * bean and leave {@code notification.redis.idempotency.enabled=false}
- * — co-existing {@code @ConditionalOnMissingBean} on a {@code @Component}
- * is unreliable in Spring (the condition evaluates before the bean
- * itself registers, so the bean filters itself out).
+ * <p>Bean is opt-in via {@code notification.redis.idempotency.enabled}
+ * and registered by
+ * {@link com.lazydevs.notification.redis.autoconfigure.NotificationRedisAutoConfiguration},
+ * which backs off when the application supplies its own {@link IdempotencyStore}.
  */
 @Slf4j
-@Component
-@ConditionalOnProperty(prefix = "notification.redis.idempotency",
-        name = "enabled", havingValue = "true")
 public class RedisIdempotencyStore implements IdempotencyStore {
 
     private final StringRedisTemplate redis;

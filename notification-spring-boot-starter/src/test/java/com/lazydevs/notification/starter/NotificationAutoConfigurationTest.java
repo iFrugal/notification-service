@@ -3,23 +3,31 @@ package com.lazydevs.notification.starter;
 import com.lazydevs.notification.api.NotificationService;
 import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
+import com.lazydevs.notification.api.delivery.DeliveryEvent;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.idempotency.IdempotencyKey;
 import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
+import com.lazydevs.notification.core.config.NotificationCoreAutoConfiguration;
+import com.lazydevs.notification.core.config.NotificationCoreDefaultsAutoConfiguration;
+import com.lazydevs.notification.core.config.NotificationHealthAutoConfiguration;
+import com.lazydevs.notification.core.config.NotificationMetricsAutoConfiguration;
 import com.lazydevs.notification.core.deadletter.InMemoryDeadLetterStore;
 import com.lazydevs.notification.core.delivery.InMemoryDeliveryEventStore;
 import com.lazydevs.notification.core.idempotency.CaffeineIdempotencyStore;
+import com.lazydevs.notification.core.metrics.NotificationMetrics;
 import com.lazydevs.notification.core.ratelimit.Bucket4jRateLimiter;
 import com.lazydevs.notification.core.retry.RetryExecutor;
+import com.lazydevs.notification.kafka.autoconfigure.NotificationKafkaAutoConfiguration;
+import com.lazydevs.notification.redis.autoconfigure.NotificationRedisAutoConfiguration;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.context.annotation.ImportCandidates;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
-import org.springframework.boot.webmvc.autoconfigure.WebMvcAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -49,15 +57,21 @@ class NotificationAutoConfigurationTest {
             "notification.delivery-events.enabled=true",
     };
 
-    /**
-     * A servlet web application, because the starter's test classpath carries
-     * the optional notification-rest module and its filters need Spring MVC.
-     */
-    private final WebApplicationContextRunner runner = new WebApplicationContextRunner()
-            .withConfiguration(AutoConfigurations.of(
-                    NotificationAutoConfiguration.class,
-                    WebMvcAutoConfiguration.class))
-            .withUserConfiguration(HostApplicationConfiguration.class);
+    private final WebApplicationContextRunner runner = StarterContextRunners.starterRunner();
+
+    @Test
+    void importsFiles_listEveryNotificationAutoConfiguration() {
+        List<String> candidates = ImportCandidates.load(AutoConfiguration.class, getClass().getClassLoader())
+                .getCandidates();
+        assertThat(candidates).contains(
+                NotificationAutoConfiguration.class.getName(),
+                NotificationCoreAutoConfiguration.class.getName(),
+                NotificationCoreDefaultsAutoConfiguration.class.getName(),
+                NotificationMetricsAutoConfiguration.class.getName(),
+                NotificationHealthAutoConfiguration.class.getName(),
+                NotificationRedisAutoConfiguration.class.getName(),
+                NotificationKafkaAutoConfiguration.class.getName());
+    }
 
     @Test
     void withNoProperties_registersCaffeineIdempotencyStoreAndLeavesOptInFeaturesOff() {
@@ -131,16 +145,52 @@ class NotificationAutoConfigurationTest {
         });
     }
 
-    /**
-     * Stands in for what a Boot application with actuator already has:
-     * a {@link MeterRegistry} (normally from Boot's metrics auto-configuration).
-     * {@code NotificationMetrics} requires one whenever Micrometer is on the classpath.
-     */
+    @Test
+    void userDeliveryEventStore_replacesInMemoryDefault() {
+        runner.withPropertyValues("notification.delivery-events.enabled=true")
+                .withUserConfiguration(UserDeliveryEventStoreConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(DeliveryEventStore.class);
+                    assertThat(context.getBean(DeliveryEventStore.class)).isInstanceOf(StubDeliveryEventStore.class);
+                    assertThat(context).doesNotHaveBean(InMemoryDeliveryEventStore.class);
+                });
+    }
+
+    @Test
+    void micrometerWithoutRegistryBean_startsWithoutMetrics() {
+        // Micrometer is on the test classpath (via actuator), but nothing
+        // registers a MeterRegistry bean: the context must still start.
+        runner.run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).doesNotHaveBean(MeterRegistry.class);
+            assertThat(context).doesNotHaveBean(NotificationMetrics.class);
+            assertThat(context).hasSingleBean(NotificationService.class);
+        });
+    }
+
+    @Test
+    void registryBean_registersMetrics() {
+        runner.withUserConfiguration(MeterRegistryConfiguration.class).run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).hasSingleBean(NotificationMetrics.class);
+            assertThat(context).hasSingleBean(NotificationService.class);
+        });
+    }
+
     @Configuration(proxyBeanMethods = false)
-    static class HostApplicationConfiguration {
+    static class MeterRegistryConfiguration {
         @Bean
         MeterRegistry meterRegistry() {
             return new SimpleMeterRegistry();
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class UserDeliveryEventStoreConfiguration {
+        @Bean
+        DeliveryEventStore userDeliveryEventStore() {
+            return new StubDeliveryEventStore();
         }
     }
 
@@ -194,6 +244,29 @@ class NotificationAutoConfigurationTest {
 
         @Override
         public Optional<List<DeadLetterEntry>> snapshot() {
+            return Optional.of(List.of());
+        }
+
+        @Override
+        public int size() {
+            return 0;
+        }
+    }
+
+    static final class StubDeliveryEventStore implements DeliveryEventStore {
+        @Override
+        public void add(DeliveryEvent event) {
+            // no-op stub
+        }
+
+        @Override
+        public Optional<List<DeliveryEvent>> snapshot() {
+            return Optional.of(List.of());
+        }
+
+        @Override
+        public Optional<List<DeliveryEvent>> findByProviderMessageId(String providerName,
+                                                                     String providerMessageId) {
             return Optional.of(List.of());
         }
 

@@ -1,1 +1,4 @@
+com.lazydevs.notification.core.config.NotificationCoreAutoConfiguration
 com.lazydevs.notification.core.config.NotificationCoreDefaultsAutoConfiguration
+com.lazydevs.notification.core.config.NotificationMetricsAutoConfiguration
+com.lazydevs.notification.core.config.NotificationHealthAutoConfiguration

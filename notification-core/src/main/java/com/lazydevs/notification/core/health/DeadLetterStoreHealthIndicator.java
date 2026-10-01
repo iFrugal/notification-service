@@ -6,9 +6,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.health.contributor.Status;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 /**
  * Actuator health indicator for the DLQ (DD-21). Registered as
@@ -26,9 +23,6 @@ import org.springframework.stereotype.Component;
  * Boot-standard behaviour for unconfigured indicators).
  */
 @Slf4j
-@Component("dlq")
-@ConditionalOnClass(HealthIndicator.class)
-@ConditionalOnProperty(prefix = "notification.dead-letter", name = "enabled", havingValue = "true")
 public class DeadLetterStoreHealthIndicator implements HealthIndicator {
 
     private final DeadLetterStore store;

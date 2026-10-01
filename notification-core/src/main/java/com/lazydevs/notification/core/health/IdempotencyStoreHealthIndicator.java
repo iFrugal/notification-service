@@ -1,11 +1,8 @@
 package com.lazydevs.notification.core.health;
 
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
-import org.springframework.stereotype.Component;
 
 /**
  * Actuator health indicator for the {@link IdempotencyStore} (DD-21).
@@ -21,9 +18,6 @@ import org.springframework.stereotype.Component;
  * Data Redis's own health indicator at {@code /actuator/health/redis};
  * we don't duplicate that probe here.
  */
-@Component("idempotency")
-@ConditionalOnClass(HealthIndicator.class)
-@ConditionalOnProperty(prefix = "notification.idempotency", name = "enabled", havingValue = "true")
 public class IdempotencyStoreHealthIndicator implements HealthIndicator {
 
     private final IdempotencyStore store;

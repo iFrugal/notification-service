@@ -1,10 +1,12 @@
 package com.lazydevs.notification.core.config;
 
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
+import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.retry.RetryPredicate;
 import com.lazydevs.notification.core.deadletter.InMemoryDeadLetterStore;
+import com.lazydevs.notification.core.delivery.InMemoryDeliveryEventStore;
 import com.lazydevs.notification.core.idempotency.CaffeineIdempotencyStore;
 import com.lazydevs.notification.core.ratelimit.Bucket4jRateLimiter;
 import com.lazydevs.notification.core.retry.RetryExecutor;
@@ -28,9 +30,8 @@ import java.util.Optional;
  * configuration, so {@link ConditionalOnMissingBean} here reliably lets an
  * application-supplied bean (for example a Redis-backed store) win.
  *
- * <p>Listed in {@code META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports}
- * for the standalone server, and imported by the starter's
- * {@code NotificationAutoConfiguration}.
+ * <p>Listed in {@code META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports},
+ * which both the starter and the standalone server rely on.
  * Bean names match the class-derived names the scanned components used to have.
  */
 @AutoConfiguration
@@ -50,6 +51,13 @@ public class NotificationCoreDefaultsAutoConfiguration {
     @ConditionalOnMissingBean(DeadLetterStore.class)
     public InMemoryDeadLetterStore inMemoryDeadLetterStore(NotificationProperties properties) {
         return new InMemoryDeadLetterStore(properties);
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "notification.delivery-events", name = "enabled", havingValue = "true")
+    @ConditionalOnMissingBean(DeliveryEventStore.class)
+    public InMemoryDeliveryEventStore inMemoryDeliveryEventStore(NotificationProperties properties) {
+        return new InMemoryDeliveryEventStore(properties);
     }
 
     @Bean
