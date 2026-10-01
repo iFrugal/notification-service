@@ -208,9 +208,12 @@ public class DefaultNotificationService implements NotificationService {
                 log.info("Notification sent: requestId={}, provider={}, messageId={}",
                         request.getRequestId(), provider.getProviderName(), result.messageId());
             } else {
+                // Keep the provider message id: a provider that identified the
+                // send before it failed (ACS operation id) needs it for reconciliation.
                 response = NotificationResponse.failed(
                         request,
                         provider.getProviderName(),
+                        result.messageId(),
                         result.errorCode(),
                         result.errorMessage(),
                         receivedAt);

@@ -78,7 +78,21 @@ public record SendResult(
      * a 5xx, timeout, or 429 is {@link FailureType#TRANSIENT}.
      */
     public static SendResult failure(String errorCode, String errorMessage, FailureType failureType) {
-        return new SendResult(false, null, errorCode, errorMessage,
+        return failure(errorCode, errorMessage, failureType, null);
+    }
+
+    /**
+     * Create a classified failure that keeps the provider message id, for
+     * providers that assign the id before they know the outcome (for example
+     * a caller-chosen operation id). The id lets operators reconcile the
+     * attempt with the provider and lets a retry reuse it.
+     *
+     * @param messageId provider message id, may be {@code null}
+     * @since 1.1.1
+     */
+    public static SendResult failure(String errorCode, String errorMessage, FailureType failureType,
+                                     String messageId) {
+        return new SendResult(false, messageId, errorCode, errorMessage,
                 failureType == null ? FailureType.UNKNOWN : failureType,
                 Instant.now(), null);
     }

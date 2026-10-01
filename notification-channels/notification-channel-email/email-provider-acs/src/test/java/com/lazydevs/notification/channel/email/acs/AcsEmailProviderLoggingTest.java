@@ -81,7 +81,7 @@ class AcsEmailProviderLoggingTest {
 
     @Test
     void successDebugLine_masksRecipient_andOmitsSubject() {
-        when(gateway.send(any())).thenReturn(AcsSendOutcome.of("op-1", Status.SUCCEEDED));
+        when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op-1", Status.SUCCEEDED));
 
         provider.send(request(), content());
 
@@ -91,7 +91,7 @@ class AcsEmailProviderLoggingTest {
 
     @Test
     void errorLine_andResultMessage_redactRecipientInExceptionText() {
-        when(gateway.send(any())).thenThrow(
+        when(gateway.send(any(), any())).thenThrow(
                 new HttpResponseException("Invalid recipient " + RAW_TO + " or +15551234590", null));
 
         SendResult result = provider.send(request(), content());
@@ -103,7 +103,7 @@ class AcsEmailProviderLoggingTest {
 
     @Test
     void failedOutcome_redactsAcsErrorMessage() {
-        when(gateway.send(any())).thenReturn(new AcsSendOutcome("op-9", Status.FAILED,
+        when(gateway.send(any(), any())).thenReturn(new AcsSendOutcome("op-9", Status.FAILED,
                 "EmailDroppedAllRecipientsSuppressed", "Recipient " + RAW_TO + " is suppressed"));
 
         SendResult result = provider.send(request(), content());

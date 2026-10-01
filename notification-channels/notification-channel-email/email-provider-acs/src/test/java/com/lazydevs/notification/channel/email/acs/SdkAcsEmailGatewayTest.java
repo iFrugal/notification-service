@@ -5,7 +5,10 @@ import com.azure.communication.email.models.EmailMessage;
 import com.azure.communication.email.models.EmailSendResult;
 import com.azure.communication.email.models.EmailSendStatus;
 import com.azure.core.exception.HttpResponseException;
+import com.azure.core.http.HttpHeaders;
+import com.azure.core.http.policy.AddHeadersFromContextPolicy;
 import com.azure.core.models.ResponseError;
+import com.azure.core.util.Context;
 import com.azure.core.util.polling.LongRunningOperationStatus;
 import com.azure.core.util.polling.PollResponse;
 import com.azure.core.util.polling.SyncPoller;
@@ -13,14 +16,17 @@ import com.lazydevs.notification.channel.email.acs.AcsEmailProperties.SendMode;
 import com.lazydevs.notification.channel.email.acs.AcsSendOutcome.Status;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import reactor.core.Exceptions;
 
 import java.time.Duration;
+import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -33,6 +39,7 @@ import static org.mockito.Mockito.when;
 class SdkAcsEmailGatewayTest {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(7);
+    private static final UUID OPERATION_ID = UUID.fromString("0b0e8f0c-3c5a-3d47-9a52-6f1d2c1f4e11");
 
     private EmailClient client;
     private SyncPoller<EmailSendResult, EmailSendResult> poller;
@@ -44,6 +51,16 @@ class SdkAcsEmailGatewayTest {
         client = mock(EmailClient.class);
         poller = mock(SyncPoller.class);
         when(client.beginSend(message)).thenReturn(poller);
+        when(client.beginSend(eq(message), any(Context.class))).thenReturn(poller);
+    }
+
+    private static void throwTimeout(SyncPoller<EmailSendResult, EmailSendResult> poller) {
+        // SyncOverAsyncPoller signals the timeout through Reactor's block(), which
+        // wraps the checked TimeoutException. thenAnswer, not thenThrow: Mockito's
+        // thenThrow calls fillInStackTrace(), which ReactiveException redirects to its cause.
+        when(poller.waitForCompletion(TIMEOUT)).thenAnswer(inv -> {
+            throw Exceptions.propagate(new TimeoutException("slow"));
+        });
     }
 
     private static PollResponse<EmailSendResult> response(LongRunningOperationStatus lro, String id,
@@ -84,18 +101,13 @@ class SdkAcsEmailGatewayTest {
 
     @Test
     void waitMode_timeout_recoversOperationIdWithOnePoll() {
-        // SyncOverAsyncPoller signals the timeout through Reactor's block(), which
-        // wraps the checked TimeoutException. thenAnswer, not thenThrow: Mockito's
-        // thenThrow calls fillInStackTrace(), which ReactiveException redirects to its cause.
-        when(poller.waitForCompletion(TIMEOUT)).thenAnswer(inv -> {
-            throw Exceptions.propagate(new TimeoutException("slow"));
-        });
+        throwTimeout(poller);
         when(poller.poll()).thenReturn(
                 response(LongRunningOperationStatus.IN_PROGRESS, "op-slow", EmailSendStatus.RUNNING, null));
 
         AcsSendOutcome outcome = new SdkAcsEmailGateway(client, SendMode.WAIT, TIMEOUT).send(message);
 
-        assertThat(outcome.status()).isEqualTo(Status.TIMED_OUT);
+        assertThat(outcome.status()).isEqualTo(Status.UNCONFIRMED);
         assertThat(outcome.operationId()).isEqualTo("op-slow");
         assertThat(outcome.errorCode()).isEqualTo("ACS_WAIT_TIMEOUT");
         assertThat(outcome.errorMessage()).contains("PT7S");
@@ -103,29 +115,105 @@ class SdkAcsEmailGatewayTest {
     }
 
     @Test
-    void waitMode_timeout_whenRecoveryPollFails_stillTimesOut() {
-        when(poller.waitForCompletion(TIMEOUT)).thenAnswer(inv -> {
-            throw Exceptions.propagate(new TimeoutException("slow"));
-        });
+    void waitMode_timeout_whenRecoveryPollFails_isStillUnconfirmed() {
+        throwTimeout(poller);
         when(poller.poll()).thenThrow(new IllegalStateException("network down"));
 
         AcsSendOutcome outcome = new SdkAcsEmailGateway(client, SendMode.WAIT, TIMEOUT).send(message);
 
-        assertThat(outcome.status()).isEqualTo(Status.TIMED_OUT);
+        assertThat(outcome.status()).isEqualTo(Status.UNCONFIRMED);
         assertThat(outcome.operationId()).isNull();
     }
 
     @Test
-    void waitMode_nonTimeoutPollingError_propagates() {
-        HttpResponseException error = new HttpResponseException("boom", null);
-        when(poller.waitForCompletion(TIMEOUT)).thenThrow(error);
+    void waitMode_nonTimeoutPollingError_isUnconfirmed_notRethrown() {
+        // beginSend returned, so ACS accepted the message: rethrowing would make the
+        // retry executor send it again.
+        when(poller.waitForCompletion(TIMEOUT)).thenThrow(new HttpResponseException("boom", null));
+        when(poller.poll()).thenReturn(
+                response(LongRunningOperationStatus.IN_PROGRESS, "op-acs", EmailSendStatus.RUNNING, null));
 
-        SdkAcsEmailGateway gateway = new SdkAcsEmailGateway(client, SendMode.WAIT, TIMEOUT);
-        assertThatThrownBy(() -> gateway.send(message)).isSameAs(error);
+        AcsSendOutcome outcome = new SdkAcsEmailGateway(client, SendMode.WAIT, TIMEOUT).send(message);
+
+        assertThat(outcome.status()).isEqualTo(Status.UNCONFIRMED);
+        assertThat(outcome.operationId()).isEqualTo("op-acs");
+        assertThat(outcome.errorCode()).isEqualTo("ACS_POLL_FAILED");
+        assertThat(outcome.errorMessage()).contains("boom");
+    }
+
+    // ---------- caller-chosen operation id ----------
+
+    @Test
+    void withOperationId_beginSendCarriesTheOperationIdHeaderInTheContext() {
+        when(poller.waitForCompletion(TIMEOUT)).thenReturn(response(LongRunningOperationStatus.SUCCESSFULLY_COMPLETED,
+                OPERATION_ID.toString(), EmailSendStatus.SUCCEEDED, null));
+
+        new SdkAcsEmailGateway(client, SendMode.WAIT, TIMEOUT).send(message, OPERATION_ID);
+
+        ArgumentCaptor<Context> context = ArgumentCaptor.forClass(Context.class);
+        verify(client).beginSend(eq(message), context.capture());
+        verify(client, never()).beginSend(message);
+        Object headers = context.getValue().getData(AddHeadersFromContextPolicy.AZURE_REQUEST_HTTP_HEADERS_KEY)
+                .orElseThrow();
+        assertThat(((HttpHeaders) headers).getValue(SdkAcsEmailGateway.OPERATION_ID))
+                .isEqualTo(OPERATION_ID.toString());
     }
 
     @Test
-    void submitMode_pollsExactlyOnce_andReturnsOperationId() {
+    void withOperationId_submitMode_returnsTheIdWithoutAnyStatusCall() {
+        AcsSendOutcome outcome = new SdkAcsEmailGateway(client, SendMode.SUBMIT, TIMEOUT).send(message, OPERATION_ID);
+
+        assertThat(outcome).isEqualTo(AcsSendOutcome.of(OPERATION_ID.toString(), Status.SUBMITTED));
+        verify(poller, never()).poll();
+        verify(poller, never()).waitForCompletion(any());
+    }
+
+    @Test
+    void withOperationId_waitTimeout_isUnconfirmedWithTheId_withoutRecoveryPoll() {
+        throwTimeout(poller);
+
+        AcsSendOutcome outcome = new SdkAcsEmailGateway(client, SendMode.WAIT, TIMEOUT).send(message, OPERATION_ID);
+
+        assertThat(outcome.status()).isEqualTo(Status.UNCONFIRMED);
+        assertThat(outcome.operationId()).isEqualTo(OPERATION_ID.toString());
+        assertThat(outcome.errorCode()).isEqualTo("ACS_WAIT_TIMEOUT");
+        verify(poller, never()).poll();
+    }
+
+    @Test
+    void withOperationId_pollError_isUnconfirmedWithTheId() {
+        when(poller.waitForCompletion(TIMEOUT)).thenThrow(
+                new IllegalStateException("status GET failed for john@example.com"));
+
+        AcsSendOutcome outcome = new SdkAcsEmailGateway(client, SendMode.WAIT, TIMEOUT).send(message, OPERATION_ID);
+
+        assertThat(outcome.status()).isEqualTo(Status.UNCONFIRMED);
+        assertThat(outcome.operationId()).isEqualTo(OPERATION_ID.toString());
+        assertThat(outcome.errorMessage()).contains("j***@example.com").doesNotContain("john@example.com");
+        verify(poller, never()).poll();
+    }
+
+    @Test
+    void withOperationId_finalResponseWithoutId_fallsBackToTheSuppliedId() {
+        when(poller.waitForCompletion(TIMEOUT)).thenReturn(response(LongRunningOperationStatus.SUCCESSFULLY_COMPLETED,
+                null, EmailSendStatus.SUCCEEDED, null));
+
+        AcsSendOutcome outcome = new SdkAcsEmailGateway(client, SendMode.WAIT, TIMEOUT).send(message, OPERATION_ID);
+
+        assertThat(outcome).isEqualTo(AcsSendOutcome.of(OPERATION_ID.toString(), Status.SUCCEEDED));
+    }
+
+    @Test
+    void withOperationId_rejectedSend_propagatesSdkException() {
+        HttpResponseException rejected = new HttpResponseException("rejected", null);
+        when(client.beginSend(eq(message), any(Context.class))).thenThrow(rejected);
+
+        SdkAcsEmailGateway gateway = new SdkAcsEmailGateway(client, SendMode.WAIT, TIMEOUT);
+        assertThatThrownBy(() -> gateway.send(message, OPERATION_ID)).isSameAs(rejected);
+    }
+
+    @Test
+    void legacySubmitMode_pollsExactlyOnce_andReturnsOperationId() {
         when(poller.poll()).thenReturn(
                 response(LongRunningOperationStatus.IN_PROGRESS, "op-sub", EmailSendStatus.RUNNING, null));
 

@@ -179,6 +179,21 @@ public record NotificationResponse(
     public static NotificationResponse failed(NotificationRequest request, String provider,
                                               String errorCode, String errorMessage,
                                               Instant receivedAt) {
+        return failed(request, provider, null, errorCode, errorMessage, receivedAt);
+    }
+
+    /**
+     * Build a FAILED response that keeps the provider message id, for a send
+     * the provider had already identified (for example an ACS operation id)
+     * before it failed. {@code provider} and {@code providerMessageId} may be
+     * {@code null}.
+     *
+     * @since 1.1.1
+     */
+    public static NotificationResponse failed(NotificationRequest request, String provider,
+                                              String providerMessageId,
+                                              String errorCode, String errorMessage,
+                                              Instant receivedAt) {
         return new NotificationResponse(
                 request.getRequestId(),
                 request.getCorrelationId(),
@@ -187,7 +202,7 @@ public record NotificationResponse(
                 request.getChannel(),
                 provider,
                 NotificationStatus.FAILED,
-                null,
+                providerMessageId,
                 errorCode,
                 errorMessage,
                 receivedAt,
