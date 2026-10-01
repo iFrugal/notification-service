@@ -211,3 +211,24 @@ The module uses no reflection of its own.
 `azure-core` ships its own native-image configuration.
 `credential: default` pulls MSAL (`msal4j`) through `azure-identity`, and MSAL may need additional reachability metadata.
 Verify a native build with your chosen authentication option.
+
+## Testing your integration
+
+`AcsEmailProvider.withGateway(settings, gateway)` builds a ready provider over your own `AcsEmailGateway`, so a test exercises the real message mapping, operation id and result handling without Azure.
+`configure(...)` and `init()` are no-ops on such an instance.
+
+```java
+AcsEmailGateway gateway = mock(AcsEmailGateway.class);
+when(gateway.send(any(), any())).thenReturn(AcsSendOutcome.of("op-1", AcsSendOutcome.Status.SUCCEEDED));
+
+AcsEmailProvider provider = AcsEmailProvider.withGateway(
+        AcsEmailProperties.fromMap(Map.of(
+                "connection-string", "endpoint=https://x.communication.azure.com/;accesskey=a2V5",
+                "sender", "DoNotReply@example.com")),
+        gateway);
+
+SendResult result = provider.send(request, RenderedContent.email("Subject", "<p>Hi</p>", "Hi"));
+// verify(gateway).send(messageCaptor.capture(), operationIdCaptor.capture()) to inspect the EmailMessage
+```
+
+The provider calls `send(EmailMessage, UUID)`; stub that method, not the one-argument form.

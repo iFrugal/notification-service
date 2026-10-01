@@ -6,6 +6,9 @@
   The built-in providers and the core service no longer write raw email addresses, phone numbers or subjects to their log lines, and provider error messages are masked before they are logged or returned.
 - **No duplicate ACS email after acceptance.**
   `email-provider-acs` sends a deterministic `Operation-Id` with every message and never resends a message that ACS has already accepted.
+- **Test seams for the built-in providers.**
+  `AcsEmailProvider.withGateway`, `SesEmailProvider.withClient`, `SmtpEmailProvider.withSender` and `TwilioSmsProvider.withClient` let your tests drive the real send path of each provider against a mock, without a cloud account or an SMTP server.
+  Each module README has a "Testing your integration" snippet.
 
 ## Fixes
 
@@ -36,6 +39,9 @@ Additive public API:
 - `SendResult.failure(String errorCode, String errorMessage, FailureType failureType, String messageId)`.
 - `NotificationResponse.failed(NotificationRequest, String provider, String providerMessageId, String errorCode, String errorMessage, Instant receivedAt)`.
 - `AcsEmailGateway.send(EmailMessage, UUID operationId)`, a default method that delegates to `send(EmailMessage)`, so existing gateway implementations compile and behave as before.
+- Provider test seams: `AcsEmailProvider.withGateway(AcsEmailProperties, AcsEmailGateway)`, `SesEmailProvider.withClient(SesV2Client)`, `SmtpEmailProvider.withSender(SmtpSender)` with the new functional interface `SmtpSender`, and `TwilioSmsProvider.withClient(TwilioRestClient)`.
+  `AcsSendOutcome.of(String, Status)` is now public.
+  `SesEmailProvider`, `SmtpEmailProvider` and `TwilioSmsProvider` declare their public no-argument constructors explicitly; they existed implicitly before.
 - `AcsSendOutcome.Status.UNCONFIRMED`.
   `SdkAcsEmailGateway` reports it instead of `TIMED_OUT`, and `AcsEmailProvider` treats both the same way.
   An exhaustive `switch` over `AcsSendOutcome.Status` in your own code needs a branch for it.
@@ -53,3 +59,5 @@ Behaviour changes to be aware of:
   The provider never resubmits an accepted message, but if you rely on ACS-side deduplication of a resubmission, verify it on your own Communication Services resource.
 - `UNCONFIRMED` is visible in `SendResult.providerMetadata` and the provider's `WARN` log line; `NotificationResponse` reports `SENT`.
   Reconcile with ACS delivery reports or the operation id.
+- The default `TwilioSmsProvider` still calls the process-wide `Twilio.init`, so tenants with different Twilio accounts in one JVM share the account initialised last.
+  Instances built with `TwilioSmsProvider.withClient` are not affected.

@@ -18,9 +18,13 @@ import software.amazon.awssdk.services.sesv2.model.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * AWS SES email provider implementation.
+ *
+ * <p>{@link #withClient(SesV2Client)} builds an instance over your own client, for
+ * testing an integration without AWS.
  */
 @Slf4j
 public class SesEmailProvider implements EmailProvider {
@@ -33,6 +37,33 @@ public class SesEmailProvider implements EmailProvider {
     private String configurationSetName;
 
     private SesV2Client sesClient;
+    /** Set when the client came from {@link #withClient(SesV2Client)}; the caller owns it. */
+    private boolean clientInjected;
+
+    /**
+     * Reflective / bean construction; {@link #init()} builds the SES client.
+     */
+    public SesEmailProvider() {
+        // Settings arrive through configure(...).
+    }
+
+    /**
+     * A provider that sends through {@code client}, for example a Mockito mock of
+     * {@link SesV2Client}.
+     * Call {@link #configure(Map)} for the sender settings as usual; {@link #init()}
+     * keeps the given client instead of building one, and {@link #destroy()} does not
+     * close it.
+     *
+     * @param client the SES v2 client
+     * @return the provider
+     * @since 1.1.1
+     */
+    public static SesEmailProvider withClient(SesV2Client client) {
+        SesEmailProvider provider = new SesEmailProvider();
+        provider.sesClient = Objects.requireNonNull(client, "client");
+        provider.clientInjected = true;
+        return provider;
+    }
 
     @Override
     public String getProviderName() {
@@ -51,6 +82,10 @@ public class SesEmailProvider implements EmailProvider {
 
     @Override
     public void init() {
+        if (clientInjected) {
+            log.info("AWS SES email provider initialized with a supplied client");
+            return;
+        }
         sesClient = SesV2Client.builder()
                 .region(Region.of(region))
                 .build();
@@ -60,7 +95,7 @@ public class SesEmailProvider implements EmailProvider {
 
     @Override
     public void destroy() {
-        if (sesClient != null) {
+        if (sesClient != null && !clientInjected) {
             sesClient.close();
             log.debug("SES client closed");
         }

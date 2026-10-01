@@ -39,7 +39,15 @@ public record AcsSendOutcome(String operationId, Status status, String errorCode
         UNCONFIRMED
     }
 
-    static AcsSendOutcome of(String operationId, Status status) {
+    /**
+     * An outcome without error details, for example in a test double of
+     * {@link AcsEmailGateway}.
+     *
+     * @param operationId the ACS operation id, may be {@code null}
+     * @param status      the observed state
+     * @return the outcome
+     */
+    public static AcsSendOutcome of(String operationId, Status status) {
         return new AcsSendOutcome(operationId, status, null, null);
     }
 }

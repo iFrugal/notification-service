@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 
@@ -40,13 +41,15 @@ import static com.lazydevs.notification.channel.email.acs.AcsEmailProperties.has
  * <p>Configured per tenant: {@code ProviderRegistry} calls {@link #configure(Map)}
  * with the tenant's provider properties (see {@link AcsEmailProperties} for the
  * keys), then {@link #init()}.
- * Two ways to obtain an instance:
+ * Ways to obtain an instance:
  * <ul>
  *   <li>the prototype bean {@code acsEmailProvider} registered by
  *       {@link AcsEmailProviderAutoConfiguration} - each lookup is a fresh instance,
  *       and {@code credential=<bean name>} can pick a {@link TokenCredential} bean;</li>
  *   <li>the public no-arg constructor (fqcn or reflective instantiation) - connection
- *       string and {@code credential=default} work, bean-named credentials do not.</li>
+ *       string and {@code credential=default} work, bean-named credentials do not;</li>
+ *   <li>{@link #withGateway(AcsEmailProperties, AcsEmailGateway)} - a ready instance over
+ *       your own gateway, for tests.</li>
  * </ul>
  *
  * <p>The provider message id is the ACS operation id in both send modes.
@@ -107,6 +110,24 @@ public class AcsEmailProvider implements EmailProvider {
         this.gateway = gateway;
     }
 
+    /**
+     * A ready-to-use provider over your own {@link AcsEmailGateway}, for testing an
+     * integration without Azure (mock the gateway, or wrap a test double).
+     *
+     * <p>The instance is already configured and initialised: {@link #configure(Map)}
+     * and {@link #init()} are no-ops on it, so a {@code ProviderRegistry} can still
+     * call them.
+     *
+     * @param settings the settings, for example from {@link AcsEmailProperties#fromMap(Map)}
+     * @param gateway  the gateway that performs the send
+     * @return the provider
+     * @since 1.1.1
+     */
+    public static AcsEmailProvider withGateway(AcsEmailProperties settings, AcsEmailGateway gateway) {
+        return new AcsEmailProvider(Objects.requireNonNull(settings, "settings"),
+                Objects.requireNonNull(gateway, "gateway"));
+    }
+
     @Override
     public String getProviderName() {
         return PROVIDER_NAME;
@@ -118,6 +139,11 @@ public class AcsEmailProvider implements EmailProvider {
      */
     @Override
     public void configure(Map<String, Object> properties) {
+        if (clientFactory == null) {
+            // Built by withGateway(...): settings and gateway were supplied up front.
+            log.debug("ACS email provider was built with a gateway; ignoring configure(...)");
+            return;
+        }
         AcsEmailProperties parsed = AcsEmailProperties.fromMap(properties);
         this.credential = clientFactory.resolveCredential(parsed);
         this.settings = parsed;

@@ -407,6 +407,46 @@ class AcsEmailProviderTest {
     }
 
     @Test
+    void withGateway_isReady_andConfigureAndInitAreNoOps() {
+        AcsEmailGateway seam = new AcsEmailGateway() {
+            @Override
+            public AcsSendOutcome send(EmailMessage message) {
+                throw new AssertionError("the provider must call send(message, operationId)");
+            }
+
+            @Override
+            public AcsSendOutcome send(EmailMessage message, UUID operationId) {
+                return AcsSendOutcome.of(operationId.toString(), Status.SUBMITTED);
+            }
+        };
+        AcsEmailProvider seamProvider = AcsEmailProvider.withGateway(
+                AcsEmailProperties.fromMap(Map.of("connection-string",
+                        "endpoint=https://x.communication.azure.com/;accesskey=a2V5", "sender", SENDER)),
+                seam);
+
+        seamProvider.configure(Map.of());
+        seamProvider.init();
+        NotificationRequest request = request(to("user@example.com"));
+        request.setTenantId("acme");
+        request.setRequestId("req-seam");
+        SendResult result = seamProvider.send(request, htmlAndText());
+
+        assertThat(seamProvider.isHealthy()).isTrue();
+        assertThat(result.success()).isTrue();
+        assertThat(result.messageId()).isEqualTo(AcsEmailProvider.operationIdFor("acme", "req-seam",
+                seamProvider.toEmailMessage(request, htmlAndText())).toString());
+    }
+
+    @Test
+    void withGateway_rejectsNulls() {
+        AcsEmailProperties settings = settings(List.of(), null);
+        assertThatThrownBy(() -> AcsEmailProvider.withGateway(settings, null))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("gateway");
+        assertThatThrownBy(() -> AcsEmailProvider.withGateway(null, gateway))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("settings");
+    }
+
+    @Test
     void lifecycleMisuse_failsClearly() {
         AcsEmailProvider fresh = new AcsEmailProvider();
         assertThat(fresh.isHealthy()).isFalse();

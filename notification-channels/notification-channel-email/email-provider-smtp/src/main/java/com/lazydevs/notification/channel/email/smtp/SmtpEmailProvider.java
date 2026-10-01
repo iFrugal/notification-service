@@ -13,12 +13,17 @@ import jakarta.mail.internet.*;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
 
 /**
  * SMTP email provider implementation.
  * Supports Gmail, generic SMTP servers, etc.
+ *
+ * <p>{@link #withSender(SmtpSender)} builds an instance that hands the finished
+ * message to your own {@link SmtpSender} instead of {@link Transport#send}, for
+ * testing an integration without an SMTP server.
  */
 @Slf4j
 public class SmtpEmailProvider implements EmailProvider {
@@ -38,6 +43,31 @@ public class SmtpEmailProvider implements EmailProvider {
     private int timeout = 10000;
 
     private Session session;
+    private SmtpSender sender = Transport::send;
+    private boolean senderInjected;
+
+    /**
+     * Reflective / bean construction; messages go out through {@link Transport#send}.
+     */
+    public SmtpEmailProvider() {
+        // Settings arrive through configure(...).
+    }
+
+    /**
+     * A provider that hands every message to {@code sender}.
+     * Call {@link #configure(Map)} for the sender address as usual; {@code host} is
+     * optional for such an instance, and {@link #init()} only builds the mail session.
+     *
+     * @param sender receives each finished message
+     * @return the provider
+     * @since 1.1.1
+     */
+    public static SmtpEmailProvider withSender(SmtpSender sender) {
+        SmtpEmailProvider provider = new SmtpEmailProvider();
+        provider.sender = Objects.requireNonNull(sender, "sender");
+        provider.senderInjected = true;
+        return provider;
+    }
 
     @Override
     public String getProviderName() {
@@ -63,12 +93,15 @@ public class SmtpEmailProvider implements EmailProvider {
 
     @Override
     public void init() {
-        if (host == null || host.isBlank()) {
+        boolean hasHost = host != null && !host.isBlank();
+        if (!hasHost && !senderInjected) {
             throw new IllegalStateException("SMTP host is required");
         }
 
         Properties props = new Properties();
-        props.put("mail.smtp.host", host);
+        if (hasHost) {
+            props.put("mail.smtp.host", host);
+        }
         props.put("mail.smtp.port", String.valueOf(port));
         props.put("mail.smtp.auth", String.valueOf(auth));
         props.put("mail.smtp.starttls.enable", String.valueOf(startTls));
@@ -189,7 +222,7 @@ public class SmtpEmailProvider implements EmailProvider {
             }
 
             // Send
-            Transport.send(message);
+            sender.send(message);
 
             String messageId = message.getMessageID();
             if (messageId == null) {
@@ -269,6 +302,10 @@ public class SmtpEmailProvider implements EmailProvider {
 
     @Override
     public boolean isHealthy() {
+        if (senderInjected) {
+            // The supplied sender owns the transport; there is no server to probe.
+            return session != null;
+        }
         try {
             Transport transport = session.getTransport("smtp");
             transport.connect();
