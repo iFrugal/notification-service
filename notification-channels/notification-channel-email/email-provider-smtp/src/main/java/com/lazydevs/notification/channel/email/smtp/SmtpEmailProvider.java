@@ -7,6 +7,7 @@ import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.FailureTypes;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.SendResult;
+import com.lazydevs.notification.api.util.PiiMasking;
 import jakarta.mail.*;
 import jakarta.mail.internet.*;
 import lombok.extern.slf4j.Slf4j;
@@ -56,7 +57,8 @@ public class SmtpEmailProvider implements EmailProvider {
         this.connectionTimeout = getInt(properties, "connection-timeout", 10000);
         this.timeout = getInt(properties, "timeout", 10000);
 
-        log.debug("SMTP provider configured: host={}, port={}, from={}", host, port, fromAddress);
+        log.debug("SMTP provider configured: host={}, port={}, from={}", host, port,
+                PiiMasking.maskEmail(fromAddress));
     }
 
     @Override
@@ -194,16 +196,17 @@ public class SmtpEmailProvider implements EmailProvider {
                 messageId = UUID.randomUUID().toString();
             }
 
-            log.debug("Email sent via SMTP: to={}, subject={}, messageId={}",
-                    recipient.to(), subject, messageId);
+            log.debug("Email sent via SMTP: to={}, messageId={}",
+                    PiiMasking.maskEmail(recipient.to()), messageId);
 
             return SendResult.success(messageId);
 
         } catch (Exception e) {
+            String error = PiiMasking.redact(e.getMessage());
             log.error("Failed to send email via SMTP: to={}, error={}",
-                    recipient.to(), e.getMessage());
+                    PiiMasking.maskEmail(recipient.to()), error);
             return SendResult.failure(
-                    e.getClass().getSimpleName(), e.getMessage(), classifySmtp(e));
+                    e.getClass().getSimpleName(), error, classifySmtp(e));
         }
     }
 
@@ -272,7 +275,7 @@ public class SmtpEmailProvider implements EmailProvider {
             transport.close();
             return true;
         } catch (Exception e) {
-            log.warn("SMTP health check failed: {}", e.getMessage());
+            log.warn("SMTP health check failed: {}", PiiMasking.redact(e.getMessage()));
             return false;
         }
     }

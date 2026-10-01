@@ -7,6 +7,7 @@ import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.FailureTypes;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.SendResult;
+import com.lazydevs.notification.api.util.PiiMasking;
 import lombok.extern.slf4j.Slf4j;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.exception.SdkClientException;
@@ -45,7 +46,7 @@ public class SesEmailProvider implements EmailProvider {
         this.fromName = getString(properties, "from-name", getString(properties, "fromName", null));
         this.configurationSetName = getString(properties, "configuration-set", null);
 
-        log.debug("SES provider configured: region={}, from={}", region, fromAddress);
+        log.debug("SES provider configured: region={}, from={}", region, PiiMasking.maskEmail(fromAddress));
     }
 
     @Override
@@ -125,15 +126,17 @@ public class SesEmailProvider implements EmailProvider {
             // Send
             SendEmailResponse response = sesClient.sendEmail(sendRequestBuilder.build());
 
-            log.debug("Email sent via SES: to={}, messageId={}", recipient.to(), response.messageId());
+            log.debug("Email sent via SES: to={}, messageId={}",
+                    PiiMasking.maskEmail(recipient.to()), response.messageId());
 
             return SendResult.success(response.messageId());
 
         } catch (Exception e) {
+            String error = PiiMasking.redact(e.getMessage());
             log.error("Failed to send email via SES: to={}, error={}",
-                    recipient.to(), e.getMessage());
+                    PiiMasking.maskEmail(recipient.to()), error);
             return SendResult.failure(
-                    e.getClass().getSimpleName(), e.getMessage(), classifySes(e));
+                    e.getClass().getSimpleName(), error, classifySes(e));
         }
     }
 
@@ -206,7 +209,7 @@ public class SesEmailProvider implements EmailProvider {
             sesClient.getAccount(b -> {});
             return true;
         } catch (Exception e) {
-            log.warn("SES health check failed: {}", e.getMessage());
+            log.warn("SES health check failed: {}", PiiMasking.redact(e.getMessage()));
             return false;
         }
     }

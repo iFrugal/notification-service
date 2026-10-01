@@ -25,7 +25,7 @@ public class NotificationAudit {
     String notificationType;
     Channel channel;
     String provider;
-    String recipientSummary;       // Masked recipient (e.g., "j***@example.com")
+    String recipientSummary;       // PiiMasking.mask(recipient), e.g. "to=j***@example.com cc=0 bcc=0", "phone=+1***90"
 
     // Status Tracking
     NotificationStatus status;
@@ -103,7 +103,7 @@ public class PersistenceApiAuditService implements NotificationAuditService {
             .tenantId(TenantContext.getTenantId())
             .notificationType(request.getNotificationType())
             .channel(request.getChannel())
-            .recipientSummary(maskRecipient(request.getRecipient()))
+            .recipientSummary(PiiMasking.mask(request.getRecipient()))
             .status(NotificationStatus.ACCEPTED)
             .receivedAt(Instant.now())
             .metadata(request.getMetadata())

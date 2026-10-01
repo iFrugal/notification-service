@@ -7,6 +7,7 @@ import com.azure.communication.email.models.EmailSendStatus;
 import com.azure.core.models.ResponseError;
 import com.azure.core.util.polling.PollResponse;
 import com.azure.core.util.polling.SyncPoller;
+import com.lazydevs.notification.api.util.PiiMasking;
 import com.lazydevs.notification.channel.email.acs.AcsEmailProperties.SendMode;
 import com.lazydevs.notification.channel.email.acs.AcsSendOutcome.Status;
 import lombok.extern.slf4j.Slf4j;
@@ -62,7 +63,8 @@ public class SdkAcsEmailGateway implements AcsEmailGateway {
             // ACS already accepted the message. Reporting a failure here would make
             // the retry executor send it a second time, so report the submission
             // without an id instead.
-            log.warn("ACS accepted the email but reading the operation id failed: {}", e.getMessage());
+            log.warn("ACS accepted the email but reading the operation id failed: {}",
+                    PiiMasking.redact(e.getMessage()));
             return AcsSendOutcome.of(null, Status.SUBMITTED);
         }
         return toOutcome(response == null ? null : response.getValue());
@@ -89,7 +91,8 @@ public class SdkAcsEmailGateway implements AcsEmailGateway {
             PollResponse<EmailSendResult> response = poller.poll();
             return response == null || response.getValue() == null ? null : response.getValue().getId();
         } catch (RuntimeException e) {
-            log.debug("Could not read the ACS operation id after the wait timeout: {}", e.getMessage());
+            log.debug("Could not read the ACS operation id after the wait timeout: {}",
+                    PiiMasking.redact(e.getMessage()));
             return null;
         }
     }

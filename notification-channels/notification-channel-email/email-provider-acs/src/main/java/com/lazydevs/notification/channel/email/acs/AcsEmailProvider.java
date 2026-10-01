@@ -14,6 +14,7 @@ import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.FailureTypes;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.SendResult;
+import com.lazydevs.notification.api.util.PiiMasking;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Instant;
@@ -142,15 +143,16 @@ public class AcsEmailProvider implements EmailProvider {
         try {
             message = toEmailMessage(request, content);
         } catch (InvalidMessageException e) {
-            return SendResult.failure(CODE_INVALID_MESSAGE, e.getMessage(), FailureType.PERMANENT);
+            return SendResult.failure(CODE_INVALID_MESSAGE, PiiMasking.redact(e.getMessage()), FailureType.PERMANENT);
         }
 
         try {
             AcsSendOutcome outcome = gateway.send(message);
             return toSendResult(outcome, recipient);
         } catch (Exception e) {
-            log.error("Failed to send email via ACS: to={}, error={}", recipient.to(), e.getMessage());
-            return SendResult.failure(e.getClass().getSimpleName(), describe(e), classifyAcs(e));
+            log.error("Failed to send email via ACS: to={}, error={}",
+                    PiiMasking.maskEmail(recipient.to()), PiiMasking.redact(e.getMessage()));
+            return SendResult.failure(e.getClass().getSimpleName(), PiiMasking.redact(describe(e)), classifyAcs(e));
         }
     }
 
@@ -159,7 +161,7 @@ public class AcsEmailProvider implements EmailProvider {
         return switch (outcome.status()) {
             case SUCCEEDED, SUBMITTED -> {
                 log.debug("Email sent via ACS: to={}, operationId={}, status={}",
-                        recipient.to(), operationId, outcome.status());
+                        PiiMasking.maskEmail(recipient.to()), operationId, outcome.status());
                 yield SendResult.success(operationId, Map.of(METADATA_STATUS, outcome.status().name()));
             }
             // A final FAILED status is ACS's own verdict on this message; resending
@@ -177,10 +179,10 @@ public class AcsEmailProvider implements EmailProvider {
     private static SendResult failure(String operationId, AcsSendOutcome outcome, String defaultCode,
                                       String defaultMessage, FailureType type) {
         log.warn("ACS email operation {} ended with {}: {} {}", operationId, outcome.status(),
-                outcome.errorCode(), outcome.errorMessage());
+                outcome.errorCode(), PiiMasking.redact(outcome.errorMessage()));
         return new SendResult(false, operationId,
                 hasText(outcome.errorCode()) ? outcome.errorCode() : defaultCode,
-                hasText(outcome.errorMessage()) ? outcome.errorMessage() : defaultMessage,
+                hasText(outcome.errorMessage()) ? PiiMasking.redact(outcome.errorMessage()) : defaultMessage,
                 type, Instant.now(), Map.of(METADATA_STATUS, outcome.status().name()));
     }
 

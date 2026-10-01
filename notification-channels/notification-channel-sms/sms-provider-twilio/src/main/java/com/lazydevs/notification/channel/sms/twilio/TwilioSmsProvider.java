@@ -7,6 +7,7 @@ import com.lazydevs.notification.api.model.FailureTypes;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.SendResult;
 import com.lazydevs.notification.api.model.SmsRecipient;
+import com.lazydevs.notification.api.util.PiiMasking;
 import com.twilio.Twilio;
 import com.twilio.exception.ApiException;
 import com.twilio.exception.AuthenticationException;
@@ -38,7 +39,7 @@ public class TwilioSmsProvider implements SmsProvider {
         this.authToken = getString(properties, "auth-token", getString(properties, "authToken", null));
         this.fromNumber = getString(properties, "from", null);
 
-        log.debug("Twilio SMS provider configured: from={}", fromNumber);
+        log.debug("Twilio SMS provider configured: from={}", PiiMasking.maskPhone(fromNumber));
     }
 
     @Override
@@ -76,7 +77,8 @@ public class TwilioSmsProvider implements SmsProvider {
                     content.textBody()
             ).create();
 
-            log.debug("SMS sent via Twilio: to={}, sid={}", recipient.phoneNumber(), message.getSid());
+            log.debug("SMS sent via Twilio: to={}, sid={}",
+                    PiiMasking.maskPhone(recipient.phoneNumber()), message.getSid());
 
             return SendResult.success(message.getSid(), Map.of(
                     "status", message.getStatus().toString(),
@@ -84,10 +86,11 @@ public class TwilioSmsProvider implements SmsProvider {
             ));
 
         } catch (Exception e) {
+            String error = PiiMasking.redact(e.getMessage());
             log.error("Failed to send SMS via Twilio: to={}, error={}",
-                    recipient.phoneNumber(), e.getMessage());
+                    PiiMasking.maskPhone(recipient.phoneNumber()), error);
             return SendResult.failure(
-                    e.getClass().getSimpleName(), e.getMessage(), classifyTwilio(e));
+                    e.getClass().getSimpleName(), error, classifyTwilio(e));
         }
     }
 

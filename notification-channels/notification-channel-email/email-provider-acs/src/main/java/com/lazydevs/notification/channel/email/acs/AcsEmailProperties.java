@@ -1,6 +1,7 @@
 package com.lazydevs.notification.channel.email.acs;
 
 import com.lazydevs.notification.api.exception.ProviderConfigurationException;
+import com.lazydevs.notification.api.util.PiiMasking;
 
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
@@ -136,15 +137,16 @@ public record AcsEmailProperties(
     }
 
     /**
-     * Keeps the connection string (it embeds the access key) out of logs.
+     * Keeps the connection string (it embeds the access key) out of logs and
+     * masks the sender and reply-to addresses.
      */
     @Override
     public String toString() {
         return "AcsEmailProperties[endpoint=" + endpoint
                 + ", connectionString=" + (hasConnectionString() ? "****" : null)
                 + ", credential=" + credential
-                + ", sender=" + sender
-                + ", replyTo=" + replyTo
+                + ", sender=" + PiiMasking.maskEmail(sender)
+                + ", replyTo=" + replyTo.stream().map(PiiMasking::maskEmail).toList()
                 + ", sendMode=" + sendMode
                 + ", waitTimeout=" + waitTimeout
                 + ", sdkRetries=" + sdkRetries

@@ -17,6 +17,13 @@ public interface NotificationAuditService {
     /**
      * Record that a notification request was received.
      *
+     * <p>Never store the raw recipient: set
+     * {@link NotificationAudit#getRecipientSummary() recipientSummary} to
+     * {@link com.lazydevs.notification.api.util.PiiMasking#mask(com.lazydevs.notification.api.model.Recipient)
+     * PiiMasking.mask(request.getRecipient())}.
+     * When the returned record has no summary, {@code DefaultNotificationService}
+     * fills it in on that instance.
+     *
      * @param request the notification request
      * @return the created audit record (may be null if audit is disabled)
      */
