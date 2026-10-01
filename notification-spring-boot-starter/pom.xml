@@ -36,6 +36,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Optional: Redis-backed stores and rate limiter (DD-14) -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>notification-redis</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Optional: Audit support -->
         <dependency>
             <groupId>${project.groupId}</groupId>

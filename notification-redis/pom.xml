@@ -23,6 +23,12 @@
             <artifactId>notification-core</artifactId>
         </dependency>
 
+        <!-- Spring Boot Autoconfigure - NotificationRedisAutoConfiguration -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+
         <!-- Spring Data Redis — provides LettuceConnectionFactory and
              RedisTemplate auto-configuration, plus the spring.data.redis.*
              property surface operators already know. -->

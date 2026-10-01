@@ -6,12 +6,10 @@ import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import lazydevs.persistence.connection.multitenant.TenantContext;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Payload;
-import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 /**
@@ -30,8 +28,6 @@ import org.springframework.util.StringUtils;
  * </ul>
  */
 @Slf4j
-@Component
-@ConditionalOnProperty(prefix = "notification.kafka", name = "enabled", havingValue = "true")
 public class NotificationKafkaListener {
 
     public static final String TENANT_HEADER = "X-Tenant-Id";

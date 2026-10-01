@@ -13,7 +13,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.text.StringEscapeUtils;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
-import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -35,7 +34,6 @@ import java.util.stream.Collectors;
  * - Notification-specific helper methods
  */
 @Slf4j
-@Component
 public class NotificationTemplateEngine {
 
     private final TemplateEngine coreEngine = TemplateEngine.getInstance();
