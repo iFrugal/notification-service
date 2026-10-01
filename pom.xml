@@ -31,6 +31,7 @@
         <module>notification-kafka</module>
         <module>notification-rest</module>
         <module>notification-redis</module>
+        <module>notification-store-jdbc</module>
         <module>notification-spring-boot-starter</module>
         <module>notification-server</module>
     </modules>
@@ -287,6 +288,13 @@
                 <version>${project.version}</version>
             </dependency>
 
+            <!-- Internal: notification-store-jdbc module -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>notification-store-jdbc</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
             <!-- Springdoc OpenAPI starter — exposes /v3/api-docs and
                  /swagger-ui out of the box on top of Spring MVC. Pulled
                  into notification-rest only; keeps the schema generator
@@ -355,11 +363,20 @@
                 <configuration>
                     <source>${java.version}</source>
                     <target>${java.version}</target>
+                    <!-- Lombok must stay first: processors run in this order,
+                         and spring-boot-configuration-processor needs the
+                         getters and setters Lombok generates to see the
+                         @ConfigurationProperties members. -->
                     <annotationProcessorPaths>
                         <path>
                             <groupId>org.projectlombok</groupId>
                             <artifactId>lombok</artifactId>
                             <version>${lombok.version}</version>
+                        </path>
+                        <path>
+                            <groupId>org.springframework.boot</groupId>
+                            <artifactId>spring-boot-configuration-processor</artifactId>
+                            <version>${spring-boot.version}</version>
                         </path>
                     </annotationProcessorPaths>
                 </configuration>

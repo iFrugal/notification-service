@@ -34,6 +34,7 @@ public class CaffeineIdempotencyStore implements IdempotencyStore {
 
     private final Cache<IdempotencyKey, IdempotencyRecord> cache;
 
+    @SuppressWarnings("deprecation") // idempotency.store is kept only for this log line
     public CaffeineIdempotencyStore(NotificationProperties properties) {
         NotificationProperties.IdempotencyProperties cfg = properties.getIdempotency();
         if (!"caffeine".equalsIgnoreCase(cfg.getStore())) {

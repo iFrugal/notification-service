@@ -24,6 +24,12 @@ spring:
 notification:
   default-tenant: default
 
+  # Store family for idempotency, rate limiting, dead letters and delivery
+  # events: memory (per pod), redis (needs notification-redis) or jdbc
+  # (needs notification-store-jdbc).
+  store:
+    type: ${NOTIFICATION_STORE_TYPE:memory}
+
   rest:
     enabled: true
     base-path: /api/v1

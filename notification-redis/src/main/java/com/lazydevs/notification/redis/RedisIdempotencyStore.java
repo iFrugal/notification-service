@@ -26,7 +26,7 @@ import java.util.Optional;
  * {@code SET NX EX} which Redis guarantees as one operation — no Lua
  * script needed.
  *
- * <p>Bean is opt-in via {@code notification.redis.idempotency.enabled}
+ * <p>Bean is opt-in via {@code notification.store.type=redis} (or {@code notification.redis.idempotency.enabled=true})
  * and registered by
  * {@link com.lazydevs.notification.redis.autoconfigure.NotificationRedisAutoConfiguration},
  * which backs off when the application supplies its own {@link IdempotencyStore}.

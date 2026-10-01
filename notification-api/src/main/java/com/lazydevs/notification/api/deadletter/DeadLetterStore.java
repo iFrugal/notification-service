@@ -1,6 +1,8 @@
 package com.lazydevs.notification.api.deadletter;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -85,5 +87,73 @@ public interface DeadLetterStore {
      */
     default boolean remove(String tenantId, String requestId) {
         return false;
+    }
+
+    /**
+     * Claim up to {@code limit} unclaimed entries of one tenant for
+     * processing (typically replay), leasing them for {@code lease}.
+     *
+     * <p>Contract for the claim / acknowledge / release cycle:
+     * <ul>
+     *   <li><strong>Claim.</strong> Every returned entry is leased to the
+     *       caller until {@code now + lease}. While the lease is live, no
+     *       other {@code claim} call returns the same entry. Distributed
+     *       implementations MUST make this hold across replicas, so two
+     *       pods draining the same tenant never replay one entry twice.</li>
+     *   <li><strong>Acknowledge.</strong> After processing an entry
+     *       successfully, the caller calls {@link #remove(String, String)};
+     *       removal is the acknowledgement.</li>
+     *   <li><strong>Release.</strong> After a failed attempt, the caller
+     *       calls {@link #release(String, String)} so the entry becomes
+     *       claimable again immediately.</li>
+     *   <li><strong>Expiry.</strong> An entry that is neither removed nor
+     *       released (the caller crashed) becomes claimable again once its
+     *       lease elapses.</li>
+     * </ul>
+     *
+     * <p>{@code tenantId} is matched exactly against the entry's tenant;
+     * {@code null} matches only entries recorded without a tenant. The
+     * order of the returned entries is implementation-defined (the JDBC
+     * store returns oldest first). A non-positive {@code limit} yields an
+     * empty list.
+     *
+     * <p>The default falls back to {@link #snapshot()} filtered by tenant
+     * and truncated to {@code limit}. It takes <strong>no lease and no
+     * lock</strong>, so it is only safe for single-replica, in-process
+     * stores; {@code lease} is ignored. Added after the SPI's initial
+     * release, so existing implementations compile unchanged.
+     *
+     * @param tenantId tenant whose entries to claim; {@code null} for
+     *                 entries without a tenant
+     * @param limit    maximum number of entries to return
+     * @param lease    how long the claim is held before the entries become
+     *                 claimable again
+     * @return the claimed entries, never {@code null}
+     */
+    default List<DeadLetterEntry> claim(String tenantId, int limit, Duration lease) {
+        if (limit <= 0) {
+            return List.of();
+        }
+        return snapshot().orElse(List.of()).stream()
+                .filter(e -> Objects.equals(tenantId, e.request().getTenantId()))
+                .limit(limit)
+                .toList();
+    }
+
+    /**
+     * Give up the lease taken by {@link #claim(String, int, Duration)} on a
+     * single entry so it can be claimed again immediately, typically after
+     * a failed replay. Releasing an entry that is not claimed, or does not
+     * exist, is a no-op. Implementations should never throw.
+     *
+     * <p>Default is a no-op, matching the lock-free default of
+     * {@link #claim(String, int, Duration)}.
+     *
+     * @param tenantId  tenant of the entry; {@code null} for entries
+     *                  without a tenant
+     * @param requestId original request id of the entry
+     */
+    default void release(String tenantId, String requestId) {
+        // No-op by default: the default claim takes no lease.
     }
 }
