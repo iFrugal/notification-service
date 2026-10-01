@@ -23,10 +23,13 @@
             <artifactId>azure-communication-email</artifactId>
         </dependency>
 
-        <!-- HTTP transport: java.net.http.HttpClient, no Netty -->
+        <!-- Azure HTTP client: none is pinned, the application adds exactly one
+             (azure-core finds it through ServiceLoader). Optional here so this
+             module's own tests have one; consumers do not inherit it. -->
         <dependency>
             <groupId>com.azure</groupId>
             <artifactId>azure-core-http-jdk-httpclient</artifactId>
+            <optional>true</optional>
         </dependency>
 
         <!-- Optional: DefaultAzureCredential / managed identity. Applications
