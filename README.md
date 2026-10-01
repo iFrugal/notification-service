@@ -49,7 +49,7 @@ A multi-tenant notification service supporting multiple channels (Email, SMS, Wh
 ## Features
 
 - **Multi-Channel Support**: Email, SMS, WhatsApp, Push notifications
-- **Multiple Providers per Channel**: SMTP, AWS SES, Twilio, Firebase FCM, etc.
+- **Multiple Providers per Channel**: SMTP, AWS SES, Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)), Twilio, Firebase FCM, etc.
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
 - **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)

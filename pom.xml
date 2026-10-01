@@ -76,6 +76,19 @@
         <firebase-admin.version>9.10.0</firebase-admin.version>
         <jakarta-mail.version>2.0.2</jakarta-mail.version>
 
+        <!-- Azure Communication Services Email (email-provider-acs).
+             Pinned individually rather than through azure-sdk-bom: the
+             latest BOM (1.3.8) still lists azure-communication-email 1.1.4
+             and azure-core 1.58.1, older than what email 1.1.5 needs.
+             azure-core is managed so every Azure artifact agrees on one
+             version. azure-core-http-netty is excluded below because it
+             pins Netty 4.1, which clashes with Spring Boot 4.1's Netty 4.2;
+             the JDK HttpClient transport replaces it. -->
+        <azure-communication-email.version>1.1.5</azure-communication-email.version>
+        <azure-core.version>1.59.1</azure-core.version>
+        <azure-core-http-jdk-httpclient.version>1.1.7</azure-core-http-jdk-httpclient.version>
+        <azure-identity.version>1.18.6</azure-identity.version>
+
 
         <!-- Kafka -->
         <kafka.version>3.6.1</kafka.version>
@@ -163,6 +176,11 @@
             </dependency>
             <dependency>
                 <groupId>${project.groupId}</groupId>
+                <artifactId>email-provider-acs</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
                 <artifactId>notification-channel-sms</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -239,6 +257,40 @@
                 <version>${aws-sdk.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+
+            <!-- Azure SDK (email-provider-acs) -->
+            <dependency>
+                <groupId>com.azure</groupId>
+                <artifactId>azure-core</artifactId>
+                <version>${azure-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.azure</groupId>
+                <artifactId>azure-communication-email</artifactId>
+                <version>${azure-communication-email.version}</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>com.azure</groupId>
+                        <artifactId>azure-core-http-netty</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            <dependency>
+                <groupId>com.azure</groupId>
+                <artifactId>azure-core-http-jdk-httpclient</artifactId>
+                <version>${azure-core-http-jdk-httpclient.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.azure</groupId>
+                <artifactId>azure-identity</artifactId>
+                <version>${azure-identity.version}</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>com.azure</groupId>
+                        <artifactId>azure-core-http-netty</artifactId>
+                    </exclusion>
+                </exclusions>
             </dependency>
 
             <!-- Twilio -->
