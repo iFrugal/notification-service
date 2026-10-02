@@ -71,6 +71,28 @@ class ShippedTemplatesRenderTest {
     }
 
     @Test
+    void orderConfirmationEmail_withAutoEscape_escapesDataOnceAndKeepsMarkup() {
+        runner.withPropertyValues("notification.template.auto-escape=true").run(context -> {
+            RenderedContent content = context.getBean(NotificationTemplateEngine.class).render(
+                    request(Channel.EMAIL, "ORDER_CONFIRMATION", Map.of(
+                            "orderId", "<b>A-1001</b>",
+                            "customerName", "Ada <Lovelace>",
+                            "items", List.of(Map.of("name", "Widget & Co", "qty", 2, "price", 9.5)),
+                            "total", 19,
+                            "trackingUrl", "https://track.example/?id=1&src=mail")));
+
+            assertThat(content.subject()).isEqualTo("Order Confirmation - #<b>A-1001</b>");
+            assertThat(content.htmlBody())
+                    .startsWith("<!DOCTYPE html>")
+                    .contains("Hello Ada &lt;Lovelace&gt;,")
+                    .contains("<td>Widget &amp; Co</td>")
+                    .contains("<strong>#&lt;b&gt;A-1001&lt;/b&gt;</strong>")
+                    .contains("<a href=\"https://track.example/?id=1&amp;src=mail\">")
+                    .doesNotContain("&amp;lt;");
+        });
+    }
+
+    @Test
     void passwordResetEmail_rendersFromDefaultTemplate() {
         runner.run(context -> {
             RenderedContent content = context.getBean(NotificationTemplateEngine.class).render(

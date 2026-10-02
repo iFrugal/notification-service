@@ -266,5 +266,65 @@ resources/
 - Additional abstraction layer
 - Need to maintain helper methods
 
+## Amendment: 1.1.2
+
+The wrapper sketch above predates the shipped code.
+1.1.2 fixes several defects in the shipped `NotificationTemplateEngine` and adds three opt-in properties.
+
+### Path resolution
+
+Templates resolve relative to `notification.template.base-path` as `{base-path}{tenantId}/{channel}/{id}.ftl`, then `{base-path}default/{channel}/{id}.ftl`.
+Up to 1.1.1 the engine prefixed an extra `templates/` segment, so with the default base path it looked under `classpath:/templates/templates/` and the shipped defaults were never found.
+For one release each lookup falls back to the old location after the new one (tenant new, tenant old, default new, default old), so a tenant override keeps precedence over the default whichever layout it uses.
+A file found only at the old location logs one WARN naming the file; the fallback is removed in 1.2.
+
+### Section markers
+
+The engine used to find `[SUBJECT]`, `[/SUBJECT]`, `[BODY]` and `[/BODY]` in the rendered output, so template data containing a marker could replace the body or cut the subject short.
+It now replaces the markers in the template source with tokens built from a fresh random UUID (`\u0000<MARKER>:<uuid>\u0000`) before rendering and splits the output on those tokens.
+Data cannot contain a token it has never seen, so a marker in data is plain text.
+Tokens left over from unpaired markers are turned back into the literal markers, so such templates render exactly as before.
+Marker replacement applies to email templates only; other channels never parsed sections.
+
+### Text part
+
+An optional `[TEXT]...[/TEXT]` section is a plain-text alternative.
+When present, the body becomes the HTML part and the section the text part of a multipart message; when absent, nothing changes.
+Deriving a text part from the HTML automatically is planned for a later release.
+HTML detection (used when there is no `[TEXT]` section) now also recognises `<table`, `<br`, `<span`, `<a ` and `<!DOCTYPE`, case-insensitively.
+
+### Cache
+
+The per-tenant `ConcurrentHashMap` was unbounded and never expired, and `cache-ttl-seconds` was bound but never read.
+The cache is now a Caffeine cache keyed by tenant and template, with `expireAfterWrite(cache-ttl-seconds)` (0 or negative: no expiry) and `maximumSize(cache-max-size)` (default 1000; 0 or negative: unbounded).
+A missing template is not cached, and the admin clear endpoints still clear one tenant or all tenants.
+
+### Auto-escaping
+
+`notification.template.auto-escape` (default `false`) HTML-escapes interpolated values in HTML email bodies.
+The persistence-utils `TemplateEngine` renders every template through one shared FreeMarker `Configuration` (incompatible improvements 2.3.23, undefined output format), so the output format cannot be set per render through it.
+Instead, with the flag on, the engine wraps the body section of the template source in `<#outputformat "HTML">...</#outputformat>`, leaving the subject and any `[TEXT]` section outside it.
+`escapeHtml()` then returns `TemplateHTMLOutputModel` markup, which the HTML output format prints without escaping again; in the subject and text part the undefined output format prints the same markup text as before.
+`?no_esc` prints trusted markup as is.
+With the flag on, whether the body is HTML is decided from its template source, not from the rendered output, so data cannot turn a plain-text body into an HTML one and plain-text bodies are not entity-escaped.
+A body with a `[TEXT]` section is always the HTML part, so it is always escaped.
+With the flag off, output is byte-identical to 1.1.1 apart from the bug fixes in this amendment.
+Trade-offs of the source wrapping: a directive that opens inside the body section and closes outside it becomes a parse error with the flag on, and string built-ins cannot be chained directly after `escapeHtml()`.
+
+### Helpers
+
+- `escapeHtml`, `truncate`, `capitalize` and `urlEncode` print a null value as an empty string instead of `null`.
+- `truncate` with a limit of 3 or less cuts without an ellipsis instead of throwing.
+- `formatDate` and `formatDateTime` accept any `TemporalAccessor`, `java.util.Date`, epoch milliseconds and ISO-8601 strings (tried as date-time, instant, then date); anything else, and a value that lacks a field the pattern needs, is printed unchanged.
+- `formatDate(value, pattern[, zone[, locale]])`, `formatDateTime(value, pattern[, zone[, locale]])` and `formatCurrency(amount, code[, locale])` take optional zone ids and BCP-47 locale tags.
+
+### Known limitations
+
+- The defaults stay as they were for compatibility: `formatDate` uses the JVM zone, `formatDateTime` uses UTC, and only `formatCurrency` uses a fixed locale (`en-US`).
+  They will be unified in 1.2.
+- persistence-utils injects `file`, `eval` and `js` helpers into every template model, and `file` reads any path the process can read.
+  Template authoring is therefore a trusted capability; the helpers go away when this engine owns its FreeMarker configuration in 1.2.
+- `<#include>` and `<#import>` resolve against persistence-utils' own loaders (`classpath:/templates/` and `./templates`), not relative to `base-path`.
+
 ## Related Decisions
 - [03-multi-tenancy.md](./03-multi-tenancy.md) - Tenant context used for template resolution

@@ -1,10 +1,15 @@
 package com.lazydevs.notification.core.template;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Ticker;
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.channel.RenderedContent;
 import com.lazydevs.notification.api.exception.TemplateNotFoundException;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.core.config.NotificationProperties;
+import freemarker.core.HTMLOutputFormat;
+import freemarker.core.TemplateHTMLOutputModel;
 import freemarker.template.TemplateMethodModelEx;
 import freemarker.template.TemplateModelException;
 import lazydevs.mapper.utils.engine.TemplateEngine;
@@ -20,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
 import java.time.DateTimeException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -37,8 +43,9 @@ import java.util.stream.Collectors;
  * Notification-aware template engine wrapper.
  * Wraps persistence-utils TemplateEngine with:
  * - Tenant-aware template resolution
- * - Template caching
+ * - Template caching (bounded, with a TTL)
  * - Notification-specific helper methods
+ * - Optional HTML auto-escaping of email bodies
  */
 @Slf4j
 public class NotificationTemplateEngine {
@@ -52,21 +59,49 @@ public class NotificationTemplateEngine {
      */
     private static final String LEGACY_SEGMENT = "templates/";
 
+    /** Lower-case fragments whose presence marks an email body as HTML. */
+    private static final List<String> HTML_MARKERS = List.of(
+            "<html", "<body", "<div", "<p>", "<table", "<br", "<span", "<a ", "<!doctype");
+
+    private static final String OUTPUT_FORMAT_HTML_OPEN = "<#outputformat \"HTML\">";
+    private static final String OUTPUT_FORMAT_CLOSE = "</#outputformat>";
+
     private final TemplateEngine coreEngine = TemplateEngine.getInstance();
     private final NotificationProperties properties;
     private final ResourceLoader resourceLoader;
 
     /**
-     * Template cache: tenantId -> channel/templateKey -> template content
+     * Template cache: (tenantId, channel/templateKey) -> template content.
+     * Bounded by {@code cache-max-size} and expired {@code cache-ttl-seconds} after loading.
      */
-    private final Map<String, Map<String, String>> templateCache = new ConcurrentHashMap<>();
+    private final Cache<TemplateKey, String> templateCache;
 
     /** Legacy template locations already warned about, so each is logged once. */
     private final Set<String> warnedLegacyPaths = ConcurrentHashMap.newKeySet();
 
     public NotificationTemplateEngine(NotificationProperties properties, ResourceLoader resourceLoader) {
+        this(properties, resourceLoader, Ticker.systemTicker());
+    }
+
+    /**
+     * Visible for tests, which drive cache expiry with a fake {@link Ticker}.
+     */
+    NotificationTemplateEngine(NotificationProperties properties, ResourceLoader resourceLoader, Ticker ticker) {
         this.properties = properties;
         this.resourceLoader = resourceLoader;
+        this.templateCache = buildCache(properties.getTemplate(), ticker);
+    }
+
+    private static Cache<TemplateKey, String> buildCache(NotificationProperties.TemplateProperties template,
+                                                         Ticker ticker) {
+        Caffeine<Object, Object> builder = Caffeine.newBuilder().ticker(ticker);
+        if (template.getCacheTtlSeconds() > 0) {
+            builder.expireAfterWrite(Duration.ofSeconds(template.getCacheTtlSeconds()));
+        }
+        if (template.getCacheMaxSize() > 0) {
+            builder.maximumSize(template.getCacheMaxSize());
+        }
+        return builder.build();
     }
 
     /**
@@ -97,11 +132,112 @@ public class NotificationTemplateEngine {
         SectionMarkers markers = channel == Channel.EMAIL ? SectionMarkers.random() : null;
         String source = markers != null ? markers.tokenize(templateContent) : templateContent;
 
+        // With auto-escape on, the body's template source decides whether it is HTML,
+        // and an HTML body is rendered in FreeMarker's HTML output format. A [TEXT]
+        // section makes the body the HTML part, so it is escaped whatever it contains.
+        Boolean htmlBody = null;
+        if (markers != null && properties.getTemplate().isAutoEscape()) {
+            String tokenized = source;
+            List<int[]> bodyRanges = bodySourceRanges(tokenized, markers);
+            boolean html = textSectionRange(tokenized, markers) != null
+                    || looksLikeHtml(bodyRanges.stream()
+                            .map(range -> tokenized.substring(range[0], range[1]))
+                            .collect(Collectors.joining()));
+            if (html) {
+                source = wrapInHtmlOutputFormat(source, bodyRanges);
+            }
+            htmlBody = html;
+        }
+
         // Generate content using core engine
         String renderedContent = coreEngine.generate(source, enrichedData);
 
         // Parse the rendered content based on channel
-        return parseRenderedContent(channel, renderedContent, templateId, markers);
+        return parseRenderedContent(channel, renderedContent, templateId, markers, htmlBody);
+    }
+
+    /**
+     * The parts of the (tokenized) template source that render into the email body, found
+     * with the same rules {@link #parseEmailContent} applies to the output, minus any
+     * {@code [TEXT]} section.
+     */
+    private static List<int[]> bodySourceRanges(String source, SectionMarkers markers) {
+        String subjectClose = markers.token(Marker.SUBJECT_CLOSE);
+        String bodyOpen = markers.token(Marker.BODY_OPEN);
+        int[] text = textSectionRange(source, markers);
+
+        int bodyStart = source.indexOf(bodyOpen);
+        int bodyEnd = source.indexOf(markers.token(Marker.BODY_CLOSE));
+        int subjectEnd = source.indexOf(subjectClose);
+        int start;
+        int end;
+        if (bodyStart >= 0 && bodyEnd > bodyStart) {
+            start = bodyStart + bodyOpen.length();
+            end = bodyEnd;
+        } else if (subjectEnd > 0) {
+            start = subjectEnd + subjectClose.length();
+            end = source.length();
+        } else {
+            start = ftlHeaderEnd(source);
+            end = source.length();
+        }
+
+        List<int[]> ranges = new ArrayList<>();
+        if (text != null && text[0] < end && text[1] > start) {
+            // The [TEXT] section, markers included, is never escaped
+            int textStart = text[0] - markers.token(Marker.TEXT_OPEN).length();
+            int textEnd = text[1] + markers.token(Marker.TEXT_CLOSE).length();
+            if (textStart > start) {
+                ranges.add(new int[]{start, textStart});
+            }
+            if (end > textEnd) {
+                ranges.add(new int[]{textEnd, end});
+            }
+        } else {
+            ranges.add(new int[]{start, end});
+        }
+        return ranges;
+    }
+
+    private static int[] textSectionRange(String content, SectionMarkers markers) {
+        return sectionRange(content, markers.token(Marker.TEXT_OPEN), markers.token(Marker.TEXT_CLOSE));
+    }
+
+    /**
+     * Content range between the first {@code open} and the first {@code close} after it, or null.
+     */
+    private static int[] sectionRange(String content, String open, String close) {
+        int start = content.indexOf(open);
+        int end = content.indexOf(close);
+        return start >= 0 && end > start ? new int[]{start + open.length(), end} : null;
+    }
+
+    /**
+     * Index just past a leading {@code <#ftl ...>} header, which must stay first, or 0.
+     */
+    private static int ftlHeaderEnd(String source) {
+        String stripped = source.stripLeading();
+        if (stripped.startsWith("<#ftl")) {
+            int headerEnd = source.indexOf('>', source.length() - stripped.length());
+            return headerEnd >= 0 ? headerEnd + 1 : 0;
+        }
+        return 0;
+    }
+
+    private static String wrapInHtmlOutputFormat(String source, List<int[]> ranges) {
+        StringBuilder wrapped = new StringBuilder(source);
+        // Last range first, so earlier offsets stay valid
+        for (int i = ranges.size() - 1; i >= 0; i--) {
+            int[] range = ranges.get(i);
+            wrapped.insert(range[1], OUTPUT_FORMAT_CLOSE);
+            wrapped.insert(range[0], OUTPUT_FORMAT_HTML_OPEN);
+        }
+        return wrapped.toString();
+    }
+
+    static boolean looksLikeHtml(String body) {
+        String lower = body.toLowerCase(Locale.ROOT);
+        return HTML_MARKERS.stream().anyMatch(lower::contains);
     }
 
     /**
@@ -117,14 +253,15 @@ public class NotificationTemplateEngine {
     private String resolveTemplate(String tenantId, Channel channel, String templateId) {
         String cacheKey = channel.name().toLowerCase() + "/" + templateId;
 
-        // Check cache
+        // Check cache; a TemplateNotFoundException from the loader is not cached
         if (properties.getTemplate().isCacheEnabled()) {
-            Map<String, String> tenantCache = templateCache.get(tenantId);
-            if (tenantCache != null && tenantCache.containsKey(cacheKey)) {
-                return tenantCache.get(cacheKey);
-            }
+            return templateCache.get(new TemplateKey(tenantId, cacheKey),
+                    key -> loadTemplateOrThrow(tenantId, channel, templateId));
         }
+        return loadTemplateOrThrow(tenantId, channel, templateId);
+    }
 
+    private String loadTemplateOrThrow(String tenantId, Channel channel, String templateId) {
         // Try tenant-specific template
         String tenantPath = String.format("%s/%s/%s.ftl",
                 tenantId, channel.name().toLowerCase(), templateId);
@@ -139,13 +276,6 @@ public class NotificationTemplateEngine {
 
         if (content == null) {
             throw new TemplateNotFoundException(tenantId, channel.name().toLowerCase(), templateId);
-        }
-
-        // Cache the content
-        if (properties.getTemplate().isCacheEnabled()) {
-            templateCache
-                    .computeIfAbsent(tenantId, k -> new ConcurrentHashMap<>())
-                    .put(cacheKey, content);
         }
 
         return content;
@@ -204,9 +334,9 @@ public class NotificationTemplateEngine {
      * Supports special markers for subject/body separation.
      */
     private RenderedContent parseRenderedContent(Channel channel, String content, String templateId,
-                                                 SectionMarkers markers) {
+                                                 SectionMarkers markers, Boolean htmlBody) {
         if (channel == Channel.EMAIL) {
-            return parseEmailContent(content, templateId, markers);
+            return parseEmailContent(content, templateId, markers, htmlBody);
         } else {
             return RenderedContent.text(content.trim());
         }
@@ -221,13 +351,31 @@ public class NotificationTemplateEngine {
      * [BODY]
      * Email body here (HTML or text)
      * [/BODY]
+     * [TEXT]
+     * Optional plain-text alternative; when present the body is sent as the HTML part
+     * [/TEXT]
      *
      * Or just plain content (treated as body)
      *
      * The markers were swapped for the per-render tokens in {@code markers} before
      * rendering, so only markers written in the template source delimit sections.
+     *
+     * @param htmlBody whether the body is HTML, as decided from the template source when
+     *                 auto-escape is on; {@code null} to detect it from the rendered body
      */
-    private RenderedContent parseEmailContent(String content, String templateId, SectionMarkers markers) {
+    private RenderedContent parseEmailContent(String content, String templateId, SectionMarkers markers,
+                                              Boolean htmlBody) {
+        // Take out the optional plain-text part first
+        String text = null;
+        String textOpen = markers.token(Marker.TEXT_OPEN);
+        String textClose = markers.token(Marker.TEXT_CLOSE);
+        int[] textRange = sectionRange(content, textOpen, textClose);
+        if (textRange != null) {
+            text = markers.restore(content.substring(textRange[0], textRange[1]).trim());
+            content = content.substring(0, textRange[0] - textOpen.length())
+                    + content.substring(textRange[1] + textClose.length());
+        }
+
         String subject = null;
         String body = content;
         String subjectOpen = markers.token(Marker.SUBJECT_OPEN);
@@ -256,10 +404,13 @@ public class NotificationTemplateEngine {
         subject = markers.restore(subject);
         body = markers.restore(body);
 
+        if (text != null) {
+            // An explicit text part makes the body the HTML part of a multipart message
+            return new RenderedContent(subject, text, body, templateId);
+        }
+
         // Determine if HTML
-        boolean isHtml = body.contains("<html") || body.contains("<HTML") ||
-                body.contains("<body") || body.contains("<BODY") ||
-                body.contains("<div") || body.contains("<p>");
+        boolean isHtml = htmlBody != null ? htmlBody : looksLikeHtml(body);
 
         return new RenderedContent(
                 subject,
@@ -284,7 +435,7 @@ public class NotificationTemplateEngine {
         // String utilities
         enriched.put("truncate", new TruncateMethod());
         enriched.put("capitalize", new CapitalizeMethod());
-        enriched.put("escapeHtml", new EscapeHtmlMethod());
+        enriched.put("escapeHtml", new EscapeHtmlMethod(properties.getTemplate().isAutoEscape()));
 
         // Default value helper
         enriched.put("defaultValue", new DefaultValueMethod());
@@ -299,7 +450,7 @@ public class NotificationTemplateEngine {
      * Clear template cache for a tenant.
      */
     public void clearCache(String tenantId) {
-        templateCache.remove(tenantId);
+        templateCache.asMap().keySet().removeIf(key -> Objects.equals(key.tenantId(), tenantId));
         log.debug("Cleared template cache for tenant: {}", tenantId);
     }
 
@@ -307,8 +458,16 @@ public class NotificationTemplateEngine {
      * Clear all template caches.
      */
     public void clearAllCache() {
-        templateCache.clear();
+        templateCache.invalidateAll();
         log.debug("Cleared all template caches");
+    }
+
+    /**
+     * Number of cached templates after pending evictions; visible for tests.
+     */
+    long cachedTemplateCount() {
+        templateCache.cleanUp();
+        return templateCache.estimatedSize();
     }
 
     // ========== Helper Method Implementations ==========
@@ -439,13 +598,26 @@ public class NotificationTemplateEngine {
 
     /**
      * Escape HTML: ${escapeHtml(userInput)}
+     * <p>
+     * With auto-escape on, the result is HTML markup output, so the body's HTML output
+     * format prints it as is instead of escaping it a second time.
      */
     private static class EscapeHtmlMethod implements TemplateMethodModelEx {
+        private final boolean markupOutput;
+
+        EscapeHtmlMethod(boolean markupOutput) {
+            this.markupOutput = markupOutput;
+        }
+
         @Override
         public Object exec(List arguments) throws TemplateModelException {
             if (arguments.isEmpty()) return "";
+            if (markupOutput && arguments.get(0) instanceof TemplateHTMLOutputModel alreadyEscaped) {
+                return alreadyEscaped;
+            }
             String text = textArgument(arguments.get(0));
-            return StringEscapeUtils.escapeHtml4(text);
+            String escaped = StringEscapeUtils.escapeHtml4(text);
+            return markupOutput ? HTMLOutputFormat.INSTANCE.fromMarkup(escaped) : escaped;
         }
     }
 
@@ -582,8 +754,21 @@ public class NotificationTemplateEngine {
      * A helper's text argument; null becomes the empty string rather than "null".
      */
     private static String textArgument(Object argument) {
+        if (argument instanceof TemplateHTMLOutputModel markup) {
+            try {
+                return HTMLOutputFormat.INSTANCE.getMarkupString(markup);
+            } catch (TemplateModelException _) {
+                return "";
+            }
+        }
         Object value = unwrap(argument);
         return value == null ? "" : String.valueOf(value);
+    }
+
+    /**
+     * Template cache key.
+     */
+    record TemplateKey(String tenantId, String template) {
     }
 
     /**
@@ -593,7 +778,9 @@ public class NotificationTemplateEngine {
         SUBJECT_OPEN("[SUBJECT]"),
         SUBJECT_CLOSE("[/SUBJECT]"),
         BODY_OPEN("[BODY]"),
-        BODY_CLOSE("[/BODY]");
+        BODY_CLOSE("[/BODY]"),
+        TEXT_OPEN("[TEXT]"),
+        TEXT_CLOSE("[/TEXT]");
 
         private final String literal;
 
