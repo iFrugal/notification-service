@@ -26,11 +26,10 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.DateTimeException;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -487,20 +486,7 @@ public class AcsEmailProvider implements EmailProvider {
         }
         HttpHeaders headers = hre.getResponse().getHeaders();
         String value = headers == null ? null : headers.getValue(HttpHeaderName.RETRY_AFTER);
-        if (!hasText(value)) {
-            return Optional.empty();
-        }
-        String trimmed = value.trim();
-        Duration delay;
-        try {
-            delay = trimmed.chars().allMatch(c -> c >= '0' && c <= '9')
-                    ? Duration.ofSeconds(Long.parseLong(trimmed))
-                    : Duration.between(now, ZonedDateTime.parse(trimmed, DateTimeFormatter.RFC_1123_DATE_TIME)
-                            .toInstant());
-        } catch (NumberFormatException | DateTimeException e) {
-            return Optional.empty();
-        }
-        return delay.isNegative() || delay.isZero() ? Optional.empty() : Optional.of(delay);
+        return FailureTypes.parseRetryAfter(value, Clock.fixed(now, ZoneOffset.UTC));
     }
 
     /**

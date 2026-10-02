@@ -116,7 +116,8 @@ public final class PiiMasking {
      * <ul>
      *   <li>email - {@code to=j***@example.com cc=2 bcc=0}</li>
      *   <li>SMS and WhatsApp - {@code phone=+1***90}</li>
-     *   <li>push - {@code token=***wxyz}, {@code topic=news} or {@code condition=(set)}</li>
+     *   <li>push - {@code token=***wxyz}, {@code tokens=3}, {@code fid=***wxyz},
+     *       {@code topic=news} or {@code condition=(set)}</li>
      * </ul>
      *
      * @param recipient the recipient, may be {@code null}
@@ -151,10 +152,13 @@ public final class PiiMasking {
 
     private static String maskPush(PushRecipient push) {
         if (hasText(push.deviceToken())) {
-            String token = push.deviceToken().strip();
-            return "token=" + (token.length() >= MIN_TOKEN_LENGTH_SHOWN
-                    ? MASK + token.substring(token.length() - TOKEN_SUFFIX_LENGTH)
-                    : MASK);
+            return "token=" + maskIdentifier(push.deviceToken());
+        }
+        if (push.deviceTokens() != null && !push.deviceTokens().isEmpty()) {
+            return "tokens=" + push.deviceTokens().size();
+        }
+        if (hasText(push.fid())) {
+            return "fid=" + maskIdentifier(push.fid());
         }
         if (hasText(push.topic())) {
             // Topics are broadcast channels, not personal data.
@@ -164,6 +168,12 @@ public final class PiiMasking {
             return "condition=(set)";
         }
         return "token=" + MASK;
+    }
+
+    /** {@code ***} and the last four characters, or only {@code ***} for a short value. */
+    private static String maskIdentifier(String value) {
+        String v = value.strip();
+        return v.length() >= MIN_TOKEN_LENGTH_SHOWN ? MASK + v.substring(v.length() - TOKEN_SUFFIX_LENGTH) : MASK;
     }
 
     private static int count(List<String> values) {

@@ -102,6 +102,18 @@ class PiiMaskingTest {
     }
 
     @Test
+    void mask_push_masksFidAndCountsDeviceTokens() {
+        assertThat(PiiMasking.mask(pushTargets(null, "fid-0123456789-wxyz", null))).isEqualTo("fid=***wxyz");
+        assertThat(PiiMasking.mask(pushTargets(null, "short", null))).isEqualTo("fid=***");
+        assertThat(PiiMasking.mask(pushTargets(null, null, List.of("t-1", "t-2", "t-3")))).isEqualTo("tokens=3");
+        // An empty token list is no target; the next one in line is used.
+        assertThat(PiiMasking.mask(pushTargets(null, "fid-0123456789-wxyz", List.of()))).isEqualTo("fid=***wxyz");
+        // A single token takes precedence, as in 1.1.
+        assertThat(PiiMasking.mask(pushTargets("fcm-token-abcdefgh-wxyz", "fid-0123456789-abcd", List.of("t-1"))))
+                .isEqualTo("token=***wxyz");
+    }
+
+    @Test
     void mask_nullRecipient() {
         assertThat(PiiMasking.mask(null)).isEqualTo("***");
     }
@@ -114,6 +126,11 @@ class PiiMaskingTest {
 
     private static PushRecipient push(String token, String topic, String condition) {
         return new PushRecipient(null, token, topic, condition, "title", "body", null, null, null, null, null);
+    }
+
+    private static PushRecipient pushTargets(String token, String fid, List<String> tokens) {
+        return new PushRecipient(null, token, null, null, "title", "body", null, null, null, null, null,
+                fid, tokens);
     }
 
     // ---------- redact ----------

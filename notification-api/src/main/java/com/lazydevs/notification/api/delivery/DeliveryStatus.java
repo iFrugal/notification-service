@@ -32,6 +32,11 @@ public enum DeliveryStatus {
      * {@link #FAILED_AT_PROVIDER} since they may resolve on a re-send.
      * Mapping: SES {@code "Bounce"} where {@code bounceType=Permanent},
      * Twilio {@code "undelivered"} with permanent error codes.
+     *
+     * <p>Also published by a provider that learns from the send response
+     * that the target no longer exists, such as an unregistered push device
+     * token, with reason {@link DeliveryEvents#REASON_INVALID_TARGET}
+     * (since 1.2.0).
      */
     BOUNCED,
 

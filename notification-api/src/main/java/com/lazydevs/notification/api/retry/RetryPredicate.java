@@ -9,7 +9,8 @@ import com.lazydevs.notification.api.model.SendResult;
  * <p>Operators can plug a custom implementation as a Spring bean — the
  * service uses {@code @ConditionalOnMissingBean} for the default. The
  * default policy retries {@link FailureType#TRANSIENT} and
- * {@link FailureType#UNKNOWN}, skips {@link FailureType#PERMANENT}.
+ * {@link FailureType#UNKNOWN}, skips {@link FailureType#PERMANENT} and
+ * {@link FailureType#AMBIGUOUS}.
  *
  * <p>Note: the {@code attempt} parameter is the 1-based index of the
  * attempt that just failed. The retry executor checks
@@ -30,10 +31,19 @@ public interface RetryPredicate {
     boolean shouldRetry(SendResult result, int attempt);
 
     /**
-     * The default policy: retry on TRANSIENT and UNKNOWN, never on
-     * PERMANENT. Exposed as a static so the service can fall back to it
-     * when no custom bean is provided, and tests can reference it
-     * directly.
+     * The default policy: retry on TRANSIENT and UNKNOWN (and a
+     * {@code null} failure type), never on PERMANENT or AMBIGUOUS.
+     * Exposed as a static so the service can fall back to it when no
+     * custom bean is provided, and tests can reference it directly.
+     *
+     * <p>{@link FailureType#AMBIGUOUS} is not retried because the
+     * provider may already have accepted the message: a retry could
+     * deliver it twice. The failure surfaces to the caller and, when
+     * configured, the dead-letter store. Deployments whose providers
+     * deduplicate resends can opt in with a custom predicate. A custom
+     * predicate written as {@code type != PERMANENT} retries AMBIGUOUS
+     * failures (and any constant added later), so prefer listing the
+     * types to retry.
      *
      * <p>The {@code attempt} parameter is unused by this default
      * (renamed to {@code _} per JEP 456 — silences static analyzers
@@ -45,12 +55,8 @@ public interface RetryPredicate {
             return false;
         }
         FailureType ft = result.failureType();
-        if (ft == null) {
-            // Defensive: a SendResult constructed before DD-13 with the
-            // old API might leave failureType null. Treat as UNKNOWN —
-            // matches the new factories' default.
-            return true;
-        }
-        return ft != FailureType.PERMANENT;
+        // A null type comes from a SendResult constructed before DD-13
+        // with the old API; treat it as UNKNOWN, matching the factories.
+        return ft == null || ft == FailureType.TRANSIENT || ft == FailureType.UNKNOWN;
     };
 }
