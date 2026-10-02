@@ -19,6 +19,8 @@ COPY notification-channels/notification-channel-email/email-provider-ses/pom.xml
 COPY notification-channels/notification-channel-email/email-provider-acs/pom.xml notification-channels/notification-channel-email/email-provider-acs/
 COPY notification-channels/notification-channel-sms/pom.xml notification-channels/notification-channel-sms/
 COPY notification-channels/notification-channel-sms/sms-provider-twilio/pom.xml notification-channels/notification-channel-sms/sms-provider-twilio/
+COPY notification-channels/notification-channel-push/pom.xml notification-channels/notification-channel-push/
+COPY notification-channels/notification-channel-push/push-provider-fcm/pom.xml notification-channels/notification-channel-push/push-provider-fcm/
 COPY notification-spring-boot-starter/pom.xml notification-spring-boot-starter/
 COPY notification-server/pom.xml notification-server/
 

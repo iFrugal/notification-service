@@ -96,6 +96,11 @@
                 <artifactId>sms-provider-twilio</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>push-provider-fcm</artifactId>
+                <version>${project.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 

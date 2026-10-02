@@ -31,4 +31,16 @@ class BuiltInProvidersTest {
                 entry -> assertThat(entry.implemented()).isFalse());
         assertThat(BuiltInProviders.find(Channel.SMS, "smtp")).isEmpty();
     }
+
+    @Test
+    void fcm_isImplemented_andApnsIsStillPlanned() {
+        assertThat(BuiltInProviders.find(Channel.PUSH, "fcm")).hasValueSatisfying(entry -> {
+            assertThat(entry.implemented()).isTrue();
+            assertThat(entry.artifactId()).isEqualTo("push-provider-fcm");
+            assertThat(entry.className()).isEqualTo("com.lazydevs.notification.channel.push.fcm.FcmPushProvider");
+            assertThat(entry.beanName()).isEqualTo("fcmPushProvider");
+        });
+        assertThat(BuiltInProviders.find(Channel.PUSH, "apns")).hasValueSatisfying(
+                entry -> assertThat(entry.implemented()).isFalse());
+    }
 }
