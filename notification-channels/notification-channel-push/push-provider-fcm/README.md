@@ -82,7 +82,7 @@ Pick one of these.
    Set `credentials` to the JSON itself, for example from a secret: `credentials: ${FCM_SERVICE_ACCOUNT_JSON}`.
    `FcmSettings.toString()`, log lines and health details show it only as `service-account-json (inline)`.
 3. **Application Default Credentials** (`credentials: adc`) or **workload identity federation** (`credentials: external-account:/path/to/config.json`).
-   Both need the adapter module `com.github.ifrugal:push-provider-fcm-google-auth`, which brings the Google auth library.
+   Both need the adapter module `com.github.ifrugal:push-provider-fcm-google-auth`, which brings the Google auth library; see its [README](../push-provider-fcm-google-auth/README.md).
    Without it, `configure()` fails with a message that names the artifact.
 
 The built-in service-account support signs a JWT with the key (RS256, `kid` = `private_key_id`, `iss` = `client_email`, scope `https://www.googleapis.com/auth/firebase.messaging`, audience `https://oauth2.googleapis.com/token`, one hour lifetime) and exchanges it with the OAuth 2.0 JWT bearer grant.

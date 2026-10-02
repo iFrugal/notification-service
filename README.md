@@ -59,7 +59,7 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 ## Features
 
 - **Multi-Channel Support**: Email, SMS and Push with built-in providers; WhatsApp as an SPI extension point (`WhatsAppProvider`) with built-in providers planned
-- **Multiple Providers per Channel**: SMTP, AWS SES and Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)) for email, Twilio for SMS, Firebase Cloud Messaging ([`push-provider-fcm`](notification-channels/notification-channel-push/push-provider-fcm/README.md)) for push; AWS SNS, WhatsApp (Twilio, Meta) and APNs providers are planned
+- **Multiple Providers per Channel**: SMTP, AWS SES and Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)) for email, Twilio for SMS, Firebase Cloud Messaging ([`push-provider-fcm`](notification-channels/notification-channel-push/push-provider-fcm/README.md), with [`push-provider-fcm-google-auth`](notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) for Application Default Credentials and workload identity federation) for push; AWS SNS, WhatsApp (Twilio, Meta) and APNs providers are planned
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
 - **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)
@@ -127,9 +127,9 @@ Push has a built-in FCM provider; WhatsApp has no built-in provider yet, see [Pl
 | `notification-kafka` | Kafka consumer for async notifications |
 | `notification-redis` | Redis-backed stores and rate limiter (`notification.store.type=redis`) |
 | `notification-store-jdbc` | PostgreSQL-backed stores over plain SQL (`notification.store.type=jdbc`) |
-| `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `email-provider-acs`, `sms-provider-twilio`, `push-provider-fcm` |
+| `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `email-provider-acs`, `sms-provider-twilio`, `push-provider-fcm`, and the FCM credentials adapter `push-provider-fcm-google-auth` |
 | `notification-spring-boot-starter` | The dependency to add in library mode; every module brings its own auto-configuration |
-| `notification-server` | Standalone application with Dockerfile |
+| `notification-server` | Standalone application with Dockerfile; bundles every built-in provider (ACS and FCM since 1.2.0) |
 | `notification-service-bom` | Bill of materials: import it once and leave the versions off every other notification-service dependency (since 1.2.0) |
 
 ### Planned providers
@@ -291,6 +291,19 @@ services:
       - SMTP_PASSWORD=your-app-password
 ```
 
+The image bundles every built-in provider: SMTP, SES and Azure Communication Services for email, Twilio for SMS, and FCM for push with the google-auth adapter.
+With the shipped `application.yml`, push is switched on with environment variables:
+
+```bash
+docker run -d -p 8080:8080 \
+  -e PUSH_ENABLED=true \
+  -e FCM_CREDENTIALS=/secrets/firebase-service-account.json \
+  -v /path/to/firebase-service-account.json:/secrets/firebase-service-account.json:ro \
+  ifrugal/notification-service:latest
+```
+
+`FCM_CREDENTIALS` also takes the inline JSON, `adc` (for example with `GOOGLE_APPLICATION_CREDENTIALS` or on Google Cloud) or `external-account:<path>`; the older `FCM_CREDENTIALS_PATH` still works.
+
 ---
 
 ## Configuration
@@ -399,6 +412,23 @@ ACS authentication, pick one:
 | Provider name | Artifact | Notes |
 |---------------|----------|-------|
 | `fcm` | `push-provider-fcm` | Firebase Cloud Messaging HTTP v1, no Google library; see the [module README](notification-channels/notification-channel-push/push-provider-fcm/README.md) |
+| (adapter) | `push-provider-fcm-google-auth` | Adds `credentials: adc` and `credentials: external-account:<path>` to `fcm`; see the [module README](notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) |
+
+**Push quick start.**
+Add the provider (and the adapter only if you use `adc` or `external-account:`):
+
+```xml
+<dependency>
+    <groupId>com.github.ifrugal</groupId>
+    <artifactId>push-provider-fcm</artifactId>
+</dependency>
+<dependency>
+    <groupId>com.github.ifrugal</groupId>
+    <artifactId>push-provider-fcm-google-auth</artifactId>
+</dependency>
+```
+
+Configure the tenant:
 
 ```yaml
 notification:
@@ -410,12 +440,50 @@ notification:
           providers:
             fcm:
               properties:
-                credentials: /config/firebase-service-account.json   # or the inline JSON
+                credentials: /config/firebase-service-account.json   # or the inline JSON, adc, external-account:<path>
+```
+
+Send, with a template `templates/default/push/ORDER_SHIPPED.ftl` such as `Order ${orderId} has shipped`, which becomes the notification body:
+
+```java
+NotificationResponse response = notificationService.send(NotificationRequest.builder()
+        .tenantId("default")
+        .channel(Channel.PUSH)
+        .notificationType("ORDER_SHIPPED")
+        .templateData(Map.of("orderId", "A-1001"))
+        .recipient(new PushRecipient(null, deviceToken, null, null, "Your order shipped",
+                null, null, null, null, null, null))
+        .build());
 ```
 
 The recipient names exactly one target: `deviceToken`, `deviceTokens`, `fid`, `topic` or `condition`.
 FCM errors are classified for retries (`UNREGISTERED` is `PERMANENT`, 429 and 5xx are `TRANSIENT` with `Retry-After`, a timeout after the request was sent is `AMBIGUOUS`).
 An unregistered token is published as a `BOUNCED` delivery event with reason `INVALID_TARGET` and a hash of the token (DD-24).
+
+**Deleting dead device tokens.**
+The event carries `sha256:` and the first 16 hex characters of the SHA-256 of the token, never the token itself, so store that hash next to each token and delete by it:
+
+```java
+@Component
+class DeadPushTokenListener implements DeliveryEventListener {
+
+    private final DeviceTokenRepository tokens;
+
+    DeadPushTokenListener(DeviceTokenRepository tokens) {
+        this.tokens = tokens;
+    }
+
+    @Override
+    public void onEvent(DeliveryEvent event) {
+        if (event.status() == DeliveryStatus.BOUNCED
+                && DeliveryEvents.REASON_INVALID_TARGET.equals(event.reason())) {
+            tokens.deleteByHash(event.attributes().get(DeliveryEvents.ATTR_TOKEN_HASH));
+        }
+    }
+}
+```
+
+The listener runs on the thread that called `send`, after the send completed, so it can read the current tenant.
 
 ### Default Provider Selection
 
@@ -526,7 +594,7 @@ Content-Type: application/json
   "channel": "EMAIL",
   "notificationType": "ORDER_CONFIRMATION",
   "recipient": {
-    "type": "email",
+    "type": "EMAIL",
     "to": ["customer@example.com"],
     "cc": ["support@example.com"]
   },
@@ -1091,7 +1159,7 @@ Message format (same as REST API body):
 {
   "channel": "EMAIL",
   "notificationType": "WELCOME",
-  "recipient": { "type": "email", "to": ["user@example.com"] },
+  "recipient": { "type": "EMAIL", "to": ["user@example.com"] },
   "templateData": { "name": "John" }
 }
 ```

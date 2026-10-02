@@ -7,11 +7,13 @@ WORKDIR /build
 
 # Copy parent pom first for dependency caching
 COPY pom.xml .
+COPY notification-service-bom/pom.xml notification-service-bom/
 COPY notification-api/pom.xml notification-api/
 COPY notification-core/pom.xml notification-core/
 COPY notification-kafka/pom.xml notification-kafka/
 COPY notification-rest/pom.xml notification-rest/
 COPY notification-redis/pom.xml notification-redis/
+COPY notification-store-jdbc/pom.xml notification-store-jdbc/
 COPY notification-channels/pom.xml notification-channels/
 COPY notification-channels/notification-channel-email/pom.xml notification-channels/notification-channel-email/
 COPY notification-channels/notification-channel-email/email-provider-smtp/pom.xml notification-channels/notification-channel-email/email-provider-smtp/
@@ -21,6 +23,7 @@ COPY notification-channels/notification-channel-sms/pom.xml notification-channel
 COPY notification-channels/notification-channel-sms/sms-provider-twilio/pom.xml notification-channels/notification-channel-sms/sms-provider-twilio/
 COPY notification-channels/notification-channel-push/pom.xml notification-channels/notification-channel-push/
 COPY notification-channels/notification-channel-push/push-provider-fcm/pom.xml notification-channels/notification-channel-push/push-provider-fcm/
+COPY notification-channels/notification-channel-push/push-provider-fcm-google-auth/pom.xml notification-channels/notification-channel-push/push-provider-fcm-google-auth/
 COPY notification-spring-boot-starter/pom.xml notification-spring-boot-starter/
 COPY notification-server/pom.xml notification-server/
 

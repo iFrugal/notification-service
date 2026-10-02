@@ -101,6 +101,11 @@
                 <artifactId>push-provider-fcm</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>push-provider-fcm-google-auth</artifactId>
+                <version>${project.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 

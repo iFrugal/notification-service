@@ -50,11 +50,36 @@
             <groupId>${project.groupId}</groupId>
             <artifactId>email-provider-ses</artifactId>
         </dependency>
+        <!-- Azure Communication Services Email, with the JDK HTTP client the
+             provider needs (azure-core-http-netty is excluded in the root pom).
+             azure-identity, for 'credential: default', is not bundled: use
+             'connection-string', or add it to a derived image. -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>email-provider-acs</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.azure</groupId>
+            <artifactId>azure-core-http-jdk-httpclient</artifactId>
+        </dependency>
 
         <!-- All SMS Providers -->
         <dependency>
             <groupId>${project.groupId}</groupId>
             <artifactId>sms-provider-twilio</artifactId>
+        </dependency>
+
+        <!-- Push: Firebase Cloud Messaging, with the google-auth adapter so that
+             'credentials: adc' and 'external-account:<path>' work in the container
+             (about 4.9 MB of Google auth, google-http-client, Guava, gson,
+             OpenCensus and gRPC context; no Netty). -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>push-provider-fcm</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>push-provider-fcm-google-auth</artifactId>
         </dependency>
 
         <!-- Persistence Implementations (user chooses one) -->
