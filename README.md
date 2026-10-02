@@ -9,7 +9,7 @@
 [![Java](https://img.shields.io/badge/Java-25-orange.svg)](https://openjdk.org/projects/jdk/25/)
 
 A multi-tenant notification service with pluggable providers.
-Email (SMTP, AWS SES, Azure Communication Services) and SMS (Twilio) ship with built-in providers; WhatsApp and Push exist as provider SPIs, and their built-in providers are planned (see [Planned providers](#planned-providers)).
+Email (SMTP, AWS SES, Azure Communication Services), SMS (Twilio) and Push (Firebase Cloud Messaging) ship with built-in providers; WhatsApp exists as a provider SPI, and its built-in providers are planned, like Apple APNs for push (see [Planned providers](#planned-providers)).
 Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone Docker container**.
 
 > ### 📋 **[Feature Matrix → `docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md)**
@@ -58,8 +58,8 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 
 ## Features
 
-- **Multi-Channel Support**: Email and SMS with built-in providers; WhatsApp and Push as SPI extension points (`WhatsAppProvider`, `PushProvider`) with built-in providers planned
-- **Multiple Providers per Channel**: SMTP, AWS SES and Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)) for email, Twilio for SMS; AWS SNS, WhatsApp (Twilio, Meta) and Push (FCM, APNs) providers are planned
+- **Multi-Channel Support**: Email, SMS and Push with built-in providers; WhatsApp as an SPI extension point (`WhatsAppProvider`) with built-in providers planned
+- **Multiple Providers per Channel**: SMTP, AWS SES and Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)) for email, Twilio for SMS, Firebase Cloud Messaging ([`push-provider-fcm`](notification-channels/notification-channel-push/push-provider-fcm/README.md)) for push; AWS SNS, WhatsApp (Twilio, Meta) and APNs providers are planned
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
 - **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)
@@ -113,7 +113,7 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 ```
 
 `Custom` is any provider you register against a channel SPI (see [Adding Custom Providers](#adding-custom-providers)).
-WhatsApp and Push have no built-in provider yet; see [Planned providers](#planned-providers).
+Push has a built-in FCM provider; WhatsApp has no built-in provider yet, see [Planned providers](#planned-providers).
 
 ---
 
@@ -127,7 +127,7 @@ WhatsApp and Push have no built-in provider yet; see [Planned providers](#planne
 | `notification-kafka` | Kafka consumer for async notifications |
 | `notification-redis` | Redis-backed stores and rate limiter (`notification.store.type=redis`) |
 | `notification-store-jdbc` | PostgreSQL-backed stores over plain SQL (`notification.store.type=jdbc`) |
-| `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `email-provider-acs`, `sms-provider-twilio` |
+| `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `email-provider-acs`, `sms-provider-twilio`, `push-provider-fcm` |
 | `notification-spring-boot-starter` | The dependency to add in library mode; every module brings its own auto-configuration |
 | `notification-server` | Standalone application with Dockerfile |
 | `notification-service-bom` | Bill of materials: import it once and leave the versions off every other notification-service dependency (since 1.2.0) |
@@ -136,17 +136,16 @@ WhatsApp and Push have no built-in provider yet; see [Planned providers](#planne
 
 The channel SPIs `SmsProvider`, `WhatsAppProvider` and `PushProvider` live in `notification-api` and exist today.
 You can send on any of these channels now by implementing the SPI yourself (see [Adding Custom Providers](#adding-custom-providers)).
-The built-in providers below are planned and have no published artifact:
+The built-in providers below are planned and have no published artifact (Firebase Cloud Messaging shipped in 1.2.0, see [Push providers](#push-providers)):
 
 | Channel | Provider | Status |
 |---------|----------|--------|
 | SMS | AWS SNS | Planned |
 | WhatsApp | Twilio | Planned |
 | WhatsApp | Meta WhatsApp Cloud API | Planned |
-| Push | Firebase Cloud Messaging (FCM) | Planned |
 | Push | Apple Push Notification service (APNs) | Planned |
 
-Planned order: FCM (HTTP v1 API) first, then the Meta WhatsApp Cloud API with a signed webhook.
+Next planned: the Meta WhatsApp Cloud API with a signed webhook.
 The remaining providers are not scheduled yet.
 
 ---
@@ -394,6 +393,29 @@ ACS authentication, pick one:
 1. **Connection string:** set `connection-string`; no extra dependency.
 2. **Managed identity, workload identity, environment or Azure CLI credentials:** set `endpoint` and `credential: default`, and add `com.azure:azure-identity`.
 3. **Your own `TokenCredential` bean:** set `endpoint` and `credential: <bean name>`, or leave `credential` blank when the application has exactly one such bean.
+
+### Push providers
+
+| Provider name | Artifact | Notes |
+|---------------|----------|-------|
+| `fcm` | `push-provider-fcm` | Firebase Cloud Messaging HTTP v1, no Google library; see the [module README](notification-channels/notification-channel-push/push-provider-fcm/README.md) |
+
+```yaml
+notification:
+  tenants:
+    default:
+      channels:
+        push:
+          enabled: true
+          providers:
+            fcm:
+              properties:
+                credentials: /config/firebase-service-account.json   # or the inline JSON
+```
+
+The recipient names exactly one target: `deviceToken`, `deviceTokens`, `fid`, `topic` or `condition`.
+FCM errors are classified for retries (`UNREGISTERED` is `PERMANENT`, 429 and 5xx are `TRANSIENT` with `Retry-After`, a timeout after the request was sent is `AMBIGUOUS`).
+An unregistered token is published as a `BOUNCED` delivery event with reason `INVALID_TARGET` and a hash of the token (DD-24).
 
 ### Default Provider Selection
 
