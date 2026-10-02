@@ -12,6 +12,7 @@ import jakarta.mail.*;
 import jakarta.mail.internet.*;
 import lombok.extern.slf4j.Slf4j;
 
+import java.net.SocketTimeoutException;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
@@ -257,10 +258,15 @@ public class SmtpEmailProvider implements EmailProvider {
      *       parse.</li>
      * </ul>
      *
+     * <p>Ambiguous (not retried by default): a
+     * {@link SocketTimeoutException} anywhere in the cause chain that is
+     * not a connect timeout. The server may have accepted the message
+     * before its reply was lost, so a resend could deliver it twice.
+     *
      * <p>Transient (retry-worthy):
      * <ul>
-     *   <li>I/O errors anywhere in the cause chain (timeout, connection
-     *       refused, broken pipe). Detected via
+     *   <li>Other I/O errors anywhere in the cause chain (connect timeout,
+     *       connection refused, broken pipe). Detected via
      *       {@link FailureTypes#fromException}.</li>
      *   <li>Generic {@link MessagingException} that isn't one of the
      *       PERMANENT subclasses — could be a temporary 4xx/5xx SMTP
@@ -284,6 +290,9 @@ public class SmtpEmailProvider implements EmailProvider {
         if (t instanceof AddressException) {
             return FailureType.PERMANENT;
         }
+        if (readTimedOut(t)) {
+            return FailureType.AMBIGUOUS;
+        }
         // I/O signal in the cause chain → transient.
         FailureType ioGuess = FailureTypes.fromException(t);
         if (ioGuess == FailureType.TRANSIENT) {
@@ -298,6 +307,28 @@ public class SmtpEmailProvider implements EmailProvider {
             return FailureType.TRANSIENT;
         }
         return FailureType.UNKNOWN;
+    }
+
+    /**
+     * A socket timeout after the connection was made. A connect failure in
+     * the chain, including a connect timeout, means nothing was sent: either
+     * {@link FailureTypes#fromExceptionAfterSubmit} says TRANSIENT, or the
+     * mail implementation reports a {@code MailConnectException} (matched by
+     * name, as both the {@code com.sun.mail} and the Angus implementations
+     * define one).
+     */
+    private static boolean readTimedOut(Throwable t) {
+        if (FailureTypes.fromExceptionAfterSubmit(t) != FailureType.AMBIGUOUS) {
+            return false;
+        }
+        boolean timedOut = false;
+        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
+            if ("MailConnectException".equals(cur.getClass().getSimpleName())) {
+                return false;
+            }
+            timedOut |= cur instanceof SocketTimeoutException;
+        }
+        return timedOut;
     }
 
     @Override

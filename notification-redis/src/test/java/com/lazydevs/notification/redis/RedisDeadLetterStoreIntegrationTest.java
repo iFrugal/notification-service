@@ -121,6 +121,27 @@ class RedisDeadLetterStoreIntegrationTest extends AbstractRedisIntegrationTest {
         assertThat(store.findByRequestId("acme", "req-push")).isPresent();
     }
 
+    @Test
+    void ambiguousEntry_withA12PushRecipient_roundTrips() {
+        PushRecipient push = new PushRecipient(null, null, null, null, "Hi", "There", null, null, null, null,
+                null, "fid-0123456789abcdef", List.of("token-1", "token-2"));
+        NotificationRequest req = NotificationRequest.builder()
+                .requestId("req-ambiguous").tenantId("acme").callerId("billing").notificationType("TEST")
+                .channel(Channel.PUSH).recipient(push).build();
+        NotificationResponse resp = new NotificationResponse(
+                "req-ambiguous", null, "acme", "billing", Channel.PUSH,
+                "fcm", NotificationStatus.FAILED, "fcm-local:1", "FCM_TIMEOUT", "timed out",
+                Instant.now(), Instant.now(), null, null);
+
+        store.add(new DeadLetterEntry(Instant.now(), req, resp, 1, FailureType.AMBIGUOUS));
+
+        DeadLetterEntry read = store.findByRequestId("acme", "req-ambiguous").orElseThrow();
+        assertThat(read.failureType()).isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(read.request().getRecipient()).isEqualTo(push);
+        assertThat(redis.opsForList().range("test-dlq:dlq", 0, 0)).singleElement().asString()
+                .contains("\"failureType\":\"AMBIGUOUS\"");
+    }
+
     private static DeadLetterEntry entry(String requestId) {
         NotificationRequest req = NotificationRequest.builder()
                 .requestId(requestId)

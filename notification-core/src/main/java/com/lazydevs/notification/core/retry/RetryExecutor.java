@@ -10,6 +10,7 @@ import com.lazydevs.notification.core.config.NotificationProperties.RetryRule;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
+import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 
@@ -25,12 +26,18 @@ import java.util.function.Supplier;
  * <pre>
  *   delay(n) = min(initialDelay × multiplier^(n-1), maxDelay)
  *   actual   = delay × (1 + uniform(-jitter, +jitter))
- *   wait     = max(actual, min(retryAfter, maxDelay))
+ *   wait     = max(actual, retryAfter)
  * </pre>
  *
  * <p>{@code retryAfter} is the provider's own hint
  * ({@link SendResult#retryAfter()}, for example from an HTTP
  * {@code Retry-After} header); without one, {@code wait = actual}.
+ * When the hint is longer than the rule's {@code max-retry-after}
+ * (default: its {@code max-delay}) the executor does not wait at all: it
+ * stops retrying, logs a WARN and returns the failure, which the service
+ * then records in the dead-letter store when one is configured (DD-25).
+ * Holding a caller's thread for minutes is worse than handing the
+ * failure to the asynchronous replay path.
  *
  * <p>The bean is registered only when
  * {@code notification.retry.enabled=true} — keeps the executor inert in
@@ -49,9 +56,16 @@ public class RetryExecutor {
 
     private final RetryProperties config;
     private final RetryPredicate predicate;
+    private final Sleeper sleeper;
 
     public RetryExecutor(NotificationProperties properties,
                          java.util.Optional<RetryPredicate> customPredicate) {
+        this(properties, customPredicate, RetryExecutor::sleepUninterruptibly);
+    }
+
+    /** Test seam: {@code sleeper} replaces the real sleep between attempts. */
+    RetryExecutor(NotificationProperties properties, Optional<RetryPredicate> customPredicate, Sleeper sleeper) {
+        this.sleeper = sleeper;
         this.config = properties.getRetry();
         // Custom RetryPredicate bean wins; otherwise fall back to the
         // default policy from the SPI. Operators can plug in a
@@ -101,9 +115,19 @@ public class RetryExecutor {
             // Don't sleep after the last attempt — we're about to return
             // the failure regardless.
             if (attempt < rule.getMaxAttempts()) {
+                Optional<Duration> hint = result.retryAfter();
+                Duration cap = rule.effectiveMaxRetryAfter();
+                if (hint.isPresent() && hint.get().compareTo(cap) > 0) {
+                    // Waiting that long would hold the caller's thread; hand the
+                    // failure to the dead-letter path instead (DD-25).
+                    log.warn("Not retrying after attempt {}: the provider asked to retry after {}, "
+                                    + "longer than max-retry-after {} (channel={}, errorCode={})",
+                            attempt, hint.get(), cap, channel, result.errorCode());
+                    return new Outcome(result, attempt);
+                }
                 Duration backoff = delayBeforeRetry(rule, attempt, result);
                 log.debug("Attempt {} failed; sleeping {}ms before retry", attempt, backoff.toMillis());
-                if (!sleepUninterruptibly(backoff)) {
+                if (!sleeper.sleep(backoff)) {
                     // Thread interrupted — surface the most recent failure
                     // and let the caller propagate.
                     return new Outcome(result, attempt);
@@ -160,9 +184,11 @@ public class RetryExecutor {
     /**
      * Delay before the next attempt: the computed backoff, raised to the
      * provider's {@link SendResult#retryAfter() Retry-After hint} when the
-     * hint is longer. The hint is capped at {@code maxDelay} so a provider
-     * cannot stall the caller beyond the configured bound; the computed
-     * backoff itself is unchanged. Visible for testing.
+     * hint is longer. {@link #execute(Channel, Supplier)} stops before calling
+     * this when the hint exceeds {@code max-retry-after}; the hint is still
+     * capped there so a provider can never stall the caller beyond the
+     * configured bound. The computed backoff itself is unchanged. Visible for
+     * testing.
      */
     Duration delayBeforeRetry(RetryRule rule, int attempt, SendResult failure) {
         Duration computed = computeBackoff(rule, attempt);
@@ -170,10 +196,11 @@ public class RetryExecutor {
         if (hint == null || hint.compareTo(computed) <= 0) {
             return computed;
         }
-        Duration capped = hint.compareTo(rule.getMaxDelay()) > 0 ? rule.getMaxDelay() : hint;
+        Duration cap = rule.effectiveMaxRetryAfter();
+        Duration capped = hint.compareTo(cap) > 0 ? cap : hint;
         Duration delay = capped.compareTo(computed) > 0 ? capped : computed;
-        log.debug("Provider asked to retry after {}; waiting {}ms instead of the computed {}ms (max-delay {}ms)",
-                hint, delay.toMillis(), computed.toMillis(), rule.getMaxDelay().toMillis());
+        log.debug("Provider asked to retry after {}; waiting {}ms instead of the computed {}ms (max-retry-after {}ms)",
+                hint, delay.toMillis(), computed.toMillis(), cap.toMillis());
         return delay;
     }
 
@@ -224,4 +251,14 @@ public class RetryExecutor {
      * and the number of attempts taken (1 = no retry needed).
      */
     public record Outcome(SendResult result, int attempts) {}
+
+    /** Waits between attempts; replaced in tests so they need not sleep. */
+    @FunctionalInterface
+    interface Sleeper {
+        /**
+         * @return {@code true} when the wait completed, {@code false} when
+         *         the thread was interrupted (with its interrupt flag restored)
+         */
+        boolean sleep(Duration duration);
+    }
 }

@@ -3,9 +3,12 @@ package com.lazydevs.notification.channel.sms.twilio;
 import com.lazydevs.notification.api.model.FailureType;
 import com.twilio.exception.ApiException;
 import com.twilio.exception.AuthenticationException;
+import org.apache.hc.client5.http.ConnectTimeoutException;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -59,6 +62,24 @@ class TwilioFailureClassifierTest {
         ApiException e = new ApiException("connection failed");
         // single-arg constructor leaves status null
         assertThat(TwilioSmsProvider.classifyTwilio(e)).isEqualTo(FailureType.TRANSIENT);
+    }
+
+    @Test
+    void apiException_nullStatus_causedByAReadTimeout_isAmbiguous() {
+        // NetworkHttpClient wraps the IOException as ApiException(message, cause).
+        ApiException e = new ApiException("Read timed out", new SocketTimeoutException("Read timed out"));
+        assertThat(TwilioSmsProvider.classifyTwilio(e)).isEqualTo(FailureType.AMBIGUOUS);
+    }
+
+    @Test
+    void apiException_nullStatus_causedByAConnectFailure_isTransient() {
+        ApiException refused = new ApiException("Connection refused", new ConnectException("Connection refused"));
+        // Apache HttpClient 5, which the Twilio SDK uses, reports a connect
+        // timeout as a SocketTimeoutException subclass.
+        ApiException connectTimeout = new ApiException("Connect to api.twilio.com timed out",
+                new ConnectTimeoutException("Connect to api.twilio.com timed out"));
+        assertThat(TwilioSmsProvider.classifyTwilio(refused)).isEqualTo(FailureType.TRANSIENT);
+        assertThat(TwilioSmsProvider.classifyTwilio(connectTimeout)).isEqualTo(FailureType.TRANSIENT);
     }
 
     @Test

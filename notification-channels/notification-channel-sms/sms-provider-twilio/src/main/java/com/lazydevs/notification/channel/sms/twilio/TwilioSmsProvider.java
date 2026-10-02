@@ -17,6 +17,7 @@ import com.twilio.rest.api.v2010.account.MessageCreator;
 import com.twilio.type.PhoneNumber;
 import lombok.extern.slf4j.Slf4j;
 
+import java.net.SocketTimeoutException;
 import java.util.Map;
 import java.util.Objects;
 
@@ -150,7 +151,11 @@ public class TwilioSmsProvider implements SmsProvider {
      *       Twilio's {@code getStatusCode()} carries the HTTP status;
      *       map via {@link FailureTypes#fromHttpStatus}. Common
      *       PERMANENT cases (e.g. error code 21211 "Invalid To
-     *       Number") show up as 4xx and classify correctly.</li>
+     *       Number") show up as 4xx and classify correctly. Without a
+     *       status the SDK wrapped an I/O failure: a read timeout is
+     *       {@link FailureType#AMBIGUOUS} (Twilio may have accepted the
+     *       message before the response was lost), anything else,
+     *       including a connect failure, {@link FailureType#TRANSIENT}.</li>
      *   <li>I/O / network — caught by
      *       {@link FailureTypes#fromException} via cause chain.</li>
      * </ul>
@@ -162,10 +167,11 @@ public class TwilioSmsProvider implements SmsProvider {
         if (t instanceof ApiException ae) {
             // Twilio's getStatusCode returns an Integer; null means the
             // SDK didn't get a status (network failure pre-response).
-            // Treat null as transient — same as a connection error.
+            // A read timeout may have struck after Twilio accepted the
+            // message; any other network failure is treated as transient.
             Integer status = ae.getStatusCode();
             if (status == null) {
-                return FailureType.TRANSIENT;
+                return readTimedOut(ae) ? FailureType.AMBIGUOUS : FailureType.TRANSIENT;
             }
             return FailureTypes.fromHttpStatus(status);
         }
@@ -174,6 +180,23 @@ public class TwilioSmsProvider implements SmsProvider {
             return FailureType.TRANSIENT;
         }
         return FailureType.UNKNOWN;
+    }
+
+    /**
+     * A socket timeout after the connection was made. A connect failure in
+     * the chain, including a connect timeout, means nothing was sent
+     * ({@link FailureTypes#fromExceptionAfterSubmit} says TRANSIENT).
+     */
+    private static boolean readTimedOut(Throwable t) {
+        if (FailureTypes.fromExceptionAfterSubmit(t) != FailureType.AMBIGUOUS) {
+            return false;
+        }
+        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
+            if (cur instanceof SocketTimeoutException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

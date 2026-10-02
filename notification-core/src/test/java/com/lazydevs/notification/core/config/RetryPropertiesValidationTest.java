@@ -113,4 +113,24 @@ class RetryPropertiesValidationTest {
         assertThat(v).extracting(ConstraintViolation::getMessage)
                 .anySatisfy(m -> assertThat(m).contains("jitter"));
     }
+
+    @Test
+    void maxRetryAfter_defaultsToMaxDelay_andMustBePositiveWhenSet() {
+        RetryProperties p = new RetryProperties();
+        p.setMaxDelay(Duration.ofSeconds(20));
+        assertThat(p.ruleFor(null).effectiveMaxRetryAfter()).isEqualTo(Duration.ofSeconds(20));
+
+        p.setMaxRetryAfter(Duration.ofMinutes(2));
+        assertThat(validator.validate(p)).isEmpty();
+        assertThat(p.ruleFor(null).effectiveMaxRetryAfter()).isEqualTo(Duration.ofMinutes(2));
+
+        p.setMaxRetryAfter(Duration.ZERO);
+        assertThat(validator.validate(p)).extracting(ConstraintViolation::getMessage)
+                .anySatisfy(m -> assertThat(m).contains("max-retry-after must be positive"));
+
+        NotificationProperties.RetryRule rule = new NotificationProperties.RetryRule();
+        rule.setMaxRetryAfter(Duration.ofSeconds(-1));
+        assertThat(validator.validate(rule)).extracting(ConstraintViolation::getMessage)
+                .anySatisfy(m -> assertThat(m).contains("max-retry-after must be positive"));
+    }
 }

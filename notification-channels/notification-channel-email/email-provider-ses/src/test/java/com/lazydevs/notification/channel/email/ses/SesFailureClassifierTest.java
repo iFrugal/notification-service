@@ -2,7 +2,10 @@ package com.lazydevs.notification.channel.email.ses;
 
 import com.lazydevs.notification.api.model.FailureType;
 import org.junit.jupiter.api.Test;
+import org.apache.hc.client5.http.ConnectTimeoutException;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException;
+import software.amazon.awssdk.core.exception.ApiCallTimeoutException;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.sesv2.model.AccountSuspendedException;
 import software.amazon.awssdk.services.sesv2.model.BadRequestException;
@@ -11,6 +14,8 @@ import software.amazon.awssdk.services.sesv2.model.MessageRejectedException;
 import software.amazon.awssdk.services.sesv2.model.SendingPausedException;
 
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -26,11 +31,50 @@ class SesFailureClassifierTest {
 
     @Test
     void sdkClientException_isTransient() {
-        // Network / client-side failure — always retry-worthy.
+        // Client-side failure without a timeout: nothing reached SES.
         Throwable t = SdkClientException.builder()
                 .message("connection failed")
                 .build();
         assertThat(SesEmailProvider.classifySes(t)).isEqualTo(FailureType.TRANSIENT);
+    }
+
+    @Test
+    void apiCallTimeouts_areAmbiguous_becauseSesMayHaveAcceptedTheMessage() {
+        assertThat(SesEmailProvider.classifySes(ApiCallTimeoutException.create(10_000)))
+                .isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(SesEmailProvider.classifySes(ApiCallAttemptTimeoutException.create(5_000)))
+                .isEqualTo(FailureType.AMBIGUOUS);
+    }
+
+    @Test
+    void readTimeout_isAmbiguous() {
+        Throwable t = SdkClientException.builder()
+                .message("Unable to execute HTTP request: Read timed out")
+                .cause(new SocketTimeoutException("Read timed out"))
+                .build();
+        assertThat(SesEmailProvider.classifySes(t)).isEqualTo(FailureType.AMBIGUOUS);
+    }
+
+    @Test
+    void connectFailuresAndConnectTimeouts_stayTransient_becauseNothingWasSent() {
+        Throwable refused = SdkClientException.builder()
+                .message("Unable to execute HTTP request: Connection refused")
+                .cause(new ConnectException("Connection refused"))
+                .build();
+        // The SDK's default sync HTTP client, Apache HttpClient 5, reports a
+        // connect timeout as a SocketTimeoutException subclass.
+        Throwable apacheConnectTimeout = SdkClientException.builder()
+                .message("Unable to execute HTTP request: Connect to email.eu-west-1.amazonaws.com timed out")
+                .cause(new ConnectTimeoutException("Connect to email.eu-west-1.amazonaws.com timed out"))
+                .build();
+        Throwable jdkConnectTimeout = SdkClientException.builder()
+                .message("Unable to execute HTTP request: Connect timed out")
+                .cause(new SocketTimeoutException("Connect timed out"))
+                .build();
+
+        assertThat(SesEmailProvider.classifySes(refused)).isEqualTo(FailureType.TRANSIENT);
+        assertThat(SesEmailProvider.classifySes(apacheConnectTimeout)).isEqualTo(FailureType.TRANSIENT);
+        assertThat(SesEmailProvider.classifySes(jdkConnectTimeout)).isEqualTo(FailureType.TRANSIENT);
     }
 
     @Test

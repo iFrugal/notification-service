@@ -2,9 +2,12 @@ package com.lazydevs.notification.core.config;
 
 import com.lazydevs.notification.api.NotificationService;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
+import com.lazydevs.notification.api.delivery.DeliveryEventListener;
+import com.lazydevs.notification.api.delivery.DeliveryEventPublisher;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.core.caller.CallerRegistry;
+import com.lazydevs.notification.core.delivery.ListenerDeliveryEventPublisher;
 import com.lazydevs.notification.core.metrics.NotificationMetrics;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.provider.ProviderResolver;
@@ -15,6 +18,7 @@ import com.lazydevs.notification.core.service.NoOpAuditService;
 import com.lazydevs.notification.core.service.NotificationAuditService;
 import com.lazydevs.notification.core.store.StoreTypeValidator;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -61,9 +65,22 @@ public class NotificationCoreAutoConfiguration {
         return new ProviderResolver(applicationContext);
     }
 
+    /**
+     * Hands events that providers publish while sending (DD-25) to every
+     * {@link DeliveryEventListener} bean. Replace it by declaring another
+     * {@link DeliveryEventPublisher} bean.
+     */
     @Bean
-    public ProviderRegistry providerRegistry(NotificationProperties properties, ProviderResolver providerResolver) {
-        return new ProviderRegistry(properties, providerResolver);
+    @ConditionalOnMissingBean(DeliveryEventPublisher.class)
+    public ListenerDeliveryEventPublisher deliveryEventPublisher(ObjectProvider<DeliveryEventListener> listeners,
+                                                                 Optional<NotificationMetrics> metrics) {
+        return new ListenerDeliveryEventPublisher(listeners, metrics);
+    }
+
+    @Bean
+    public ProviderRegistry providerRegistry(NotificationProperties properties, ProviderResolver providerResolver,
+                                             DeliveryEventPublisher deliveryEventPublisher) {
+        return new ProviderRegistry(properties, providerResolver, deliveryEventPublisher);
     }
 
     @Bean

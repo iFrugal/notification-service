@@ -10,11 +10,14 @@ import com.lazydevs.notification.api.model.SendResult;
 import com.lazydevs.notification.api.util.PiiMasking;
 import lombok.extern.slf4j.Slf4j;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException;
+import software.amazon.awssdk.core.exception.ApiCallTimeoutException;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.sesv2.SesV2Client;
 import software.amazon.awssdk.services.sesv2.model.*;
 
+import java.net.SocketTimeoutException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -181,8 +184,13 @@ public class SesEmailProvider implements EmailProvider {
      *
      * <p>AWS SDK v2 throws three flavours we care about:
      * <ul>
-     *   <li>{@link SdkClientException} — client-side networking
-     *       (timeout, broken connection). Always {@link FailureType#TRANSIENT}.</li>
+     *   <li>{@link SdkClientException} - client-side failure. A read
+     *       timeout or an API-call (attempt) timeout is
+     *       {@link FailureType#AMBIGUOUS}: SES may have accepted the
+     *       message before the response was lost, so a resend could
+     *       deliver it twice. Anything else, including connect failures
+     *       and connect timeouts, is {@link FailureType#TRANSIENT}: the
+     *       request never reached SES.</li>
      *   <li>{@link AwsServiceException} — server returned an error
      *       response. The HTTP status drives the classification via
      *       {@link FailureTypes#fromHttpStatus}, with a few SES-specific
@@ -209,7 +217,7 @@ public class SesEmailProvider implements EmailProvider {
      */
     static FailureType classifySes(Throwable t) {
         if (t instanceof SdkClientException) {
-            return FailureType.TRANSIENT;
+            return timedOutAfterSubmit(t) ? FailureType.AMBIGUOUS : FailureType.TRANSIENT;
         }
         // SES v2-specific permanent conditions. These inherit
         // AwsServiceException but always represent config / account-state
@@ -233,6 +241,27 @@ public class SesEmailProvider implements EmailProvider {
             return FailureType.TRANSIENT;
         }
         return FailureType.UNKNOWN;
+    }
+
+    /**
+     * Whether a client-side failure is a timeout that may have struck after
+     * the request reached SES: an API-call or API-call-attempt timeout, or a
+     * socket read timeout. A connect failure anywhere in the cause chain,
+     * including a connect timeout, means nothing was sent
+     * ({@link FailureTypes#fromExceptionAfterSubmit} says TRANSIENT).
+     */
+    private static boolean timedOutAfterSubmit(Throwable t) {
+        if (FailureTypes.fromExceptionAfterSubmit(t) == FailureType.TRANSIENT) {
+            return false;
+        }
+        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
+            if (cur instanceof ApiCallTimeoutException
+                    || cur instanceof ApiCallAttemptTimeoutException
+                    || cur instanceof SocketTimeoutException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

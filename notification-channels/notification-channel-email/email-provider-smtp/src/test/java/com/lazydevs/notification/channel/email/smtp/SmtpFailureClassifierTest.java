@@ -9,6 +9,7 @@ import jakarta.mail.internet.InternetAddress;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,8 +56,34 @@ class SmtpFailureClassifierTest {
         // generic-transient mapping — same semantic outcome here, but
         // the test lets us verify the cause-chain walk works.
         MessagingException t = new MessagingException(
-                "smtp connect failed", new SocketTimeoutException("timeout"));
+                "smtp connect failed", new ConnectException("connection refused"));
         assertThat(SmtpEmailProvider.classifySmtp(t)).isEqualTo(FailureType.TRANSIENT);
+    }
+
+    @Test
+    void readTimeout_isAmbiguous_becauseTheServerMayHaveAcceptedTheMessage() {
+        MessagingException t = new MessagingException(
+                "Exception reading response", new SocketTimeoutException("Read timed out"));
+        assertThat(SmtpEmailProvider.classifySmtp(t)).isEqualTo(FailureType.AMBIGUOUS);
+    }
+
+    @Test
+    void connectTimeout_isTransient_becauseNothingWasSent() {
+        MessagingException jdkConnectTimeout = new MessagingException(
+                "Couldn't connect to host", new SocketTimeoutException("Connect timed out"));
+        assertThat(SmtpEmailProvider.classifySmtp(jdkConnectTimeout)).isEqualTo(FailureType.TRANSIENT);
+
+        // Jakarta Mail wraps every connect failure in MailConnectException.
+        MessagingException mailConnect = new MailConnectException(
+                new SocketTimeoutException("timeout while connecting"));
+        assertThat(SmtpEmailProvider.classifySmtp(mailConnect)).isEqualTo(FailureType.TRANSIENT);
+    }
+
+    /** Stand-in with the simple name both mail implementations use. */
+    private static final class MailConnectException extends MessagingException {
+        MailConnectException(Exception cause) {
+            super("Couldn't connect to host", cause);
+        }
     }
 
     @Test

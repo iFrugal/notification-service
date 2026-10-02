@@ -677,6 +677,7 @@ notification:
     multiplier: 2.0
     max-delay: PT30S
     jitter: 0.5                # 0..1, fraction of delay randomised ±
+    max-retry-after: PT30S     # longest provider Retry-After to wait for (default: max-delay)
 
   dead-letter:
     enabled: true
@@ -684,18 +685,23 @@ notification:
 ```
 
 **Failure classification:** providers mark a `SendResult` failure as
-`TRANSIENT`, `PERMANENT`, or `UNKNOWN`. The default `RetryPredicate`
-retries TRANSIENT and UNKNOWN, skips PERMANENT — operators can plug a
+`TRANSIENT`, `PERMANENT`, `UNKNOWN` or (since 1.2.0) `AMBIGUOUS`. The default `RetryPredicate`
+retries TRANSIENT and UNKNOWN, skips PERMANENT and AMBIGUOUS; operators can plug a
 custom predicate as a Spring bean.
+
+`AMBIGUOUS` means the provider may already have accepted the message, for example after a read timeout, so a retry could deliver it twice.
+It is not retried by default and goes to the dead-letter store.
+A provider's `Retry-After` hint is honoured up to `max-retry-after`; a longer hint stops the retries and the failure goes to the dead-letter store.
+See [DD-25](docs/design-decisions/25-ambiguous-failures-retry-after-provider-events.md).
 
 The bundled providers classify their native errors via
 `com.lazydevs.notification.api.model.FailureTypes`:
 
-| Provider | TRANSIENT (retry) | PERMANENT (skip retry, go to DLQ) |
-|---|---|---|
-| **SMTP** (Jakarta Mail) | I/O timeouts, connection errors, generic `MessagingException` (server 4xx/5xx replies) | `AuthenticationFailedException`, `AddressException`, `SendFailedException` with all-invalid recipients |
-| **AWS SES v2** | `SdkClientException` (network), HTTP 5xx / 408 / 425 / 429 from SES | `AccountSuspendedException`, `SendingPausedException`, `MailFromDomainNotVerifiedException`, `MessageRejectedException`, `BadRequestException`, other 4xx |
-| **Twilio SMS** | HTTP 5xx / 408 / 425 / 429, null status (network failure pre-response) | `AuthenticationException`, other HTTP 4xx (e.g. error code `21211 Invalid To Number` arrives as 400) |
+| Provider | TRANSIENT (retry) | PERMANENT (skip retry, go to DLQ) | AMBIGUOUS (skip retry by default, go to DLQ) |
+|---|---|---|---|
+| **SMTP** (Jakarta Mail) | Connect timeouts, connection errors, other I/O errors, generic `MessagingException` (server 4xx/5xx replies) | `AuthenticationFailedException`, `AddressException`, `SendFailedException` with all-invalid recipients | Read timeouts (`SocketTimeoutException` after connecting) |
+| **AWS SES v2** | `SdkClientException` (network, including connect timeouts), HTTP 5xx / 408 / 425 / 429 from SES | `AccountSuspendedException`, `SendingPausedException`, `MailFromDomainNotVerifiedException`, `MessageRejectedException`, `BadRequestException`, other 4xx | Read timeouts, `ApiCallTimeoutException`, `ApiCallAttemptTimeoutException` |
+| **Twilio SMS** | HTTP 5xx / 408 / 425 / 429, null status (network failure pre-response) | `AuthenticationException`, other HTTP 4xx (e.g. error code `21211 Invalid To Number` arrives as 400) | Null status caused by a read timeout |
 
 Anything outside these tables is `UNKNOWN` — the default predicate
 treats UNKNOWN as retry-worthy (best-effort) so the classifier can be

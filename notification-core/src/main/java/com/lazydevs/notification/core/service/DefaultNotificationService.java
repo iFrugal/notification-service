@@ -228,8 +228,17 @@ public class DefaultNotificationService implements NotificationService {
                         PiiMasking.redact(result.errorMessage()),
                         receivedAt);
 
-                log.warn("Notification failed: requestId={}, error={}: {}",
-                        request.getRequestId(), result.errorCode(), PiiMasking.redact(result.errorMessage()));
+                if (result.failureType() == FailureType.AMBIGUOUS && attempts == 1) {
+                    // The provider may have accepted the message, so it is not
+                    // resent; the DLQ entry lets an operator reconcile first.
+                    log.warn("Notification failed, not retried: ambiguous (the provider may have accepted it):"
+                                    + " requestId={}, provider={}, messageId={}, error={}: {}",
+                            request.getRequestId(), provider.getProviderName(), result.messageId(),
+                            result.errorCode(), PiiMasking.redact(result.errorMessage()));
+                } else {
+                    log.warn("Notification failed: requestId={}, error={}: {}",
+                            request.getRequestId(), result.errorCode(), PiiMasking.redact(result.errorMessage()));
+                }
 
                 // DD-13: push to DLQ when configured. We push regardless of
                 // attempts taken — both "permanent failure on first try" and

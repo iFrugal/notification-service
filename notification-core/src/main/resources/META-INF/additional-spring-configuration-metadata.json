@@ -26,6 +26,11 @@
       "defaultValue": true
     },
     {
+      "name": "notification.retry.max-retry-after",
+      "type": "java.time.Duration",
+      "description": "Longest provider retry hint (an HTTP Retry-After) the retry executor waits for. A longer hint stops the retries: the failure is returned at once and goes to the dead-letter store when one is configured. Defaults to notification.retry.max-delay; per-channel rules accept the same key under notification.retry.by-channel.<channel>, defaulting to that rule's max-delay."
+    },
+    {
       "name": "notification.dead-letter.replay-lease",
       "type": "java.time.Duration",
       "defaultValue": "5m"
