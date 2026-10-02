@@ -311,24 +311,27 @@ public class SmtpEmailProvider implements EmailProvider {
 
     /**
      * A socket timeout after the connection was made. A connect failure in
-     * the chain, including a connect timeout, means nothing was sent: either
-     * {@link FailureTypes#fromExceptionAfterSubmit} says TRANSIENT, or the
-     * mail implementation reports a {@code MailConnectException} (matched by
-     * name, as both the {@code com.sun.mail} and the Angus implementations
-     * define one).
+     * the chain, including a connect timeout, means nothing was sent and is
+     * decided by {@link FailureTypes#fromExceptionAfterSubmit}: that is TRANSIENT.
+     *
+     * <p>The mail implementation's own {@code MailConnectException} is not
+     * matched by type. Its package differs between {@code com.sun.mail} and
+     * Angus ({@code org.eclipse.angus.mail}), and Angus is only a runtime
+     * dependency here, so it cannot be referenced at compile time. Both wrap
+     * the underlying {@code ConnectException}, {@code UnknownHostException}
+     * or JDK "Connect timed out" {@code SocketTimeoutException} in their
+     * cause chain, which is what is inspected instead.
      */
     private static boolean readTimedOut(Throwable t) {
         if (FailureTypes.fromExceptionAfterSubmit(t) != FailureType.AMBIGUOUS) {
             return false;
         }
-        boolean timedOut = false;
         for (Throwable cur = t; cur != null; cur = cur.getCause()) {
-            if ("MailConnectException".equals(cur.getClass().getSimpleName())) {
-                return false;
+            if (cur instanceof SocketTimeoutException) {
+                return true;
             }
-            timedOut |= cur instanceof SocketTimeoutException;
         }
-        return timedOut;
+        return false;
     }
 
     @Override

@@ -6,6 +6,8 @@ import jakarta.mail.MessagingException;
 import jakarta.mail.SendFailedException;
 import jakarta.mail.internet.AddressException;
 import jakarta.mail.internet.InternetAddress;
+import org.eclipse.angus.mail.util.MailConnectException;
+import org.eclipse.angus.mail.util.SocketConnectException;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -73,17 +75,19 @@ class SmtpFailureClassifierTest {
                 "Couldn't connect to host", new SocketTimeoutException("Connect timed out"));
         assertThat(SmtpEmailProvider.classifySmtp(jdkConnectTimeout)).isEqualTo(FailureType.TRANSIENT);
 
-        // Jakarta Mail wraps every connect failure in MailConnectException.
-        MessagingException mailConnect = new MailConnectException(
-                new SocketTimeoutException("timeout while connecting"));
+        // Angus wraps every connect failure in MailConnectException.
+        MessagingException mailConnect = new MailConnectException(new SocketConnectException(
+                "Couldn't connect to host", new SocketTimeoutException("Connect timed out"),
+                "smtp.example.com", 25, 5000));
         assertThat(SmtpEmailProvider.classifySmtp(mailConnect)).isEqualTo(FailureType.TRANSIENT);
     }
 
-    /** Stand-in with the simple name both mail implementations use. */
-    private static final class MailConnectException extends MessagingException {
-        MailConnectException(Exception cause) {
-            super("Couldn't connect to host", cause);
-        }
+    @Test
+    void mailConnectException_isTransient_whenTheConnectionIsRefused() {
+        MessagingException mailConnect = new MailConnectException(new SocketConnectException(
+                "Couldn't connect to host", new ConnectException("Connection refused"),
+                "smtp.example.com", 25, 5000));
+        assertThat(SmtpEmailProvider.classifySmtp(mailConnect)).isEqualTo(FailureType.TRANSIENT);
     }
 
     @Test
