@@ -65,7 +65,7 @@ The SES README explains how to set the SDK's attempts to 1.
 - `ProviderRegistry` takes the publisher as a third constructor argument (the two-argument constructor uses `NO_OP`).
   In `resolveAndInitialize`, which every resolution path goes through (bean name, class name, built-in name), a provider that implements `DeliveryEventEmitter` receives it before `configure()`.
 - The default publisher, `ListenerDeliveryEventPublisher`, is registered with `@ConditionalOnMissingBean(DeliveryEventPublisher.class)`.
-  It looks the `DeliveryEventListener` beans up on every publish, in order, so listeners created after the registry still receive events; it catches and logs a failing listener so the others run and the send is not affected; and it counts `notification.delivery.events.emitted{provider, status}`.
+  It looks the `DeliveryEventListener` beans up on every publish, in order, so listeners created after the registry still receive events; it catches and logs a failing listener so the others run and the send is not affected; and it counts `notification.delivery-events.emitted.total{provider, status}`.
 - Providers publish on the calling thread, because listeners such as the JDBC store read the tenant from `TenantContext`.
 - An invalid target is published as `BOUNCED` with reason `DeliveryEvents.REASON_INVALID_TARGET` (`"INVALID_TARGET"`) and the attributes `failure`, `errorCode`, `targetType` (`token` or `fid`) and `tokenHash` (constants in `DeliveryEvents`).
   The target itself is never put in an event.

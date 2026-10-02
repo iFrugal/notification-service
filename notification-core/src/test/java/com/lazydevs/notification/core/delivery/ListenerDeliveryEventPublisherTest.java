@@ -75,7 +75,7 @@ class ListenerDeliveryEventPublisherTest {
         publisher.publish(EVENT);
         publisher.publish(EVENT);
 
-        assertThat(registry.get("notification.delivery.events.emitted")
+        assertThat(registry.get("notification.delivery-events.emitted.total")
                 .tag("provider", "fcm").tag("status", "BOUNCED").counter().count()).isEqualTo(2.0);
     }
 

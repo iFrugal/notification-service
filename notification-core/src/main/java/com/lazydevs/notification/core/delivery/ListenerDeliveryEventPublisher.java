@@ -27,7 +27,7 @@ import java.util.Optional;
  * <p>Runs on the caller's thread, so a listener sees the caller's tenant
  * context. A listener that throws is logged and skipped; the others still run
  * and the send is not affected. Each published event increments
- * {@code notification.delivery.events.emitted{provider, status}} when
+ * {@code notification.delivery-events.emitted.total{provider, status}} when
  * metrics are available.
  */
 @Slf4j
