@@ -18,13 +18,13 @@ collaborator) can pick up where the last one left off.
 ## Status snapshot
 
 - **Repository:** `iFrugal/notification-service`
-- **Working version (current):** `1.0.3-SNAPSHOT`
-- **Latest released on Maven Central:** `1.0.2`
-- **Next release:** `1.1.0`, ready (see Phase 20; run the release workflow with `release-version: 1.1.0`, because the tree is at `1.0.3-SNAPSHOT`)
+- **Working version (current):** `1.1.3-SNAPSHOT`
+- **Latest released on Maven Central:** `1.1.2`
+- **Next release:** `1.2.0` (see Phase 21; run the release workflow with `release-version: 1.2.0`, because the tree is at `1.1.3-SNAPSHOT`)
 - **Java:** 25 LTS · **Spring Boot:** 4.1.1 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-10-01 IST (1.1.0 integration branch green; release notes in `docs/RELEASE_NOTES_1.1.0.md`).
+- **Last updated:** 2026-10-02 IST (1.2.0 integration branches green; release notes in `docs/RELEASE_NOTES_1.2.0.md`).
 
 > **Release procedure note:** The release workflow at
 > `.github/workflows/release.yml` is **`workflow_dispatch`-only**
@@ -462,6 +462,21 @@ Release notes, which become the GitHub release body: [`RELEASE_NOTES_1.1.0.md`](
 - [x] Six empty artifacts no longer published (`sms-provider-sns`, `whatsapp-provider-twilio`, `whatsapp-provider-meta`, `push-provider-fcm`, `push-provider-apns`, `notification-audit`)
 - [x] Reactor `./mvnw -B clean verify` green on the integration branch (495 tests)
 - [ ] Merge the integration branch, then run "Release to Maven Central" with `release-version: 1.1.0`, dry-run first
+
+### Phase 21 - 1.2.0 release: FCM push, ambiguous failures, BOM
+
+Release notes, which become the GitHub release body: [`RELEASE_NOTES_1.2.0.md`](./RELEASE_NOTES_1.2.0.md).
+Built as three stacked branches: `feat/1.2.0-api` (PR-A), `feat/1.2.0-fcm` (PR-B) and `feat/1.2.0-adapter-docs` (PR-C).
+
+- [x] PR-A: `FailureType.AMBIGUOUS`, not retried by default; SES, SMTP and Twilio timeouts after the request was sent become `AMBIGUOUS` (DD-25)
+- [x] PR-A: `notification.retry.max-retry-after`; a longer `Retry-After` hint stops the retries and goes to the DLQ (DD-25)
+- [x] PR-A: `DeliveryEventPublisher` and `DeliveryEventEmitter`, injected by `ProviderRegistry`; `PushRecipient.fid` and `deviceTokens` (DD-25)
+- [x] PR-A: `notification-service-bom`, checked in CI by `scripts/check-bom.sh`
+- [x] PR-B: `push-provider-fcm`, FCM HTTP v1 with no HTTP or Google library; invalid tokens published as `BOUNCED` events (DD-24)
+- [x] PR-C: `push-provider-fcm-google-auth`, `adc` and `external-account:<path>` credentials, every token call through the `FcmHttpTransport`
+- [x] PR-C: `notification-server` bundles `email-provider-acs` and the FCM modules; `credentials` replaces `credentials-path` in its `application.yml`
+- [x] PR-C: release notes, architecture, feature matrix and README
+- [ ] Merge the stack, then run "Release to Maven Central" with `release-version: 1.2.0`, dry-run first; every node must run 1.1.2 before 1.2.0
 
 ### Out-of-scope / parked
 

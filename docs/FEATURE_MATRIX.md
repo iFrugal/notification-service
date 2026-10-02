@@ -43,6 +43,26 @@ This is the single dependency that brings the service in:
 | Provider registry + lifecycle | 🟢 | DD-05 / DD-06 |
 | In-memory idempotency store (Caffeine) | 🟢 | DD-10; `notification.idempotency.enabled` defaults to `true` |
 | REST transport (`/api/v1/notifications`, `/api/v1/admin/*`) | 🔵 📦 | Off by default since 1.1.0. Add `notification-rest` (optional in the starter) and set `notification.rest.enabled: true` |
+| Version alignment (`notification-service-bom`) | 🔵 📦 | Since 1.2.0. Import the BOM once and leave the versions off the starter, the providers and the stores, see below |
+
+**Keep every module at one version with the BOM (since 1.2.0):**
+
+```xml
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>com.github.ifrugal</groupId>
+            <artifactId>notification-service-bom</artifactId>
+            <version>1.2.0</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+```
+
+The BOM manages only this project's artifacts, not Spring Boot, Jackson or any provider SDK.
+With it, the `<version>` elements in the snippets below can be left out.
 
 **Minimum `application.yml`:**
 
@@ -137,6 +157,7 @@ Apple APNs direct is planned; the `PushProvider` SPI in `notification-api` is th
 | Provider | Artifact | When to use | Required properties |
 |----------|----------|-------------|---------------------|
 | Firebase FCM | `push-provider-fcm` | Cross-platform (Android + iOS + web) push over the FCM HTTP v1 API | `credentials`: a service-account JSON file path or the inline JSON (`adc` and `external-account:<path>` need `push-provider-fcm-google-auth`); `project-id` when the key does not name one; optional `validate-only`, `dry-run`, `timeout`, `concurrency`, `multi-token-policy` (`all`/`any`), `android.*`/`apns.*`/`webpush.*` defaults. See the [module README](../notification-channels/notification-channel-push/push-provider-fcm/README.md) |
+| FCM credentials adapter | `push-provider-fcm-google-auth` | Add to `push-provider-fcm` for `credentials: adc` (Application Default Credentials) or `credentials: external-account:<path>` (workload identity federation) | None of its own; every token call goes through the tenant's `FcmHttpTransport`. Brings the Google auth library (about 4.9 MB, no Netty). See the [module README](../notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) |
 | Apple APNs | Planned (no artifact) | iOS-only push direct to Apple | Not defined yet |
 
 ```xml
@@ -145,9 +166,17 @@ Apple APNs direct is planned; the `PushProvider` SPI in `notification-api` is th
     <artifactId>push-provider-fcm</artifactId>
     <version>1.2.0</version>
 </dependency>
+
+<!-- Only for credentials: adc or external-account:<path> -->
+<dependency>
+    <groupId>com.github.ifrugal</groupId>
+    <artifactId>push-provider-fcm-google-auth</artifactId>
+    <version>1.2.0</version>
+</dependency>
 ```
 
-The module adds no dependency beyond `notification-api`: no HTTP library and no Google library.
+`push-provider-fcm` adds no dependency beyond `notification-api`: no HTTP library and no Google library.
+The standalone server bundles both modules.
 A device token that FCM reports as unregistered is published as a `BOUNCED` delivery event with reason `INVALID_TARGET` and a hash of the token, so a `DeliveryEventListener` can delete it.
 
 ### 2e. Planned providers

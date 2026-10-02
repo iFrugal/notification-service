@@ -115,7 +115,7 @@ Each module lists its own auto-configuration in `META-INF/spring/org.springframe
 | `notification-store-jdbc` | `JdbcStoreAutoConfiguration` | After Boot's `DataSource`, **before** the core defaults |
 | `notification-rest` | `NotificationRestAutoConfiguration` | **After** the core defaults and Redis, so its `@ConditionalOnMissingBean` on the logging delivery-event listener sees any store |
 | `notification-kafka` | `NotificationKafkaAutoConfiguration` | Before Boot's Kafka |
-| each provider module | `SmtpEmailProviderAutoConfiguration`, `SesEmailProviderAutoConfiguration`, `AcsEmailProviderAutoConfiguration`, `TwilioSmsProviderAutoConfiguration` | Unordered |
+| each provider module | `SmtpEmailProviderAutoConfiguration`, `SesEmailProviderAutoConfiguration`, `AcsEmailProviderAutoConfiguration`, `TwilioSmsProviderAutoConfiguration`, `FcmPushProviderAutoConfiguration` | Unordered |
 
 Running the Redis and JDBC auto-configurations before the core defaults is what lets their stores win: the in-memory default's `@ConditionalOnMissingBean` then sees the selected store and backs off.
 REST registers nothing unless `notification.rest.enabled=true` in a servlet application, and restricts its tenant and caller filters to `<notification.rest.base-path>/*`.
@@ -130,6 +130,18 @@ Each provider module registers its provider as a prototype bean named `<name><Ch
 `BuiltInProviders` is the catalog of known provider names, their classes and artifacts; it loads no class and serves to explain a miss (module absent, or provider not implemented yet) and to feed the GraalVM hints in `ProviderRuntimeHints`.
 `ProviderFqcnAotProcessor` adds the same hints at AOT build time for every class the configuration names with `fqcn`.
 A configured provider that cannot be resolved fails startup in `ProviderRegistry`.
+
+**Provider-originated delivery events (DD-25).**
+A provider that learns a delivery outcome from the send response itself, such as FCM reporting an unregistered device token, implements `DeliveryEventEmitter`.
+`ProviderRegistry` hands it the `DeliveryEventPublisher` before `configure()`, on every resolution path (bean name, `fqcn`, built-in name), so a provider never looks listeners up itself.
+The core's `ListenerDeliveryEventPublisher` (`@ConditionalOnMissingBean`) resolves the `DeliveryEventListener` beans lazily, calls each one in order, isolates a failing listener and counts `notification.delivery-events.emitted.total`.
+Providers publish on the thread that runs the send, so listeners such as the JDBC delivery-event store can read the tenant bound to it.
+The events reach the same listeners and store as webhook callbacks.
+
+**Push and the FCM credentials adapter (DD-24).**
+`push-provider-fcm` calls the FCM HTTP v1 API through its own `FcmHttpTransport` SPI (`java.net.http` by default, or an application bean) and signs the service-account assertion with the JDK, so it adds no HTTP or Google library.
+Access tokens come from an `FcmAccessTokenProvider`, created per tenant by the first `FcmAccessTokenProviderFactory` that supports the tenant's `credentials` value: Spring beans first, then `META-INF/services` entries, then the built-in service-account factory.
+`push-provider-fcm-google-auth` is one such `META-INF/services` entry: it supports `adc` and `external-account:<path>` through the Google auth library, and its `FcmHttpTransportAdapter` sends every call of that library through the tenant's `FcmHttpTransport`.
 
 ## Transport surfaces
 
@@ -199,13 +211,19 @@ notification-channels/*           Channel + provider implementations
     email-provider-acs
   notification-channel-sms
     sms-provider-twilio
+  notification-channel-push
+    push-provider-fcm             FCM HTTP v1, no HTTP or Google library (DD-24)
+    push-provider-fcm-google-auth Optional: adc and external-account credentials for FCM
 notification-spring-boot-starter  The library-mode dependency; registers no beans itself
-notification-server               Standalone Docker app
+notification-server               Standalone Docker app; bundles every built-in provider
+notification-service-bom          Bill of materials for every library jar above
 ```
 
-Total: 16 modules, including the root and aggregator poms.
-The strict separation lets consumers pull only the providers they use, so an SMTP-only deployment doesn't transitively inherit AWS or Twilio SDKs.
-AWS SNS SMS, WhatsApp (Twilio, Meta) and push (FCM, APNs) providers are planned; until they ship, the `SmsProvider`, `WhatsAppProvider` and `PushProvider` SPIs in `notification-api` are the extension points.
+Total: 20 modules, including the root, the BOM and the aggregator poms.
+The strict separation lets consumers pull only the providers they use, so an SMTP-only deployment doesn't transitively inherit AWS or Twilio SDKs, and FCM with a service-account key doesn't inherit the Google auth library.
+The BOM's parent is `ifrugal-parent`, not the root pom, so importing it manages only this project's artifacts and leaves Spring Boot, Jackson and the provider SDKs to the application.
+`scripts/check-bom.sh`, run in CI, fails when a jar module is missing from the BOM or the BOM's version differs from the reactor's.
+AWS SNS SMS, WhatsApp (Twilio, Meta) and APNs providers are planned; until they ship, the `SmsProvider`, `WhatsAppProvider` and `PushProvider` SPIs in `notification-api` are the extension points.
 Audit has no module of its own: the `NotificationAuditService` SPI and its `NoOpAuditService` default live in `notification-core`.
 
 ## Cross-cutting invariants
@@ -234,9 +252,8 @@ must not be trusted from clients:
 
 ## Versioning and release
 
-The project follows semantic versioning. The current snapshot is
-`1.0.3-SNAPSHOT`; `1.0.2` is the most-recent released version on
-Maven Central, and the next release is `1.1.0`.
+The project follows semantic versioning.
+The current snapshot is `1.1.3-SNAPSHOT`; `1.1.2` is the most recent release on Maven Central, and the next release is `1.2.0`.
 Release automation is wired via GitHub Actions
 (see `.github/workflows/release.yml`). Maven Central publishing
 goes through the Central Portal via
