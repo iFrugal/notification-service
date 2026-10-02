@@ -186,6 +186,16 @@
                 <artifactId>sms-provider-twilio</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>notification-channel-push</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>push-provider-fcm</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
             <!-- all-about-persistence -->
             <dependency>

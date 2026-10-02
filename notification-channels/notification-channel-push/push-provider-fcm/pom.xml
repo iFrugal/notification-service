@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.ifrugal</groupId>
+        <artifactId>notification-channel-push</artifactId>
+        <version>1.1.3-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>push-provider-fcm</artifactId>
+    <packaging>jar</packaging>
+
+    <name>${project.artifactId}</name>
+    <description>Push Provider - Firebase Cloud Messaging HTTP v1 implementation</description>
+
+    <!--
+        No HTTP library and no Google library: the HTTP v1 API is called through
+        the module's own FcmHttpTransport SPI (java.net.http by default), the
+        service-account JWT is signed with the JDK, and JSON goes through the
+        Jackson 2 tree model that notification-api already brings.
+        notification-api comes from the notification-channels parent.
+    -->
+    <dependencies>
+        <!-- Optional: FcmPushProviderAutoConfiguration registers the prototype
+             bean 'fcmPushProvider'. The provider itself has no Spring dependency
+             (fqcn / reflective users construct it with the no-arg constructor). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Testing: ApplicationContextRunner, Logback ListAppender -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+</project>

@@ -131,17 +131,28 @@ The `WhatsAppProvider` SPI in `notification-api` exists today; implement it and 
 
 ### 2d. Push channel
 
-No built-in push provider ships yet.
-The `PushProvider` SPI in `notification-api` exists today; implement it and register it as a bean or FQCN to send push notifications now.
+Firebase Cloud Messaging ships as `push-provider-fcm` since 1.2.0.
+Apple APNs direct is planned; the `PushProvider` SPI in `notification-api` is the extension point for any other push service.
 
 | Provider | Artifact | When to use | Required properties |
 |----------|----------|-------------|---------------------|
-| Firebase FCM | Planned (no artifact) | Cross-platform (Android + iOS + web) push | Not defined yet |
+| Firebase FCM | `push-provider-fcm` | Cross-platform (Android + iOS + web) push over the FCM HTTP v1 API | `credentials`: a service-account JSON file path or the inline JSON (`adc` and `external-account:<path>` need `push-provider-fcm-google-auth`); `project-id` when the key does not name one; optional `validate-only`, `dry-run`, `timeout`, `concurrency`, `multi-token-policy` (`all`/`any`), `android.*`/`apns.*`/`webpush.*` defaults. See the [module README](../notification-channels/notification-channel-push/push-provider-fcm/README.md) |
 | Apple APNs | Planned (no artifact) | iOS-only push direct to Apple | Not defined yet |
+
+```xml
+<dependency>
+    <groupId>com.github.ifrugal</groupId>
+    <artifactId>push-provider-fcm</artifactId>
+    <version>1.2.0</version>
+</dependency>
+```
+
+The module adds no dependency beyond `notification-api`: no HTTP library and no Google library.
+A device token that FCM reports as unregistered is published as a `BOUNCED` delivery event with reason `INVALID_TARGET` and a hash of the token, so a `DeliveryEventListener` can delete it.
 
 ### 2e. Planned providers
 
-Planned order: FCM (HTTP v1 API) first, then the Meta WhatsApp Cloud API with a signed webhook.
+FCM (HTTP v1 API) shipped in 1.2.0; next is the Meta WhatsApp Cloud API with a signed webhook.
 AWS SNS SMS, Twilio WhatsApp and Apple APNs are planned but not scheduled yet.
 The `SmsProvider`, `WhatsAppProvider` and `PushProvider` SPIs are the extension points in the meantime.
 
@@ -151,6 +162,7 @@ The artifactIds `sms-provider-sns`, `whatsapp-provider-twilio`, `whatsapp-provid
 They are not published from 1.1.0 on.
 If your build declares any of them, remove the dependency; you lose nothing, because they never contained code.
 The aggregator poms `notification-channel-whatsapp` and `notification-channel-push` are dropped for the same reason.
+The exception is `push-provider-fcm` (and its aggregator `notification-channel-push`), published again from 1.2.0 with the real FCM provider; versions 1.0.0 to 1.0.2 of it are still empty.
 
 ---
 
@@ -308,6 +320,7 @@ Query operator endpoints:
 - `GET /api/v1/admin/delivery-events?requestId=req-abc` — joins via audit (DD-18)
 
 **FCM is not supported** — Firebase doesn't ship per-message webhooks today.
+The FCM provider reports invalid device tokens from the send response instead, as `BOUNCED` events to the same listeners and store (DD-24, DD-25).
 
 ---
 
