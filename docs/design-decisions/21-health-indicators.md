@@ -102,6 +102,22 @@ notification:
 
 That's the only knob. The rest of the indicators report static facts.
 
+### Switching an indicator off (1.1.2)
+
+Each indicator honours Boot's standard `management.health.<name>.enabled` switch, so an operator can drop one without disabling the feature behind it.
+
+| Indicator | Property |
+|---|---|
+| `dlq` | `management.health.dlq.enabled` |
+| `deliveryEvents` | `management.health.delivery-events.enabled` |
+| `idempotency` | `management.health.idempotency.enabled` |
+| `rateLimit` | `management.health.rate-limit.enabled` |
+
+Relaxed binding also accepts the camel-case form, for example `management.health.deliveryEvents.enabled`.
+`management.health.defaults.enabled=false` switches off every indicator that is not enabled explicitly, as for Boot's own indicators.
+The component names under `/actuator/health` are unchanged.
+A typical reason is the JDBC store, where the `dlq` and `deliveryEvents` indicators run a `COUNT(*)` over their table on every health check.
+
 ## Out of scope
 
 - **Audit-store health.** No meaningful probe on the existing SPI;

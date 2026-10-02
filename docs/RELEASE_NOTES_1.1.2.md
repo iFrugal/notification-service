@@ -10,6 +10,9 @@
   The Redis and JDBC stores read records that carry fields or enum constants this version does not know.
   Upgrade to 1.1.2 before 1.2.0 so stores tolerate the new constants.
 
+- **Health indicators can be switched off one by one.**
+  `management.health.dlq.enabled`, `management.health.delivery-events.enabled`, `management.health.idempotency.enabled` and `management.health.rate-limit.enabled` now work, as does `management.health.defaults.enabled`.
+
 ## Fixes
 
 - **Retry under the same idempotency key after a failure (DD-10).**
@@ -41,10 +44,13 @@ Additive public API:
 - `@JsonEnumDefaultValue` on `FailureType.UNKNOWN` and `DeliveryStatus.UNKNOWN`.
 - The property `notification.idempotency.retry-after-failure` (default `true`).
 
+- The `management.health.<name>.enabled` switches for the four notification health indicators; they default to `management.health.defaults.enabled`, which is `true` unless you set it.
+
 Behaviour changes to be aware of:
 
 - A retry under the key of a failed attempt is dispatched instead of rejected with HTTP 409.
 - `errorMessage` of a failed response is redacted on every path, and an idempotency record of a failed response has no `errorMessage`.
+- If you set `management.health.defaults.enabled=false`, the notification indicators are now switched off with the rest; enable the ones you want explicitly.
 
 Rolling upgrade from 1.1.0 or 1.1.1:
 

@@ -234,6 +234,8 @@ Under row-level security a purge only reaches the rows its session can see, so r
 - `DeadLetterStore.size()` is a global `COUNT`, not narrowed by `TenantContext`, matching the in-memory and Redis stores (row-level security still applies).
 - `DeliveryEventStore.snapshot()` and `findByProviderMessageId()` return at most `notification.delivery-events.max-entries` rows, most recent first.
 - `DeliveryEventStore.size()` is a `COUNT` across tenants (row-level security still applies).
+- The `dlq` and `deliveryEvents` health indicators call `size()`, so every health check runs a `COUNT(*)` over the table.
+  On a large table, switch them off with `management.health.dlq.enabled=false` and `management.health.delivery-events.enabled=false` (since 1.1.2), and watch DLQ growth through the DD-22 metrics instead.
 
 ## GraalVM native image
 

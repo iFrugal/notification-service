@@ -64,6 +64,78 @@ class HealthAutoConfigurationTest {
         });
     }
 
+    /** Every SPI on, so each indicator would register unless switched off. */
+    private static final String[] ALL_FEATURES = {
+            "notification.dead-letter.enabled=true",
+            "notification.delivery-events.enabled=true",
+            "notification.rate-limit.enabled=true",
+    };
+
+    @Test
+    void allFeaturesOn_registersAllFourIndicators() {
+        runner.withPropertyValues(ALL_FEATURES).run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).hasBean("dlq").hasBean("deliveryEvents").hasBean("idempotency").hasBean("rateLimit");
+        });
+    }
+
+    @Test
+    void managementHealthNameEnabledFalse_removesOnlyThatIndicator() {
+        runner.withPropertyValues(ALL_FEATURES)
+                .withPropertyValues("management.health.delivery-events.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean("deliveryEvents");
+                    assertThat(context).hasBean("dlq").hasBean("idempotency").hasBean("rateLimit");
+                });
+    }
+
+    @Test
+    void managementHealthNameEnabledFalse_acceptsTheCamelCaseName() {
+        runner.withPropertyValues(ALL_FEATURES)
+                .withPropertyValues("management.health.deliveryEvents.enabled=false",
+                        "management.health.rateLimit.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean("deliveryEvents").doesNotHaveBean("rateLimit");
+                    assertThat(context).hasBean("dlq").hasBean("idempotency");
+                });
+    }
+
+    @Test
+    void eachIndicatorHasItsOwnSwitch() {
+        runner.withPropertyValues(ALL_FEATURES)
+                .withPropertyValues("management.health.dlq.enabled=false",
+                        "management.health.idempotency.enabled=false",
+                        "management.health.rate-limit.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean("dlq").doesNotHaveBean("idempotency")
+                            .doesNotHaveBean("rateLimit");
+                    assertThat(context).hasBean("deliveryEvents");
+                    // The stores themselves stay; only their indicators go.
+                    assertThat(context).hasSingleBean(com.lazydevs.notification.api.deadletter.DeadLetterStore.class);
+                });
+    }
+
+    @Test
+    void managementHealthDefaultsEnabledFalse_removesAllFour_unlessOneIsEnabledExplicitly() {
+        runner.withPropertyValues(ALL_FEATURES)
+                .withPropertyValues("management.health.defaults.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean("dlq").doesNotHaveBean("deliveryEvents")
+                            .doesNotHaveBean("idempotency").doesNotHaveBean("rateLimit");
+                });
+        runner.withPropertyValues(ALL_FEATURES)
+                .withPropertyValues("management.health.defaults.enabled=false",
+                        "management.health.dlq.enabled=true")
+                .run(context -> {
+                    assertThat(context).hasBean("dlq");
+                    assertThat(context).doesNotHaveBean("idempotency");
+                });
+    }
+
     @Test
     void rateLimitDisabled_registersNoRateLimitIndicator() {
         runner.withPropertyValues("notification.rate-limit.enabled=false").run(context -> {
