@@ -5,6 +5,8 @@ import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
+import com.lazydevs.notification.channel.push.fcm.FcmAccessTokenProviderFactory;
+import com.lazydevs.notification.channel.push.fcm.googleauth.GoogleAuthTokenProviderFactory;
 import com.lazydevs.notification.core.deadletter.InMemoryDeadLetterStore;
 import com.lazydevs.notification.core.delivery.InMemoryDeliveryEventStore;
 import com.lazydevs.notification.core.idempotency.CaffeineIdempotencyStore;
@@ -19,6 +21,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
+
+import java.util.List;
+import java.util.ServiceLoader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -65,6 +70,19 @@ class DefaultBeansRegistrationTest {
                     .isSameAs(context.getBean(TenantFilter.class));
             assertThat(context).hasSingleBean(CallerAdmissionFilter.class);
             assertThat(context).hasBean("callerAdmissionFilterRegistration");
+        });
+    }
+
+    @Test
+    void bundledAcsAndFcmProviders_registerPrototypeBeans() {
+        runner.run(context -> {
+            assertThat(context).hasNotFailed();
+            for (String name : List.of("acsEmailProvider", "fcmPushProvider")) {
+                assertThat(context.getBeanFactory().getBeanDefinition(name).isPrototype()).as(name).isTrue();
+            }
+            assertThat(ServiceLoader.load(FcmAccessTokenProviderFactory.class).stream().map(ServiceLoader.Provider::type))
+                    .as("the google-auth adapter, for credentials: adc")
+                    .contains(GoogleAuthTokenProviderFactory.class);
         });
     }
 

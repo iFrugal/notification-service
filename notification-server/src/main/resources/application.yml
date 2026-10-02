@@ -77,6 +77,12 @@ notification:
             #   properties:
             #     region: ${AWS_REGION:us-east-1}
 
+            # Uncomment to enable Azure Communication Services Email
+            # acs:
+            #   properties:
+            #     connection-string: ${ACS_CONNECTION_STRING:}
+            #     sender: ${ACS_SENDER:DoNotReply@notify.example.com}
+
         sms:
           enabled: ${SMS_ENABLED:false}
           providers:
@@ -106,7 +112,12 @@ notification:
           providers:
             fcm:
               properties:
-                credentials-path: ${FCM_CREDENTIALS_PATH:/config/firebase-credentials.json}
+                # A service-account JSON file path, the inline JSON, 'adc'
+                # (Application Default Credentials) or 'external-account:<path>'
+                # (workload identity federation). 'credentials-path' and
+                # FCM_CREDENTIALS_PATH still work as deprecated aliases.
+                credentials: ${FCM_CREDENTIALS:${FCM_CREDENTIALS_PATH:/config/firebase-credentials.json}}
+                # project-id: ${FCM_PROJECT_ID:}   # defaults to project_id of the key
 
     # Example: Tenant with multiple email providers
     # acme-corp:
