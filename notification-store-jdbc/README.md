@@ -164,6 +164,8 @@ Payloads are JSON in `TEXT` columns.
 
 The stores always serialise with their own module-owned Jackson `ObjectMapper`, never the application's bean.
 It registers `JavaTimeModule`, writes dates as ISO-8601 strings, and ignores unknown properties on read.
+Since 1.1.2 an unknown `FailureType` or `DeliveryStatus` constant, in a JSON payload or in the `failure_type` and `status` columns, reads as `UNKNOWN`.
+The idempotency table stores a `FAILED` or `REJECTED` response without its `errorMessage`, because such a response is never replayed.
 This keeps the stored JSON stable when the host changes its own Jackson configuration, and lets rows written by a newer library version still be read.
 
 ## Grants and row-level security
@@ -232,6 +234,8 @@ Under row-level security a purge only reaches the rows its session can see, so r
 - `DeadLetterStore.size()` is a global `COUNT`, not narrowed by `TenantContext`, matching the in-memory and Redis stores (row-level security still applies).
 - `DeliveryEventStore.snapshot()` and `findByProviderMessageId()` return at most `notification.delivery-events.max-entries` rows, most recent first.
 - `DeliveryEventStore.size()` is a `COUNT` across tenants (row-level security still applies).
+- The `dlq` and `deliveryEvents` health indicators call `size()`, so every health check runs a `COUNT(*)` over the table.
+  On a large table, switch them off with `management.health.dlq.enabled=false` and `management.health.delivery-events.enabled=false` (since 1.1.2), and watch DLQ growth through the DD-22 metrics instead.
 
 ## GraalVM native image
 

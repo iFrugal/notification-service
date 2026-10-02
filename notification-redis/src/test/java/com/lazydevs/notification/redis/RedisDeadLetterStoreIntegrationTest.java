@@ -7,6 +7,7 @@ import com.lazydevs.notification.api.model.EmailRecipient;
 import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
+import com.lazydevs.notification.api.model.PushRecipient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -95,6 +96,29 @@ class RedisDeadLetterStoreIntegrationTest extends AbstractRedisIntegrationTest {
                 .startsWith("{")
                 .contains("\"req-readable\"")
                 .contains("\"failureType\":\"TRANSIENT\"");
+    }
+
+    @Test
+    void entryFromANewerVersion_withAnUnknownFailureTypeAndExtraFields_stillReads() {
+        // What a 1.2 node could write: a FailureType constant 1.1.x lacks and
+        // fields 1.1.x does not know, including inside a push recipient.
+        redis.opsForList().leftPush("test-dlq:dlq", """
+                {"timestamp":1759312800.000000000,"request":{"requestId":"req-push","tenantId":"acme",\
+                "callerId":"billing","notificationType":"TEST","channel":"PUSH","recipient":{"type":"PUSH",\
+                "id":null,"deviceToken":"device-token-1","title":"Hi","body":"There","data":{},\
+                "futureRecipientField":"x"},"futureRequestField":true},"response":{"requestId":"req-push",\
+                "tenantId":"acme","channel":"PUSH","status":"FAILED","errorCode":"FCM_UNAVAILABLE",\
+                "futureResponseField":1},"attempts":3,"failureType":"SOMETHING_NEW","futureEntryField":"x"}""");
+
+        List<DeadLetterEntry> entries = store.snapshot().orElseThrow();
+
+        assertThat(entries).hasSize(1);
+        DeadLetterEntry entry = entries.get(0);
+        assertThat(entry.failureType()).isEqualTo(FailureType.UNKNOWN);
+        assertThat(entry.attempts()).isEqualTo(3);
+        assertThat(entry.request().getRecipient()).isInstanceOfSatisfying(PushRecipient.class,
+                push -> assertThat(push.deviceToken()).isEqualTo("device-token-1"));
+        assertThat(store.findByRequestId("acme", "req-push")).isPresent();
     }
 
     private static DeadLetterEntry entry(String requestId) {

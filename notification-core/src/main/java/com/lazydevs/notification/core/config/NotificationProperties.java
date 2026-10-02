@@ -168,9 +168,27 @@ public class NotificationProperties {
 
     @Data
     public static class TemplateProperties {
+        /**
+         * Root of the template tree; templates resolve at
+         * {@code <base-path><tenant>/<channel>/<id>.ftl}, then under {@code default/}.
+         */
         private String basePath = "classpath:/templates/";
         private boolean cacheEnabled = true;
+        /**
+         * Seconds a loaded template stays cached before it is read again. 0 or negative
+         * keeps it until it is evicted or the cache is cleared.
+         */
         private int cacheTtlSeconds = 3600;
+        /**
+         * Maximum number of templates cached across all tenants. 0 or negative is unbounded.
+         */
+        private long cacheMaxSize = 1000;
+        /**
+         * Render HTML email bodies in FreeMarker's HTML output format, so interpolated values
+         * are HTML-escaped. {@code escapeHtml()} results are not escaped twice and
+         * {@code ?no_esc} prints trusted markup as is.
+         */
+        private boolean autoEscape = false;
     }
 
     /**
@@ -190,6 +208,20 @@ public class NotificationProperties {
          * deployments should raise this. Ignored by Redis-backed stores.
          */
         private long maxEntries = 100_000L;
+
+        /**
+         * Whether a request may retry under the same idempotency key after
+         * the previous attempt ended {@code FAILED} or {@code REJECTED}.
+         * When {@code true} (the default) the failed record is released so
+         * the retry dispatches again (DD-10 "FAILED is fresh"); when
+         * {@code false} the failed record is kept and a retry under the same
+         * key gets HTTP 409 until the TTL elapses, as in 1.1.0 and 1.1.1.
+         * Has no effect with a custom store that does not implement
+         * {@code IdempotencyStore.release}.
+         *
+         * @since 1.1.2
+         */
+        private boolean retryAfterFailure = true;
 
         /**
          * Backing store. Deprecated: select the store family with

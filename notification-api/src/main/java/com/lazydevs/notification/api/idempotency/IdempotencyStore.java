@@ -1,5 +1,6 @@
 package com.lazydevs.notification.api.idempotency;
 
+import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.model.NotificationResponse;
 
 import java.util.Optional;
@@ -59,6 +60,73 @@ public interface IdempotencyStore {
      * otherwise the key would remain locked until TTL expiry.
      */
     void markComplete(IdempotencyKey key, NotificationResponse response);
+
+    /**
+     * Remove the {@link IdempotencyStatus#COMPLETE COMPLETE} record for
+     * {@code key}, but only if it still belongs to {@code notificationId}
+     * (compare-and-delete). The service calls this after recording a
+     * {@code FAILED} or {@code REJECTED} outcome, and before re-claiming a
+     * key whose last outcome was a failure, so a retry under the same key
+     * can win {@link #markInProgress(IdempotencyKey, String)} again (DD-10
+     * "FAILED is fresh").
+     *
+     * <p>Implementations MUST make the check and the delete one atomic step,
+     * and MUST NOT remove an {@link IdempotencyStatus#IN_PROGRESS IN_PROGRESS}
+     * record or a record claimed by another notification id: either would
+     * let a second caller win {@code markInProgress} while a send is in
+     * flight.
+     *
+     * <p>The default returns {@code false} and changes nothing, which keeps
+     * the 1.1.x behaviour for stores that do not implement it: the failed
+     * record stays until its TTL elapses and a retry under the same key is
+     * answered with a conflict.
+     *
+     * @param key            the composite scope.
+     * @param notificationId the notification id the record must belong to.
+     * @return {@code true} if the record was removed; {@code false} if there
+     *         was no record, it belonged to another notification id, it was
+     *         still in progress, or the store does not support release.
+     * @since 1.1.2
+     */
+    default boolean release(IdempotencyKey key, String notificationId) {
+        return false;
+    }
+
+    /**
+     * The form of {@code response} a store persists in
+     * {@link #markComplete(IdempotencyKey, NotificationResponse)}.
+     *
+     * <p>A {@code FAILED} or {@code REJECTED} response is never replayed
+     * (DD-10 "FAILED is fresh"), so its {@code errorMessage}, which is free
+     * text from a provider and can carry recipient data, is dropped from the
+     * stored copy. Every other response is returned unchanged.
+     *
+     * @param response the terminal response, may be {@code null}
+     * @return the response to persist
+     * @since 1.1.2
+     */
+    static NotificationResponse storedForm(NotificationResponse response) {
+        if (response == null || response.errorMessage() == null
+                || (response.status() != NotificationStatus.FAILED
+                        && response.status() != NotificationStatus.REJECTED)) {
+            return response;
+        }
+        return new NotificationResponse(
+                response.requestId(),
+                response.correlationId(),
+                response.tenantId(),
+                response.callerId(),
+                response.channel(),
+                response.provider(),
+                response.status(),
+                response.providerMessageId(),
+                response.errorCode(),
+                null,
+                response.receivedAt(),
+                response.processedAt(),
+                response.sentAt(),
+                response.idempotentReplay());
+    }
 
     /**
      * Remove records whose {@code recordedAt} timestamp is older than the

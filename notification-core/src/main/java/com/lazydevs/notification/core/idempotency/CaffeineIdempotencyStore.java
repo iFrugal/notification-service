@@ -78,7 +78,25 @@ public class CaffeineIdempotencyStore implements IdempotencyStore {
     public void markComplete(IdempotencyKey key, NotificationResponse response) {
         cache.put(key, new IdempotencyRecord(
                 resolveNotificationId(key, response),
-                IdempotencyStatus.COMPLETE, response, Instant.now()));
+                IdempotencyStatus.COMPLETE, IdempotencyStore.storedForm(response), Instant.now()));
+    }
+
+    /**
+     * Compare-and-delete: {@code ConcurrentMap.remove(key, value)} removes
+     * the entry only if it is still the exact record we checked, so a
+     * concurrent re-claim (a new {@code IN_PROGRESS} record) is never
+     * removed.
+     */
+    @Override
+    public boolean release(IdempotencyKey key, String notificationId) {
+        IdempotencyRecord current = cache.getIfPresent(key);
+        if (current == null
+                || current.status() != IdempotencyStatus.COMPLETE
+                || notificationId == null
+                || !notificationId.equals(current.notificationId())) {
+            return false;
+        }
+        return cache.asMap().remove(key, current);
     }
 
     /**

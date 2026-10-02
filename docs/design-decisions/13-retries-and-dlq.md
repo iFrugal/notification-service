@@ -93,6 +93,11 @@ then perturbed by ±`jitter`× of itself. Jitter is critical to avoid
 thundering-herd on shared providers when many tenants retry the same
 provider outage simultaneously.
 
+Since 1.1.2 a provider can ask for a longer wait.
+It puts the delay into `SendResult.providerMetadata` under `SendResult.RETRY_AFTER_METADATA_KEY` (`"retryAfter"`), as an ISO-8601 duration string or a whole number of seconds, typically from an HTTP `Retry-After` header.
+The executor then waits `max(delay, min(retryAfter, maxDelay))`: the hint can lengthen the wait up to `max-delay` but never shortens it, and an absent, negative or malformed hint is ignored.
+The ACS provider sets the hint on `TRANSIENT` HTTP errors that carry `Retry-After`.
+
 Implementation: a small in-process `RetryExecutor` helper rather than
 adding Resilience4j. The semantics we need are narrow (one retry loop
 on a single callable), the dependency footprint matters (we're

@@ -55,6 +55,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
     private final String findSql;
     private final String markInProgressSql;
     private final String markCompleteSql;
+    private final String releaseSql;
     private final String purgeSql;
 
     public JdbcIdempotencyStore(JdbcClient jdbc, ObjectMapper json, JdbcStoreTables tables,
@@ -92,6 +93,12 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
                 + " status = EXCLUDED.status, response = EXCLUDED.response,"
                 + " recorded_at = EXCLUDED.recorded_at, expires_at = EXCLUDED.expires_at";
 
+        // Compare-and-delete in one statement: only a COMPLETE row that still
+        // belongs to the given notification id goes; a re-claimed
+        // (IN_PROGRESS) row or another caller's row is left alone.
+        this.releaseSql = "DELETE FROM " + t + " WHERE " + keyMatch
+                + " AND notification_id = :notificationId AND status = 'COMPLETE'";
+
         this.purgeSql = "DELETE FROM " + t + " WHERE (tenant_key, caller_key, idem_key) IN ("
                 + "SELECT tenant_key, caller_key, idem_key FROM " + t
                 + " WHERE expires_at <= now() LIMIT :limit FOR UPDATE SKIP LOCKED)";
@@ -120,7 +127,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
     public void markComplete(IdempotencyKey key, NotificationResponse response) {
         String body;
         try {
-            body = json.writeValueAsString(response);
+            body = json.writeValueAsString(IdempotencyStore.storedForm(response));
         } catch (JsonProcessingException e) {
             // A programming error, not a runtime condition: same as the Redis store.
             throw new IllegalStateException("Failed to serialise NotificationResponse", e);
@@ -130,6 +137,17 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
                 .param("response", body, Types.VARCHAR)
                 .param("ttl", ttlMillis)
                 .update();
+    }
+
+    @Override
+    public boolean release(IdempotencyKey key, String notificationId) {
+        if (notificationId == null) {
+            return false;
+        }
+        int rows = keyParams(jdbc.sql(releaseSql), key)
+                .param("notificationId", notificationId, Types.VARCHAR)
+                .update();
+        return rows == 1;
     }
 
     /** Deletes every expired row, one batch of {@code purge.batch-size} at a time. */

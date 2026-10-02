@@ -2,7 +2,6 @@ package com.lazydevs.notification.redis;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.lazydevs.notification.api.idempotency.IdempotencyKey;
 import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
@@ -12,9 +11,11 @@ import com.lazydevs.notification.core.config.NotificationProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.RedisStringCommands.SetOption;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.data.redis.core.types.Expiration;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -34,6 +35,27 @@ import java.util.Optional;
 @Slf4j
 public class RedisIdempotencyStore implements IdempotencyStore {
 
+    /**
+     * Compare-and-delete for {@link #release}: deletes {@code KEYS[1]} only
+     * if the stored record is COMPLETE and belongs to {@code ARGV[1]}. A
+     * script runs atomically, so a concurrent re-claim between the read
+     * and the delete is impossible. An unparseable value is left alone.
+     */
+    static final RedisScript<Long> RELEASE_SCRIPT = RedisScript.of("""
+            local value = redis.call('GET', KEYS[1])
+            if not value then
+              return 0
+            end
+            local ok, rec = pcall(cjson.decode, value)
+            if not ok or type(rec) ~= 'table' then
+              return 0
+            end
+            if rec['status'] == 'COMPLETE' and rec['notificationId'] == ARGV[1] then
+              return redis.call('DEL', KEYS[1])
+            end
+            return 0
+            """, Long.class);
+
     private final StringRedisTemplate redis;
     private final ObjectMapper json;
     private final String keyPrefix;
@@ -42,7 +64,7 @@ public class RedisIdempotencyStore implements IdempotencyStore {
     public RedisIdempotencyStore(StringRedisTemplate redis,
                                  NotificationProperties properties) {
         this.redis = redis;
-        this.json = new ObjectMapper().registerModule(new JavaTimeModule());
+        this.json = RedisStoreJson.create();
         this.keyPrefix = properties.getRedis().getKeyPrefix();
         // Reuse the in-memory store's TTL config — same operator-facing
         // surface, just a different backing technology.
@@ -103,7 +125,8 @@ public class RedisIdempotencyStore implements IdempotencyStore {
         String notificationId = existing != null ? existing.notificationId()
                 : response.requestId();
         IdempotencyRecord rec = new IdempotencyRecord(
-                notificationId, IdempotencyStatus.COMPLETE, response, java.time.Instant.now());
+                notificationId, IdempotencyStatus.COMPLETE, IdempotencyStore.storedForm(response),
+                java.time.Instant.now());
         try {
             redis.opsForValue().set(redisKey(key),
                     json.writeValueAsString(rec),
@@ -111,6 +134,15 @@ public class RedisIdempotencyStore implements IdempotencyStore {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialise IdempotencyRecord", e);
         }
+    }
+
+    @Override
+    public boolean release(IdempotencyKey key, String notificationId) {
+        if (notificationId == null) {
+            return false;
+        }
+        Long deleted = redis.execute(RELEASE_SCRIPT, List.of(redisKey(key)), notificationId);
+        return deleted != null && deleted == 1L;
     }
 
     @Override

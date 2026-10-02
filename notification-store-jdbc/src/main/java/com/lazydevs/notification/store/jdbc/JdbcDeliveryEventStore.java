@@ -159,7 +159,8 @@ public class JdbcDeliveryEventStore implements DeliveryEventStore, JdbcPurgeable
                     rs.getString("provider_name"),
                     rs.getString("provider_message_id"),
                     rs.getString("provider_event_id"),
-                    DeliveryStatus.valueOf(rs.getString("status")),
+                    JdbcStoreSupport.enumOrDefault(DeliveryStatus.class, rs.getString("status"),
+                            DeliveryStatus.UNKNOWN),
                     rs.getString("reason"),
                     json.readValue(rs.getString("attributes"), ATTRIBUTES));
         } catch (JsonProcessingException | IllegalArgumentException e) {

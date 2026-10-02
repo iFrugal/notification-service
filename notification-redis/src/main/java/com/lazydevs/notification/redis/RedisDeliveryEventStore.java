@@ -2,7 +2,6 @@ package com.lazydevs.notification.redis;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.lazydevs.notification.api.delivery.DeliveryEvent;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.core.config.NotificationProperties;
@@ -44,7 +43,7 @@ public class RedisDeliveryEventStore implements DeliveryEventStore {
     public RedisDeliveryEventStore(StringRedisTemplate redis,
                                    NotificationProperties properties) {
         this.redis = redis;
-        this.json = new ObjectMapper().registerModule(new JavaTimeModule());
+        this.json = RedisStoreJson.create();
         String prefix = properties.getRedis().getKeyPrefix();
         this.key = prefix + ":delivery-events";
         this.maxEntries = properties.getRedis().getDeliveryEvents().getMaxEntries();

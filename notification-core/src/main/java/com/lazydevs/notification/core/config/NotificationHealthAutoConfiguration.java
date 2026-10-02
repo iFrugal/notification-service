@@ -11,6 +11,7 @@ import com.lazydevs.notification.core.health.RateLimiterHealthIndicator;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.health.autoconfigure.contributor.ConditionalOnEnabledHealthIndicator;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.context.annotation.Bean;
 
@@ -24,6 +25,13 @@ import org.springframework.context.annotation.Bean;
  * Ordered after the auto-configurations that register those beans so the
  * {@link ConditionalOnBean} checks see them.
  * Bean names are the indicator names under {@code /actuator/health}.
+ *
+ * <p>Each indicator can also be switched off with Boot's standard
+ * {@code management.health.<name>.enabled=false}, where the names are
+ * {@code dlq}, {@code delivery-events}, {@code idempotency} and
+ * {@code rate-limit} (relaxed binding also accepts {@code deliveryEvents}
+ * and {@code rateLimit}); {@code management.health.defaults.enabled=false}
+ * switches off every indicator that is not enabled explicitly (since 1.1.2).
  */
 @AutoConfiguration(after = NotificationCoreDefaultsAutoConfiguration.class,
         afterName = "com.lazydevs.notification.redis.autoconfigure.NotificationRedisAutoConfiguration")
@@ -32,6 +40,7 @@ public class NotificationHealthAutoConfiguration {
 
     @Bean("dlq")
     @ConditionalOnBean(DeadLetterStore.class)
+    @ConditionalOnEnabledHealthIndicator("dlq")
     public DeadLetterStoreHealthIndicator deadLetterStoreHealthIndicator(DeadLetterStore store,
                                                                          NotificationProperties properties) {
         return new DeadLetterStoreHealthIndicator(store, properties);
@@ -39,6 +48,7 @@ public class NotificationHealthAutoConfiguration {
 
     @Bean("deliveryEvents")
     @ConditionalOnBean(DeliveryEventStore.class)
+    @ConditionalOnEnabledHealthIndicator("delivery-events")
     public DeliveryEventStoreHealthIndicator deliveryEventStoreHealthIndicator(DeliveryEventStore store,
                                                                                NotificationProperties properties) {
         return new DeliveryEventStoreHealthIndicator(store, properties);
@@ -46,12 +56,14 @@ public class NotificationHealthAutoConfiguration {
 
     @Bean("idempotency")
     @ConditionalOnBean(IdempotencyStore.class)
+    @ConditionalOnEnabledHealthIndicator("idempotency")
     public IdempotencyStoreHealthIndicator idempotencyStoreHealthIndicator(IdempotencyStore store) {
         return new IdempotencyStoreHealthIndicator(store);
     }
 
     @Bean("rateLimit")
     @ConditionalOnBean(RateLimiter.class)
+    @ConditionalOnEnabledHealthIndicator("rate-limit")
     public RateLimiterHealthIndicator rateLimiterHealthIndicator(RateLimiter rateLimiter) {
         return new RateLimiterHealthIndicator(rateLimiter);
     }

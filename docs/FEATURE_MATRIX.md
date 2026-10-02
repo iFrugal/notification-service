@@ -693,6 +693,7 @@ spring:
 | `notification.idempotency.enabled` | `true` | Idempotency dedup |
 | `notification.idempotency.ttl` | `24h` | Key retention |
 | `notification.idempotency.max-entries` | `100000` | In-memory bound |
+| `notification.idempotency.retry-after-failure` | `true` | A retry under the same key after a `FAILED`/`REJECTED` attempt dispatches again; `false` answers it with `409` until the TTL elapses (since 1.1.2) |
 | `notification.caller-registry.enabled` | `false` | Validate `X-Service-Id` against known list |
 | `notification.caller-registry.strict` | `false` | Reject unknown callers with `403` |
 | `notification.rate-limit.enabled` | `false` | Token-bucket throttling |

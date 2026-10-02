@@ -276,7 +276,8 @@ public class JdbcDeadLetterStore implements DeadLetterStore, JdbcPurgeableStore 
                     json.readValue(rs.getString("request"), NotificationRequest.class),
                     json.readValue(rs.getString("response"), NotificationResponse.class),
                     rs.getInt("attempts"),
-                    FailureType.valueOf(rs.getString("failure_type")));
+                    JdbcStoreSupport.enumOrDefault(FailureType.class, rs.getString("failure_type"),
+                            FailureType.UNKNOWN));
         } catch (JsonProcessingException | IllegalArgumentException e) {
             log.warn("Skipping malformed dead-letter row id={}: {}", rs.getLong("id"), e.getMessage());
             return null;

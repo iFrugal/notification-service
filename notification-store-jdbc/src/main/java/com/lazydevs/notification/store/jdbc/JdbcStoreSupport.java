@@ -68,6 +68,22 @@ final class JdbcStoreSupport {
         return instant == null ? null : OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
     }
 
+    /**
+     * {@code Enum.valueOf} that maps a {@code null} or unknown name to
+     * {@code fallback}, so a row written by a newer version with a constant
+     * this version lacks still reads.
+     */
+    static <E extends Enum<E>> E enumOrDefault(Class<E> type, String name, E fallback) {
+        if (name == null) {
+            return fallback;
+        }
+        try {
+            return Enum.valueOf(type, name);
+        } catch (IllegalArgumentException e) {
+            return fallback;
+        }
+    }
+
     static Instant instant(ResultSet rs, String column) throws SQLException {
         OffsetDateTime value = rs.getObject(column, OffsetDateTime.class);
         return value == null ? null : value.toInstant();

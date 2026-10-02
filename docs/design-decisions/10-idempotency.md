@@ -193,6 +193,16 @@ semantic choice in this DD:
 This is a deliberate weakening of strict idempotency in favour of
 operational ergonomics, called out explicitly in §Consequences.
 
+#### Release on failure (1.1.2)
+
+In 1.1.0 and 1.1.1 the `FAILED`-is-fresh rule was not reachable: the failed attempt left a `COMPLETE` record, so the retry's `markInProgress` returned `false` and the caller got HTTP 409 until the TTL elapsed.
+Since 1.1.2 the SPI has `release(key, notificationId)`, a compare-and-delete that removes the `COMPLETE` record only if it still belongs to `notificationId`, and never removes an `IN_PROGRESS` record.
+The service records a `FAILED` or `REJECTED` outcome with `markComplete` as before and then calls `release` with its own notification id.
+When a retry finds a `FAILED` or `REJECTED` record (for example one written by 1.1.0 or 1.1.1), it calls `release` with that record's notification id before `markInProgress`.
+`markInProgress` stays the only atomic gate, so of several concurrent retries exactly one dispatches and the rest get 409.
+The Caffeine, JDBC and Redis stores implement `release`; a custom store that does not override the default keeps the 1.1.x behaviour.
+Set `notification.idempotency.retry-after-failure=false` to keep failed records until their TTL on purpose ("once per key, success or failure").
+
 ### Integration into `DefaultNotificationService.send`
 
 Before any provider work:
@@ -269,6 +279,7 @@ notification:
                                  # silently ignored (compatibility knob)
     ttl: P1D                     # ISO-8601 duration, default 24h
     max-entries: 100000          # Caffeine bound, ignored by Redis impl
+    retry-after-failure: true    # release FAILED/REJECTED records (1.1.2)
     store: caffeine              # caffeine | redis (redis in a later phase)
 ```
 

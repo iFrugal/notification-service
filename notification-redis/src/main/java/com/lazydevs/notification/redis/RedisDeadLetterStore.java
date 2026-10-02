@@ -2,7 +2,6 @@ package com.lazydevs.notification.redis;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.core.config.NotificationProperties;
@@ -46,7 +45,7 @@ public class RedisDeadLetterStore implements DeadLetterStore {
     public RedisDeadLetterStore(StringRedisTemplate redis,
                                 NotificationProperties properties) {
         this.redis = redis;
-        this.json = new ObjectMapper().registerModule(new JavaTimeModule());
+        this.json = RedisStoreJson.create();
         String prefix = properties.getRedis().getKeyPrefix();
         this.key = prefix + ":dlq";
         this.maxEntries = properties.getRedis().getDeadLetter().getMaxEntries();

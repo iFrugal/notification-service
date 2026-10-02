@@ -131,6 +131,14 @@ public class DefaultNotificationService implements NotificationService {
                 // FAILED / REJECTED — fall through, treat the new request as fresh.
                 log.debug("Idempotency key '{}' had a prior FAILED/REJECTED attempt; proceeding fresh.",
                         request.getIdempotencyKey());
+                // Rows written by 1.1.0 / 1.1.1 (or left behind when a release
+                // failed) still hold the key; release them so markInProgress
+                // below can win. Compare-and-delete on the failed attempt's
+                // id, so a concurrent retry that already re-claimed the key
+                // keeps its claim and we get the 409 from markInProgress.
+                if (properties.getIdempotency().isRetryAfterFailure()) {
+                    releaseQuietly(idemKey, rec.notificationId());
+                }
             }
             // About to do real work — apply the rate limit FIRST, before
             // markInProgress, so a denial doesn't leave a phantom
@@ -210,12 +218,14 @@ public class DefaultNotificationService implements NotificationService {
             } else {
                 // Keep the provider message id: a provider that identified the
                 // send before it failed (ACS operation id) needs it for reconciliation.
+                // The provider's error text can quote the recipient; it is
+                // redacted before it reaches the caller, audit, DLQ and store.
                 response = NotificationResponse.failed(
                         request,
                         provider.getProviderName(),
                         result.messageId(),
                         result.errorCode(),
-                        result.errorMessage(),
+                        PiiMasking.redact(result.errorMessage()),
                         receivedAt);
 
                 log.warn("Notification failed: requestId={}, error={}: {}",
@@ -244,7 +254,7 @@ public class DefaultNotificationService implements NotificationService {
                     request,
                     null,
                     e.getErrorCode(),
-                    e.getMessage(),
+                    PiiMasking.redact(e.getMessage()),
                     receivedAt);
 
             auditService.updateStatus(request.getRequestId(), response.status(),
@@ -264,7 +274,7 @@ public class DefaultNotificationService implements NotificationService {
                     request,
                     null,
                     "INTERNAL_ERROR",
-                    e.getMessage(),
+                    PiiMasking.redact(e.getMessage()),
                     receivedAt);
 
             auditService.updateStatus(request.getRequestId(), response.status(),
@@ -285,8 +295,41 @@ public class DefaultNotificationService implements NotificationService {
                 NotificationResponse toRecord = response != null ? response
                         : NotificationResponse.failed(request, null,
                                 "INTERNAL_ERROR", "Dispatch terminated without a response", receivedAt);
-                idempotencyStore.get().markComplete(idemKey, toRecord);
+                closeIdempotencyRecord(idemKey, request.getRequestId(), toRecord);
             }
+        }
+    }
+
+    /**
+     * Close the idempotency record claimed by {@code notificationId}. The
+     * outcome is always recorded first, which releases the
+     * {@code IN_PROGRESS} lock. A failed outcome is never replayed (DD-10
+     * "FAILED is fresh"), so when {@code retryAfterFailure} is on the
+     * record is then released and a retry under the same key can claim it
+     * again. A store that cannot release keeps the failed record, which is
+     * the 1.1.x behaviour.
+     */
+    private void closeIdempotencyRecord(IdempotencyKey idemKey, String notificationId,
+                                        NotificationResponse outcome) {
+        idempotencyStore.get().markComplete(idemKey, outcome);
+        if (!isReplayable(outcome.status()) && properties.getIdempotency().isRetryAfterFailure()) {
+            releaseQuietly(idemKey, notificationId);
+        }
+    }
+
+    /**
+     * Best-effort {@link IdempotencyStore#release}. A store error is logged
+     * and swallowed: the failed record then simply stays, and the next
+     * retry under the key tries the release again.
+     */
+    private void releaseQuietly(IdempotencyKey idemKey, String notificationId) {
+        try {
+            boolean released = idempotencyStore.get().release(idemKey, notificationId);
+            log.debug("Idempotency release after failure: notificationId={}, released={}",
+                    sanitizeForLog(notificationId), released);
+        } catch (RuntimeException e) {
+            log.warn("Idempotency release failed for notificationId={}: {}",
+                    sanitizeForLog(notificationId), e.toString());
         }
     }
 
@@ -395,7 +438,8 @@ public class DefaultNotificationService implements NotificationService {
     /**
      * Statuses that count as a successful prior outcome — replays for
      * these statuses return the cached response (HTTP 200). FAILED and
-     * REJECTED fall through to fresh dispatch per DD-10 §Semantics.
+     * REJECTED fall through to fresh dispatch per DD-10 §Semantics, and
+     * their records are released (see {@link #closeIdempotencyRecord}).
      */
     private static boolean isReplayable(NotificationStatus status) {
         return status == NotificationStatus.SENT

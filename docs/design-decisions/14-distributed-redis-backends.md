@@ -147,6 +147,7 @@ serialized `IdempotencyRecord`. The DD-10 contract:
 | `findExisting(key)` | `GET k` (returns `Optional.empty()` on nil) |
 | `markInProgress(key, requestId)` | `SET k <json> NX EX <ttl>` — atomic claim. Returns false on collision. |
 | `markComplete(key, response)` | `SET k <json> EX <ttl>` (overwrites; preserves notificationId from prior IN_PROGRESS via the JSON) |
+| `release(key, notificationId)` | Lua script: `GET k`, then `DEL k` only if the record is `COMPLETE` and belongs to `notificationId` (since 1.1.2, DD-10 "Release on failure") |
 
 `SET ... NX EX` is the standard atomic-claim idiom. TTL is set on the
 key itself, so Redis evicts naturally — no separate sweeper needed.
@@ -238,6 +239,8 @@ JSON via Jackson:
 - Human-readable when an operator runs `redis-cli GET <key>` to
   debug.
 - Schema evolution is forgiving — new fields don't break old readers.
+  Since 1.1.2 every Redis store reads through one mapper (`RedisStoreJson`) that ignores unknown fields and reads an unknown `FailureType` or `DeliveryStatus` constant as `UNKNOWN`.
+  Before 1.1.2 a field the reader did not know made the record unreadable.
 
 Costs:
 - ~3-5× larger than binary formats. Acceptable: idempotency records
