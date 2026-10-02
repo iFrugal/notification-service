@@ -39,7 +39,7 @@ public class ListenerDeliveryEventPublisher implements DeliveryEventPublisher {
     public ListenerDeliveryEventPublisher(ObjectProvider<DeliveryEventListener> listeners,
                                           Optional<NotificationMetrics> metrics) {
         this.listeners = Objects.requireNonNull(listeners, "listeners");
-        this.metrics = metrics == null ? Optional.empty() : metrics;
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
     }
 
     @Override
