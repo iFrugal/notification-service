@@ -127,7 +127,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
     public void markComplete(IdempotencyKey key, NotificationResponse response) {
         String body;
         try {
-            body = json.writeValueAsString(response);
+            body = json.writeValueAsString(IdempotencyStore.storedForm(response));
         } catch (JsonProcessingException e) {
             // A programming error, not a runtime condition: same as the Redis store.
             throw new IllegalStateException("Failed to serialise NotificationResponse", e);

@@ -84,6 +84,21 @@ class JdbcDeliveryEventStoreIT {
     }
 
     @Test
+    void rowFromANewerVersion_withAnUnknownStatus_readsAsUnknown() {
+        store.add(PostgresTestSupport.deliveryEvent("ses", "msg-new", "ev-new", DeliveryStatus.DELIVERED));
+        jdbc.sql("UPDATE " + TABLES.deliveryEvent() + " SET status = 'SOMETHING_NEW',"
+                + " attributes = '{\"messagestatus\":\"new\",\"futureField\":\"x\"}'"
+                + " WHERE provider_message_id = 'msg-new'").update();
+
+        List<DeliveryEvent> found = store.findByProviderMessageId("ses", "msg-new").orElseThrow();
+
+        assertThat(found).singleElement().satisfies(event -> {
+            assertThat(event.status()).isEqualTo(DeliveryStatus.UNKNOWN);
+            assertThat(event.attributes()).containsEntry("messagestatus", "new");
+        });
+    }
+
+    @Test
     void onEventBridgesToAdd() {
         store.onEvent(PostgresTestSupport.deliveryEvent("ses", "m-1", "ev-1", DeliveryStatus.DELIVERED));
 

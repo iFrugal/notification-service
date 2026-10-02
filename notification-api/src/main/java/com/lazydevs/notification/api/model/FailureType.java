@@ -1,5 +1,7 @@
 package com.lazydevs.notification.api.model;
 
+import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
+
 /**
  * Classification of a {@link SendResult} failure for retry decisions
  * (DD-13).
@@ -31,6 +33,11 @@ public enum FailureType {
      * treated as TRANSIENT (best-effort retry). Channel implementations
      * upgrading to DD-13 classification can keep returning UNKNOWN
      * until they're confident about which 4xxs are permanent.
+     *
+     * <p>Also the value a reader that enables
+     * {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE} uses for a
+     * constant added by a later version (since 1.1.2).
      */
+    @JsonEnumDefaultValue
     UNKNOWN
 }

@@ -54,6 +54,22 @@ class RedisDeliveryEventStoreIntegrationTest extends AbstractRedisIntegrationTes
     }
 
     @Test
+    void eventFromANewerVersion_withAnUnknownStatusAndExtraFields_stillReads() {
+        redis.opsForList().leftPush("test-delivery:delivery-events", """
+                {"timestamp":1759312800.000000000,"providerName":"ses","providerMessageId":"msg-new",\
+                "providerEventId":"evt-new","status":"SOMETHING_NEW","reason":null,"attributes":{"k":"v"},\
+                "futureField":"x"}""");
+
+        List<DeliveryEvent> events = store.snapshot().orElseThrow();
+
+        assertThat(events).singleElement().satisfies(event -> {
+            assertThat(event.status()).isEqualTo(DeliveryStatus.UNKNOWN);
+            assertThat(event.providerMessageId()).isEqualTo("msg-new");
+            assertThat(event.attributes()).containsEntry("k", "v");
+        });
+    }
+
+    @Test
     void recordedEvents_returnInMostRecentFirstOrder() {
         store.add(event("ses-1", "ses", DeliveryStatus.DELIVERED));
         store.add(event("ses-2", "ses", DeliveryStatus.BOUNCED));

@@ -164,6 +164,8 @@ Payloads are JSON in `TEXT` columns.
 
 The stores always serialise with their own module-owned Jackson `ObjectMapper`, never the application's bean.
 It registers `JavaTimeModule`, writes dates as ISO-8601 strings, and ignores unknown properties on read.
+Since 1.1.2 an unknown `FailureType` or `DeliveryStatus` constant, in a JSON payload or in the `failure_type` and `status` columns, reads as `UNKNOWN`.
+The idempotency table stores a `FAILED` or `REJECTED` response without its `errorMessage`, because such a response is never replayed.
 This keeps the stored JSON stable when the host changes its own Jackson configuration, and lets rows written by a newer library version still be read.
 
 ## Grants and row-level security

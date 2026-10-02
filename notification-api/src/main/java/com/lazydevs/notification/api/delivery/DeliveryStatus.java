@@ -1,5 +1,7 @@
 package com.lazydevs.notification.api.delivery;
 
+import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
+
 /**
  * Provider-side delivery state for a notification (DD-16).
  *
@@ -53,6 +55,11 @@ public enum DeliveryStatus {
      * Provider sent something we couldn't classify. Surface this to
      * operators in raw form so the next handler iteration can map
      * it correctly — better to log than to drop.
+     *
+     * <p>Also the value a reader that enables
+     * {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE} uses for a
+     * constant added by a later version (since 1.1.2).
      */
+    @JsonEnumDefaultValue
     UNKNOWN
 }

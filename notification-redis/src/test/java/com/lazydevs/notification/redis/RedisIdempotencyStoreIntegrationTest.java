@@ -251,6 +251,62 @@ class RedisIdempotencyStoreIntegrationTest extends AbstractRedisIntegrationTest 
         assertThat(rec.response().status()).isEqualTo(NotificationStatus.SENT);
     }
 
+    /** A COMPLETE record exactly as 1.1.0 wrote it (numeric timestamps). */
+    private static final String RECORD_1_1_0 = """
+            {"notificationId":"req-old","status":"COMPLETE","response":{"requestId":"req-old",\
+            "correlationId":"corr-old","tenantId":"acme","callerId":"billing-svc","channel":"EMAIL",\
+            "provider":"smtp","status":"SENT","providerMessageId":"msg-old","errorCode":null,\
+            "errorMessage":null,"receivedAt":1759312800.123456789,"processedAt":1759312800.223456789,\
+            "sentAt":1759312800.223456789},"recordedAt":1759312800.323456789}""";
+
+    @Test
+    void recordWrittenBy110_stillReads() {
+        IdempotencyKey k = key("acme", "k-1-1-0");
+        redis.opsForValue().set(store.redisKey(k), RECORD_1_1_0);
+
+        IdempotencyRecord rec = store.findExisting(k).orElseThrow();
+
+        assertThat(rec.notificationId()).isEqualTo("req-old");
+        assertThat(rec.status()).isEqualTo(IdempotencyStatus.COMPLETE);
+        assertThat(rec.response().status()).isEqualTo(NotificationStatus.SENT);
+        assertThat(rec.response().providerMessageId()).isEqualTo("msg-old");
+        assertThat(rec.recordedAt()).isEqualTo(Instant.ofEpochSecond(1759312800L, 323456789L));
+    }
+
+    @Test
+    void recordWithFieldsFromANewerVersion_stillReads() {
+        IdempotencyKey k = key("acme", "k-newer");
+        String newer = RECORD_1_1_0
+                .replace("\"status\":\"SENT\",", "\"status\":\"SENT\",\"futureResponseField\":{\"a\":1},")
+                .replace("\"recordedAt\":", "\"futureRecordField\":\"x\",\"recordedAt\":");
+        redis.opsForValue().set(store.redisKey(k), newer);
+
+        IdempotencyRecord rec = store.findExisting(k).orElseThrow();
+
+        assertThat(rec.response().status()).isEqualTo(NotificationStatus.SENT);
+        assertThat(rec.notificationId()).isEqualTo("req-old");
+    }
+
+    @Test
+    void markComplete_ofAFailedResponse_storesNoErrorText() {
+        IdempotencyKey k = key("acme", "k-failed-text");
+        store.markInProgress(k, "req-1");
+
+        store.markComplete(k, new NotificationResponse(
+                "req-1", "corr-1", "acme", "billing-svc", Channel.EMAIL,
+                "smtp", NotificationStatus.FAILED, null,
+                "SMTP_550", "mailbox john.doe@example.com unavailable",
+                Instant.now(), Instant.now(), null, null));
+
+        assertThat(redis.opsForValue().get(store.redisKey(k)))
+                .doesNotContain("john.doe")
+                .contains("\"errorMessage\":null")
+                .contains("SMTP_550");
+        NotificationResponse stored = store.findExisting(k).orElseThrow().response();
+        assertThat(stored.errorMessage()).isNull();
+        assertThat(stored.errorCode()).isEqualTo("SMTP_550");
+    }
+
     @Test
     void redisKey_includesPrefix() {
         // Reflective-free check that the prefix is honoured — useful when

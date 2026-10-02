@@ -69,6 +69,22 @@ class RetryExecutorTest {
     }
 
     @Test
+    void thrownException_becomesAnUnclassifiedFailure_withARedactedMessage() {
+        properties.getRetry().setMaxAttempts(1);
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty());
+
+        RetryExecutor.Outcome outcome = executor.execute(() -> {
+            throw new IllegalStateException("connection reset sending to john.doe@example.com");
+        });
+
+        assertThat(outcome.result().success()).isFalse();
+        assertThat(outcome.result().errorCode()).isEqualTo("IllegalStateException");
+        assertThat(outcome.result().failureType()).isEqualTo(FailureType.UNKNOWN);
+        assertThat(outcome.result().errorMessage())
+                .isEqualTo("connection reset sending to j***@example.com");
+    }
+
+    @Test
     void permanentFailure_doesNotRetry() {
         RetryExecutor executor = new RetryExecutor(properties, Optional.empty());
         AtomicInteger calls = new AtomicInteger();

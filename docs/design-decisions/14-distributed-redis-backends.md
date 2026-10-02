@@ -239,6 +239,8 @@ JSON via Jackson:
 - Human-readable when an operator runs `redis-cli GET <key>` to
   debug.
 - Schema evolution is forgiving — new fields don't break old readers.
+  Since 1.1.2 every Redis store reads through one mapper (`RedisStoreJson`) that ignores unknown fields and reads an unknown `FailureType` or `DeliveryStatus` constant as `UNKNOWN`.
+  Before 1.1.2 a field the reader did not know made the record unreadable.
 
 Costs:
 - ~3-5× larger than binary formats. Acceptable: idempotency records

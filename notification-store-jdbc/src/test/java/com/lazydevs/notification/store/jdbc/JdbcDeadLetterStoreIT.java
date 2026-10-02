@@ -1,6 +1,8 @@
 package com.lazydevs.notification.store.jdbc;
 
 import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
+import com.lazydevs.notification.api.model.FailureType;
+import com.lazydevs.notification.api.model.PushRecipient;
 import com.zaxxer.hikari.HikariDataSource;
 import lazydevs.persistence.connection.multitenant.TenantContext;
 import org.junit.jupiter.api.AfterAll;
@@ -70,6 +72,28 @@ class JdbcDeadLetterStoreIT {
 
     private static List<String> requestIds(List<DeadLetterEntry> entries) {
         return entries.stream().map(e -> e.request().getRequestId()).toList();
+    }
+
+    @Test
+    void rowFromANewerVersion_withAnUnknownFailureTypeAndExtraFields_stillReads() {
+        // What a 1.2 node could write: a FailureType constant 1.1.x lacks and
+        // fields 1.1.x does not know, including inside a push recipient.
+        store.add(PostgresTestSupport.deadLetter("acme", "req-push"));
+        jdbc.sql("UPDATE " + TABLES.deadLetter() + " SET failure_type = 'SOMETHING_NEW', request = :request"
+                        + " WHERE request_id = 'req-push'")
+                .param("request", """
+                        {"requestId":"req-push","tenantId":"acme","callerId":"billing","notificationType":"TEST",\
+                        "channel":"PUSH","recipient":{"type":"PUSH","id":null,"deviceToken":"device-token-1",\
+                        "title":"Hi","body":"There","data":{},"futureRecipientField":"x"},\
+                        "futureRequestField":true}""")
+                .update();
+
+        DeadLetterEntry entry = store.findByRequestId("acme", "req-push").orElseThrow();
+
+        assertThat(entry.failureType()).isEqualTo(FailureType.UNKNOWN);
+        assertThat(entry.request().getRecipient()).isInstanceOfSatisfying(PushRecipient.class,
+                push -> assertThat(push.deviceToken()).isEqualTo("device-token-1"));
+        assertThat(store.snapshot().orElseThrow()).hasSize(1);
     }
 
     @Test

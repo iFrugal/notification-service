@@ -1,5 +1,6 @@
 package com.lazydevs.notification.api.idempotency;
 
+import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.model.NotificationResponse;
 
 import java.util.Optional;
@@ -89,6 +90,42 @@ public interface IdempotencyStore {
      */
     default boolean release(IdempotencyKey key, String notificationId) {
         return false;
+    }
+
+    /**
+     * The form of {@code response} a store persists in
+     * {@link #markComplete(IdempotencyKey, NotificationResponse)}.
+     *
+     * <p>A {@code FAILED} or {@code REJECTED} response is never replayed
+     * (DD-10 "FAILED is fresh"), so its {@code errorMessage}, which is free
+     * text from a provider and can carry recipient data, is dropped from the
+     * stored copy. Every other response is returned unchanged.
+     *
+     * @param response the terminal response, may be {@code null}
+     * @return the response to persist
+     * @since 1.1.2
+     */
+    static NotificationResponse storedForm(NotificationResponse response) {
+        if (response == null || response.errorMessage() == null
+                || (response.status() != NotificationStatus.FAILED
+                        && response.status() != NotificationStatus.REJECTED)) {
+            return response;
+        }
+        return new NotificationResponse(
+                response.requestId(),
+                response.correlationId(),
+                response.tenantId(),
+                response.callerId(),
+                response.channel(),
+                response.provider(),
+                response.status(),
+                response.providerMessageId(),
+                response.errorCode(),
+                null,
+                response.receivedAt(),
+                response.processedAt(),
+                response.sentAt(),
+                response.idempotentReplay());
     }
 
     /**

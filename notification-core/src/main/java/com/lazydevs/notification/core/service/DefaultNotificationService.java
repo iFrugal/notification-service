@@ -218,12 +218,14 @@ public class DefaultNotificationService implements NotificationService {
             } else {
                 // Keep the provider message id: a provider that identified the
                 // send before it failed (ACS operation id) needs it for reconciliation.
+                // The provider's error text can quote the recipient; it is
+                // redacted before it reaches the caller, audit, DLQ and store.
                 response = NotificationResponse.failed(
                         request,
                         provider.getProviderName(),
                         result.messageId(),
                         result.errorCode(),
-                        result.errorMessage(),
+                        PiiMasking.redact(result.errorMessage()),
                         receivedAt);
 
                 log.warn("Notification failed: requestId={}, error={}: {}",
@@ -252,7 +254,7 @@ public class DefaultNotificationService implements NotificationService {
                     request,
                     null,
                     e.getErrorCode(),
-                    e.getMessage(),
+                    PiiMasking.redact(e.getMessage()),
                     receivedAt);
 
             auditService.updateStatus(request.getRequestId(), response.status(),
@@ -272,7 +274,7 @@ public class DefaultNotificationService implements NotificationService {
                     request,
                     null,
                     "INTERNAL_ERROR",
-                    e.getMessage(),
+                    PiiMasking.redact(e.getMessage()),
                     receivedAt);
 
             auditService.updateStatus(request.getRequestId(), response.status(),

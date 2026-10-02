@@ -140,6 +140,20 @@ class CaffeineIdempotencyStoreTest {
     }
 
     @Test
+    void markComplete_ofAFailedResponse_storesItWithoutTheErrorMessage() {
+        CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(properties);
+        IdempotencyKey key = key("acme", "failed-text");
+        store.markInProgress(key, "req-1");
+
+        store.markComplete(key, failedResponse("req-1"));
+
+        NotificationResponse stored = store.findExisting(key).orElseThrow().response();
+        assertThat(stored.errorMessage()).isNull();
+        assertThat(stored.errorCode()).isEqualTo("SMTP_421");
+        assertThat(stored.status()).isEqualTo(NotificationStatus.FAILED);
+    }
+
+    @Test
     void release_afterAFailedOutcome_letsARetryClaimTheKey() {
         CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(properties);
         IdempotencyKey key = key("acme", "failed-1");

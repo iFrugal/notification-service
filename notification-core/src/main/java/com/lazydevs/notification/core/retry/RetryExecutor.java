@@ -111,8 +111,9 @@ public class RetryExecutor {
     }
 
     /**
-     * Invoke the action; if it throws, wrap the exception as a
-     * {@link SendResult#failure(Exception)} so the retry loop sees a
+     * Invoke the action; if it throws, wrap the exception as an
+     * unclassified {@link SendResult} failure (exception class name as
+     * the error code, redacted message) so the retry loop sees a
      * uniform shape. Without this, a provider that throws (rather
      * than returning a failed result) would skip the retry path.
      */
@@ -127,7 +128,9 @@ public class RetryExecutor {
         } catch (RuntimeException e) {
             log.debug("Attempt {} threw {}: {}", attempt, e.getClass().getSimpleName(),
                     PiiMasking.redact(e.getMessage()));
-            return SendResult.failure(e);
+            // Same shape as SendResult.failure(e), but the message can quote
+            // the recipient, so it is redacted before it travels further.
+            return SendResult.failure(e.getClass().getSimpleName(), PiiMasking.redact(e.getMessage()));
         }
     }
 

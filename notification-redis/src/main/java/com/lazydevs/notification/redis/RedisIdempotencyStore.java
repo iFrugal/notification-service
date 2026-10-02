@@ -2,7 +2,6 @@ package com.lazydevs.notification.redis;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.lazydevs.notification.api.idempotency.IdempotencyKey;
 import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
@@ -65,7 +64,7 @@ public class RedisIdempotencyStore implements IdempotencyStore {
     public RedisIdempotencyStore(StringRedisTemplate redis,
                                  NotificationProperties properties) {
         this.redis = redis;
-        this.json = new ObjectMapper().registerModule(new JavaTimeModule());
+        this.json = RedisStoreJson.create();
         this.keyPrefix = properties.getRedis().getKeyPrefix();
         // Reuse the in-memory store's TTL config — same operator-facing
         // surface, just a different backing technology.
@@ -126,7 +125,8 @@ public class RedisIdempotencyStore implements IdempotencyStore {
         String notificationId = existing != null ? existing.notificationId()
                 : response.requestId();
         IdempotencyRecord rec = new IdempotencyRecord(
-                notificationId, IdempotencyStatus.COMPLETE, response, java.time.Instant.now());
+                notificationId, IdempotencyStatus.COMPLETE, IdempotencyStore.storedForm(response),
+                java.time.Instant.now());
         try {
             redis.opsForValue().set(redisKey(key),
                     json.writeValueAsString(rec),

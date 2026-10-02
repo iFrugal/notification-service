@@ -78,7 +78,7 @@ public class CaffeineIdempotencyStore implements IdempotencyStore {
     public void markComplete(IdempotencyKey key, NotificationResponse response) {
         cache.put(key, new IdempotencyRecord(
                 resolveNotificationId(key, response),
-                IdempotencyStatus.COMPLETE, response, Instant.now()));
+                IdempotencyStatus.COMPLETE, IdempotencyStore.storedForm(response), Instant.now()));
     }
 
     /**

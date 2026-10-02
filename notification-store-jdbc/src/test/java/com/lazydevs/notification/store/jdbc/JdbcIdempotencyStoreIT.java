@@ -87,6 +87,25 @@ class JdbcIdempotencyStoreIT {
                 "SMTP_421", "try again later");
     }
 
+    private static void insertCompleteRow(String idemKey, String notificationId, String responseJson) {
+        jdbc.sql("INSERT INTO " + TABLES.idempotency()
+                        + " (tenant_id, caller_id, idem_key, notification_id, status, response,"
+                        + " created_at, recorded_at, expires_at)"
+                        + " VALUES ('acme', 'billing', :key, :id, 'COMPLETE', :response,"
+                        + " now(), now(), now() + INTERVAL '1 hour')")
+                .param("key", idemKey)
+                .param("id", notificationId)
+                .param("response", responseJson)
+                .update();
+    }
+
+    private static String rawResponse(String idemKey) {
+        return jdbc.sql("SELECT response FROM " + TABLES.idempotency() + " WHERE idem_key = :key")
+                .param("key", idemKey)
+                .query(String.class)
+                .single();
+    }
+
     private static NotificationRequest keyedRequest(String requestId, String idempotencyKey) {
         NotificationRequest request = PostgresTestSupport.request("acme", requestId);
         request.setIdempotencyKey(idempotencyKey);
@@ -355,6 +374,58 @@ class JdbcIdempotencyStoreIT {
         assertThat(store.findExisting(key).orElseThrow())
                 .extracting(IdempotencyRecord::notificationId, r -> r.response().status())
                 .containsExactly("req-new", NotificationStatus.SENT);
+    }
+
+    /** A FAILED response exactly as 1.1.0 stored it, provider text included. */
+    private static final String FAILED_RESPONSE_1_1_0 = """
+            {"requestId":"req-old","correlationId":null,"tenantId":"acme","callerId":"billing",\
+            "channel":"EMAIL","provider":"smtp","status":"FAILED","providerMessageId":null,\
+            "errorCode":"SMTP_550","errorMessage":"mailbox john.doe@example.com unavailable",\
+            "receivedAt":"2026-10-01T10:00:00.123456Z","processedAt":"2026-10-01T10:00:00.223456Z",\
+            "sentAt":null}""";
+
+    @Test
+    void rowWrittenBy110_stillReads_andTheServiceRetriesIt() {
+        insertCompleteRow("order-1-1-0", "req-old", FAILED_RESPONSE_1_1_0);
+        IdempotencyKey key = new IdempotencyKey("acme", "billing", "order-1-1-0");
+
+        IdempotencyRecord legacy = store.findExisting(key).orElseThrow();
+        assertThat(legacy.notificationId()).isEqualTo("req-old");
+        assertThat(legacy.response().status()).isEqualTo(NotificationStatus.FAILED);
+        assertThat(legacy.response().receivedAt()).isEqualTo(java.time.Instant.parse("2026-10-01T10:00:00.123456Z"));
+
+        NotificationProvider provider = mock(NotificationProvider.class);
+        when(provider.getProviderName()).thenReturn("smtp");
+        when(provider.send(any(), any())).thenReturn(SendResult.success("msg-new"));
+        NotificationResponse retry = serviceOver(provider).send(keyedRequest("req-new", "order-1-1-0"));
+
+        assertThat(retry.status()).isEqualTo(NotificationStatus.SENT);
+        assertThat(rawResponse("order-1-1-0")).doesNotContain("john.doe");
+    }
+
+    @Test
+    void rowWithFieldsFromANewerVersion_stillReads() {
+        insertCompleteRow("order-newer", "req-old", FAILED_RESPONSE_1_1_0
+                .replace("\"sentAt\":null", "\"sentAt\":null,\"futureField\":{\"a\":1}"));
+
+        IdempotencyRecord rec = store.findExisting(new IdempotencyKey("acme", "billing", "order-newer")).orElseThrow();
+
+        assertThat(rec.response().errorCode()).isEqualTo("SMTP_550");
+    }
+
+    @Test
+    void markCompleteOfAFailedResponseStoresNoErrorText() {
+        IdempotencyKey key = new IdempotencyKey("acme", "billing", "k-failed-text");
+        store.markInProgress(key, "req-1");
+
+        store.markComplete(key, NotificationResponse.failure(PostgresTestSupport.request("acme", "req-1"), "smtp",
+                "SMTP_550", "mailbox john.doe@example.com unavailable"));
+
+        assertThat(rawResponse("k-failed-text"))
+                .doesNotContain("john.doe")
+                .contains("\"errorMessage\":null")
+                .contains("SMTP_550");
+        assertThat(store.findExisting(key).orElseThrow().response().errorMessage()).isNull();
     }
 
     @Test
