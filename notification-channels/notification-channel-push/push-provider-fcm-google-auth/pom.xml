@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.ifrugal</groupId>
+        <artifactId>notification-channel-push</artifactId>
+        <version>1.1.3-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>push-provider-fcm-google-auth</artifactId>
+    <packaging>jar</packaging>
+
+    <name>${project.artifactId}</name>
+    <description>Push Provider - FCM credentials from the Google auth library: Application Default Credentials and workload identity federation</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>push-provider-fcm</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.google.auth</groupId>
+            <artifactId>google-auth-library-oauth2-http</artifactId>
+        </dependency>
+
+        <!-- Testing: Logback ListAppender, ApplicationContextRunner -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- The ADC tests find their stub service-account key through
+                 GOOGLE_APPLICATION_CREDENTIALS, as an application would. The key is
+                 written by the tests under target/, one file per Surefire fork (the
+                 parent runs forks in parallel, each with its own stub key);
+                 fcm.test.adc-file names the same file, so a test never overwrites
+                 credentials it did not create. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <environmentVariables>
+                        <GOOGLE_APPLICATION_CREDENTIALS>${project.build.directory}/adc-${surefire.forkNumber}/application_default_credentials.json</GOOGLE_APPLICATION_CREDENTIALS>
+                    </environmentVariables>
+                    <systemPropertyVariables>
+                        <fcm.test.adc-file>${project.build.directory}/adc-${surefire.forkNumber}/application_default_credentials.json</fcm.test.adc-file>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

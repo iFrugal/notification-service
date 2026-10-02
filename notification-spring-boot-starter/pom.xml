@@ -78,6 +78,11 @@
             <artifactId>sms-provider-twilio</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>push-provider-fcm</artifactId>
+            <scope>test</scope>
+        </dependency>
 
         <!-- Optional in notification-rest; the REST auto-configuration
              tests need it to prove OpenApiConfig registers. -->

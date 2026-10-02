@@ -6,6 +6,7 @@ import com.lazydevs.notification.api.exception.ProviderNotFoundException;
 import com.lazydevs.notification.channel.email.acs.AcsEmailProvider;
 import com.lazydevs.notification.channel.email.ses.SesEmailProvider;
 import com.lazydevs.notification.channel.email.smtp.SmtpEmailProvider;
+import com.lazydevs.notification.channel.push.fcm.FcmPushProvider;
 import com.lazydevs.notification.channel.sms.twilio.TwilioSmsProvider;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import org.junit.jupiter.api.Test;
@@ -33,12 +34,13 @@ class ProviderAutoConfigurationTest {
     private final WebApplicationContextRunner runner = StarterContextRunners.starterRunner();
 
     @Test
-    void smtp_ses_acs_twilio_registeredAsPrototypesUnderBuiltInNames() {
+    void smtp_ses_acs_twilio_fcm_registeredAsPrototypesUnderBuiltInNames() {
         Map<String, Class<?>> expected = Map.of(
                 "smtpEmailProvider", SmtpEmailProvider.class,
                 "sesEmailProvider", SesEmailProvider.class,
                 "acsEmailProvider", AcsEmailProvider.class,
-                "twilioSmsProvider", TwilioSmsProvider.class);
+                "twilioSmsProvider", TwilioSmsProvider.class,
+                "fcmPushProvider", FcmPushProvider.class);
         runner.run(context -> {
             assertThat(context).hasNotFailed();
             expected.forEach((beanName, type) -> {
@@ -46,6 +48,7 @@ class ProviderAutoConfigurationTest {
                         .as("%s is a prototype", beanName).isTrue();
                 assertThat(context.getBean(beanName)).isInstanceOf(type);
             });
+            assertThat(context.getBean("fcmPushProvider")).isNotSameAs(context.getBean("fcmPushProvider"));
         });
     }
 

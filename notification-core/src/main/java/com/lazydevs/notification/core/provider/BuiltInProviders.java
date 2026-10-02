@@ -60,7 +60,7 @@ public final class BuiltInProviders {
                     "com.lazydevs.notification.channel.whatsapp.meta.MetaWhatsAppProvider",
                     "whatsapp-provider-meta", false),
             new Entry(Channel.PUSH, "fcm",
-                    "com.lazydevs.notification.channel.push.fcm.FcmPushProvider", "push-provider-fcm", false),
+                    "com.lazydevs.notification.channel.push.fcm.FcmPushProvider", "push-provider-fcm", true),
             new Entry(Channel.PUSH, "apns",
                     "com.lazydevs.notification.channel.push.apns.ApnsPushProvider", "push-provider-apns", false));
 
