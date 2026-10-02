@@ -25,6 +25,7 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
   - [Planned providers](#planned-providers)
 - [Quick Start](#quick-start)
   - [As a Spring Boot Starter](#as-a-spring-boot-starter)
+  - [Using the BOM](#using-the-bom)
   - [As a Standalone Service](#as-a-standalone-service)
 - [Configuration](#configuration)
   - [Tenant Configuration](#tenant-configuration)
@@ -129,6 +130,7 @@ WhatsApp and Push have no built-in provider yet; see [Planned providers](#planne
 | `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `email-provider-acs`, `sms-provider-twilio` |
 | `notification-spring-boot-starter` | The dependency to add in library mode; every module brings its own auto-configuration |
 | `notification-server` | Standalone application with Dockerfile |
+| `notification-service-bom` | Bill of materials: import it once and leave the versions off every other notification-service dependency (since 1.2.0) |
 
 ### Planned providers
 
@@ -226,6 +228,39 @@ public void sendWelcomeEmail(String email, String name) {
 The REST API, its tenant and caller filters and its exception handler are off by default since 1.1.0.
 Set `notification.rest.enabled=true` and add `notification-rest` to expose them; the filters then apply only under `notification.rest.base-path` (default `/api/v1`), and webhooks additionally need `notification.webhooks.enabled=true`.
 The standalone server sets `notification.rest.enabled=true` in its own `application.yml`.
+
+### Using the BOM
+
+Since 1.2.0, `notification-service-bom` manages the version of every notification-service library jar.
+Import it once and leave the versions off the individual dependencies, so the starter, the providers and the stores can never drift apart:
+
+```xml
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>com.github.ifrugal</groupId>
+            <artifactId>notification-service-bom</artifactId>
+            <version>1.2.0</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+
+<dependencies>
+    <dependency>
+        <groupId>com.github.ifrugal</groupId>
+        <artifactId>notification-spring-boot-starter</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>com.github.ifrugal</groupId>
+        <artifactId>email-provider-smtp</artifactId>
+    </dependency>
+</dependencies>
+```
+
+The BOM manages only this project's artifacts.
+It does not pin Spring Boot, Jackson or any provider SDK, so your own Spring Boot version and BOMs stay in charge of those.
 
 ### As a Standalone Service
 

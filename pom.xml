@@ -25,6 +25,8 @@
     </scm>
 
     <modules>
+        <!-- Parented by ifrugal-parent, not this pom; built here so releases version it too. -->
+        <module>notification-service-bom</module>
         <module>notification-api</module>
         <module>notification-core</module>
         <module>notification-channels</module>

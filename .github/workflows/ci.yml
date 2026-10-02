@@ -41,6 +41,11 @@ jobs:
       - name: Validate Maven reactor
         run: ./mvnw -B -ntp validate
 
+      - name: Check the BOM lists every published jar
+        # Fails when a jar module of the reactor is missing from
+        # notification-service-bom, or the BOM drifts from the reactor version.
+        run: scripts/check-bom.sh
+
       - name: Build & verify
         # -Dgpg.skip=true: maven-gpg-plugin is inherited from ifrugal-parent
         # and binds to verify. CI has no GPG key configured; signing is a
