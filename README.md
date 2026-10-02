@@ -412,7 +412,19 @@ notification:
     base-path: classpath:/templates/
     cache-enabled: true
     cache-ttl-seconds: 3600
+    cache-max-size: 1000
+    auto-escape: false
 ```
+
+| Property | Default | Meaning |
+|---|---|---|
+| `base-path` | `classpath:/templates/` | Root of the template tree; see [Templates](#templates) for the resolution order. |
+| `cache-enabled` | `true` | Cache loaded template sources. |
+| `cache-ttl-seconds` | `3600` | Seconds before a cached template is read again; `0` or negative never expires. Read since 1.1.2 (it was bound but ignored before). |
+| `cache-max-size` | `1000` | Maximum cached templates across all tenants; `0` or negative is unbounded. Since 1.1.2. |
+| `auto-escape` | `false` | HTML-escape interpolated values in HTML email bodies (see [Auto-escaping](#auto-escaping)). Since 1.1.2. |
+
+`POST /api/v1/admin/cache/templates/clear` still clears the cache for one tenant (`?tenantId=acme`) or for all tenants.
 
 ---
 
@@ -1139,9 +1151,67 @@ templates/
 │       └── WELCOME.ftl         # Overrides default for tenant-a
 ```
 
-**Resolution order:**
-1. `templates/{tenantId}/{channel}/{notificationType}.ftl`
-2. `templates/default/{channel}/{notificationType}.ftl`
+**Resolution order** (paths are relative to `notification.template.base-path`, `classpath:/templates/` by default):
+1. `{base-path}{tenantId}/{channel}/{notificationType}.ftl`
+2. `{base-path}default/{channel}/{notificationType}.ftl`
+
+Up to 1.1.1 the engine inserted an extra `templates/` segment and looked for `classpath:/templates/templates/...`, so the shipped default templates were never found.
+Since 1.1.2 it resolves the paths above.
+For one release it still falls back to the old location (`{base-path}templates/{tenantId}/...`, then `{base-path}templates/default/...`) after the new one, and logs a WARN naming the file.
+If you see that warning, move the file or append `templates/` to your `base-path`; the fallback is removed in 1.2.
+
+**Security:** since 1.1.2, tenant ids, channel names and template ids must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` and contain no `..`, `/` or `\`, so a request cannot read files outside `base-path`; an invalid id fails as template-not-found (HTTP 404) without echoing the value.
+
+**Email sections:**
+
+```text
+[SUBJECT]Order #${orderId} confirmed[/SUBJECT]
+[BODY]
+<p>Hi ${customerName}, ...</p>
+[/BODY]
+[TEXT]
+Hi ${customerName}, ...
+[/TEXT]
+```
+
+- `[SUBJECT]` is the subject line; without `[BODY]`, everything after `[/SUBJECT]` is the body, and without any markers the whole output is the body.
+- The body is sent as HTML when it contains `<html`, `<body`, `<div`, `<p>`, `<table`, `<br`, `<span`, `<a ` or `<!DOCTYPE` (case-insensitive), and as plain text otherwise.
+- `[TEXT]` (optional, since 1.1.2) is a plain-text alternative: when present, the body is sent as the HTML part and the `[TEXT]` section as the text part of a multipart message.
+  Without it nothing changes; deriving a text part automatically is planned for a later release.
+- Only markers written in the template delimit sections.
+  Since 1.1.2 a marker that arrives in template data (for example a name of `Bob[BODY]...[/BODY]`) is printed as text; before, it could replace the body or cut the subject short.
+
+**Helpers** available in every template:
+
+| Helper | Notes |
+|---|---|
+| `formatDate(value, pattern[, zone[, locale]])` | `value` may be any `java.time` value, `java.util.Date`, epoch milliseconds or an ISO-8601 string (date-time, instant or date); anything else is printed unchanged. Zone defaults to the JVM zone, locale to the JVM locale. |
+| `formatDateTime(value, pattern[, zone[, locale]])` | Same values as `formatDate`. Zone defaults to `UTC`. |
+| `formatCurrency(amount, currencyCode[, locale])` | Locale defaults to `en-US`. |
+| `truncate(text, maxLength)` | Ends with `...` within the limit; a limit of 3 or less cuts without the ellipsis. |
+| `capitalize(text)`, `escapeHtml(text)`, `urlEncode(text)` | A null value prints as an empty string. |
+| `defaultValue(value, fallback)` | `fallback` when `value` is null or blank. |
+
+`zone` is a zone id such as `Europe/Berlin` and `locale` a BCP-47 tag such as `de-DE`; pass `''` for the zone to set only the locale.
+Values that carry their own offset (an `OffsetDateTime`, or a string such as `2026-10-02T09:15:00+05:30`) keep it unless you pass a zone.
+A date-only value used with a pattern that needs a time is printed unchanged rather than failing the render.
+
+#### Auto-escaping
+
+With `notification.template.auto-escape: true`, an email body whose template source is HTML is rendered in FreeMarker's HTML output format, so every `${...}` in it is HTML-escaped.
+`escapeHtml(...)` then returns HTML markup, so existing calls are not escaped twice, and `${trustedHtml?no_esc}` prints trusted markup as is.
+The subject and the `[TEXT]` section are never escaped.
+With the flag on, whether the body is HTML is decided from the template source, so data cannot turn a plain-text body into HTML.
+A body with a `[TEXT]` section is the HTML part and is always escaped.
+The engine wraps the body section of the template source in `<#outputformat "HTML">`, so a FreeMarker directive that opens inside the body and closes outside it (or the reverse) is a template error with the flag on.
+String built-ins cannot be chained directly after `escapeHtml(...)` with the flag on (for example `escapeHtml(x)?upper_case`), because it returns markup rather than a string.
+
+#### Known limitations
+
+- `formatDate` defaults to the JVM zone and `formatDateTime` to UTC, and only `formatCurrency` defaults to a fixed locale (`en-US`); the defaults are kept for compatibility and will be unified in 1.2.
+- The persistence-utils `TemplateEngine` that renders templates injects `file`, `eval` and `js` helpers into every template model; `file` reads any path the server process can read, so treat template authoring as a trusted, code-level capability.
+  They will be removed when the engine owns its FreeMarker configuration in 1.2.
+- `<#include>` and `<#import>` resolve against persistence-utils' own loaders (`classpath:/templates/` and `./templates`), not relative to the including template or to `base-path`, because templates are rendered from their source text.
 
 **Example template (`templates/default/email/ORDER_CONFIRMATION.ftl`):**
 

@@ -168,9 +168,27 @@ public class NotificationProperties {
 
     @Data
     public static class TemplateProperties {
+        /**
+         * Root of the template tree; templates resolve at
+         * {@code <base-path><tenant>/<channel>/<id>.ftl}, then under {@code default/}.
+         */
         private String basePath = "classpath:/templates/";
         private boolean cacheEnabled = true;
+        /**
+         * Seconds a loaded template stays cached before it is read again. 0 or negative
+         * keeps it until it is evicted or the cache is cleared.
+         */
         private int cacheTtlSeconds = 3600;
+        /**
+         * Maximum number of templates cached across all tenants. 0 or negative is unbounded.
+         */
+        private long cacheMaxSize = 1000;
+        /**
+         * Render HTML email bodies in FreeMarker's HTML output format, so interpolated values
+         * are HTML-escaped. {@code escapeHtml()} results are not escaped twice and
+         * {@code ?no_esc} prints trusted markup as is.
+         */
+        private boolean autoEscape = false;
     }
 
     /**
