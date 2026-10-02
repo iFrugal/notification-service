@@ -277,6 +277,7 @@ Templates resolve relative to `notification.template.base-path` as `{base-path}{
 Up to 1.1.1 the engine prefixed an extra `templates/` segment, so with the default base path it looked under `classpath:/templates/templates/` and the shipped defaults were never found.
 For one release each lookup falls back to the old location after the new one (tenant new, tenant old, default new, default old), so a tenant override keeps precedence over the default whichever layout it uses.
 A file found only at the old location logs one WARN naming the file; the fallback is removed in 1.2.
+Before any path or cache key is built, the tenant id, channel and template id must each match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` and contain no `..`, `/` or `\`; otherwise the lookup fails with `TemplateNotFoundException` naming the field but not the value (logged as a masked 8-character prefix), and the resource loader is never called.
 
 ### Section markers
 

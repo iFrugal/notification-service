@@ -1160,6 +1160,8 @@ Since 1.1.2 it resolves the paths above.
 For one release it still falls back to the old location (`{base-path}templates/{tenantId}/...`, then `{base-path}templates/default/...`) after the new one, and logs a WARN naming the file.
 If you see that warning, move the file or append `templates/` to your `base-path`; the fallback is removed in 1.2.
 
+**Security:** since 1.1.2, tenant ids, channel names and template ids must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` and contain no `..`, `/` or `\`, so a request cannot read files outside `base-path`; an invalid id fails as template-not-found (HTTP 404) without echoing the value.
+
 **Email sections:**
 
 ```text

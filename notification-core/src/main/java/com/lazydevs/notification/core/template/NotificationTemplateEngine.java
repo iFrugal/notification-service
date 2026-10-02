@@ -37,6 +37,7 @@ import java.time.temporal.ChronoField;
 import java.time.temporal.TemporalAccessor;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -58,6 +59,15 @@ public class NotificationTemplateEngine {
      * Still tried after the correct location for one release; remove in 1.2.
      */
     private static final String LEGACY_SEGMENT = "templates/";
+
+    /**
+     * Allowed tenant, channel and template ids. They become path segments under the base
+     * path, so anything that could leave it (separators, "..") is rejected up front.
+     */
+    private static final Pattern SAFE_PATH_SEGMENT = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$");
+
+    /** Characters of a rejected id that are logged; the rest is masked. */
+    private static final int LOGGED_ID_PREFIX = 8;
 
     /** Lower-case fragments whose presence marks an email body as HTML. */
     private static final List<String> HTML_MARKERS = List.of(
@@ -251,6 +261,11 @@ public class NotificationTemplateEngine {
      * 4. {basePath}templates/default/{channel}/{templateId}.ftl (pre-1.1.2 location, logs a WARN)
      */
     private String resolveTemplate(String tenantId, Channel channel, String templateId) {
+        // Validate before any path or cache key is built from the ids
+        requireSafeSegment("tenantId", tenantId);
+        requireSafeSegment("channel", channel.name().toLowerCase());
+        requireSafeSegment("templateId", templateId);
+
         String cacheKey = channel.name().toLowerCase() + "/" + templateId;
 
         // Check cache; a TemplateNotFoundException from the loader is not cached
@@ -263,15 +278,11 @@ public class NotificationTemplateEngine {
 
     private String loadTemplateOrThrow(String tenantId, Channel channel, String templateId) {
         // Try tenant-specific template
-        String tenantPath = String.format("%s/%s/%s.ftl",
-                tenantId, channel.name().toLowerCase(), templateId);
-        String content = loadTemplateWithLegacyFallback(tenantPath);
+        String content = loadTemplateWithLegacyFallback(tenantId, channel.name().toLowerCase(), templateId);
 
         // Fallback to default
         if (content == null) {
-            String defaultPath = String.format("%s/%s/%s.ftl",
-                    DEFAULT_TENANT_DIR, channel.name().toLowerCase(), templateId);
-            content = loadTemplateWithLegacyFallback(defaultPath);
+            content = loadTemplateWithLegacyFallback(DEFAULT_TENANT_DIR, channel.name().toLowerCase(), templateId);
         }
 
         if (content == null) {
@@ -282,11 +293,17 @@ public class NotificationTemplateEngine {
     }
 
     /**
-     * Load {@code path} relative to the base path. If it is missing, try the location
-     * 1.1.1 and earlier used by mistake ({@code <basePath>templates/<path>}) so custom
-     * layouts that relied on it keep working for one release, and warn once per file.
+     * Load {@code <tenantDir>/<channelDir>/<templateId>.ftl} relative to the base path. If it
+     * is missing, try the location 1.1.1 and earlier used by mistake
+     * ({@code <basePath>templates/<path>}) so custom layouts that relied on it keep working
+     * for one release, and warn once per file. Both paths are built from validated segments.
      */
-    private String loadTemplateWithLegacyFallback(String path) {
+    private String loadTemplateWithLegacyFallback(String tenantDir, String channelDir, String templateId) {
+        requireSafeSegment("tenantId", tenantDir);
+        requireSafeSegment("channel", channelDir);
+        requireSafeSegment("templateId", templateId);
+        String path = tenantDir + "/" + channelDir + "/" + templateId + ".ftl";
+
         String content = loadTemplate(path);
         if (content == null) {
             String legacyPath = LEGACY_SEGMENT + path;
@@ -300,6 +317,39 @@ public class NotificationTemplateEngine {
             }
         }
         return content;
+    }
+
+    /**
+     * Reject an id that is not a safe single path segment.
+     * The exception names the field but not the value, which may be attacker-controlled;
+     * the log shows only a masked prefix of it.
+     */
+    private static void requireSafeSegment(String field, String value) {
+        if (value != null
+                && SAFE_PATH_SEGMENT.matcher(value).matches()
+                && !value.contains("..")
+                && !value.contains("/")
+                && !value.contains("\\")) {
+            return;
+        }
+        log.warn("Rejected template lookup: {} '{}' is not a valid template path segment", field, mask(value));
+        throw new TemplateNotFoundException("Template not found: invalid " + field
+                + "; it must be 1-128 letters, digits, '.', '_' or '-', start with a letter or digit, "
+                + "and not contain two consecutive dots");
+    }
+
+    /**
+     * First {@value #LOGGED_ID_PREFIX} characters of {@code value}, non-printable ones replaced,
+     * followed by "..." when anything was cut.
+     */
+    static String mask(String value) {
+        if (value == null) {
+            return "null";
+        }
+        String prefix = value.length() > LOGGED_ID_PREFIX ? value.substring(0, LOGGED_ID_PREFIX) : value;
+        StringBuilder masked = new StringBuilder(prefix.length() + 3);
+        prefix.chars().forEach(c -> masked.append(c < 0x20 || c == 0x7f ? '?' : (char) c));
+        return value.length() > LOGGED_ID_PREFIX ? masked.append("...").toString() : masked.toString();
     }
 
     /**
