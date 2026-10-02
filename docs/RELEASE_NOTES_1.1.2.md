@@ -39,7 +39,23 @@
 
 ## Templates
 
-<!-- Template engine changes for 1.1.2 are added by the template branch. -->
+- **The shipped default templates load again.**
+  The engine resolved `classpath:/templates/templates/...` because it prefixed the base path to a path that already began with `templates/`, so the standalone server's default templates were never found.
+  Paths are now `<base-path><tenant>/<channel>/<id>.ftl`; the old doubled layout still resolves for one release with a warning naming the file.
+- **Interpolated data can no longer hijack a message.**
+  `[SUBJECT]` and `[BODY]` markers are replaced by per-render random tokens in the template source before rendering, so a recipient name containing `[BODY]...[/BODY]` is plain text instead of replacing the body.
+- **Tenant and template ids are validated before any resource path is built.**
+  Ids must match `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` and may not contain `..`; anything else is a 404 whose message does not echo the value.
+  Deployments whose tenant or template ids used spaces, `@`, `:`, non-ASCII characters or a leading `.`, `_` or `-` must rename them.
+- Null values render as empty strings in `escapeHtml`, `truncate`, `capitalize` and `urlEncode`, and `truncate` no longer throws for lengths under three.
+- `formatDate` and `formatDateTime` accept every `java.time` type, `java.util.Date`, epoch millis and ISO-8601 strings; unparseable input is printed unchanged.
+  Optional trailing zone and locale arguments were added; defaults are unchanged.
+- The template cache honours `notification.template.cache-ttl-seconds` (default one hour; it was bound but never read) and the new `notification.template.cache-max-size` (default 1000).
+- Opt-in HTML auto-escaping: `notification.template.auto-escape=true` escapes interpolated values in HTML bodies; `escapeHtml()` returns markup so existing calls are not escaped twice, and `?no_esc` passes trusted fragments.
+  The default is `false`, so output is unchanged unless you opt in.
+- An optional `[TEXT]...[/TEXT]` section gives an HTML template a plain-text part (multipart); HTML detection now also recognises `<table`, `<br`, `<span`, `<a ` and `<!DOCTYPE`.
+- Known limitation: `<#include>` does not resolve relative to the base path, and the shared FreeMarker configuration from persistence-utils injects `file`, `eval` and `js` helpers into every model.
+  Both are addressed when the engine owns its FreeMarker configuration in 1.2.
 
 ## Compatibility
 
@@ -51,6 +67,7 @@ Additive public API:
 - `@JsonEnumDefaultValue` on `FailureType.UNKNOWN` and `DeliveryStatus.UNKNOWN`.
 - The property `notification.idempotency.retry-after-failure` (default `true`).
 - `SendResult.RETRY_AFTER_METADATA_KEY` and `SendResult.retryAfter()`.
+- The properties `notification.template.auto-escape` (default `false`) and `notification.template.cache-max-size` (default `1000`); `notification.template.cache-ttl-seconds` is now honoured.
 
 - The `management.health.<name>.enabled` switches for the four notification health indicators; they default to `management.health.defaults.enabled`, which is `true` unless you set it.
 
@@ -60,6 +77,7 @@ Behaviour changes to be aware of:
 - `errorMessage` of a failed response is redacted on every path, and an idempotency record of a failed response has no `errorMessage`.
 - A retry after a provider error with a `Retry-After` hint can wait longer than before, up to `notification.retry.max-delay`.
 - If you set `management.health.defaults.enabled=false`, the notification indicators are now switched off with the rest; enable the ones you want explicitly.
+- Templates are re-read after the cache TTL (default one hour) instead of being cached forever, and unsafe tenant or template ids are rejected with 404.
 
 Rolling upgrade from 1.1.0 or 1.1.1:
 
