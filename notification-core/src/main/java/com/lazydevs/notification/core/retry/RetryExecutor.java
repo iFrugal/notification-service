@@ -25,7 +25,12 @@ import java.util.function.Supplier;
  * <pre>
  *   delay(n) = min(initialDelay × multiplier^(n-1), maxDelay)
  *   actual   = delay × (1 + uniform(-jitter, +jitter))
+ *   wait     = max(actual, min(retryAfter, maxDelay))
  * </pre>
+ *
+ * <p>{@code retryAfter} is the provider's own hint
+ * ({@link SendResult#retryAfter()}, for example from an HTTP
+ * {@code Retry-After} header); without one, {@code wait = actual}.
  *
  * <p>The bean is registered only when
  * {@code notification.retry.enabled=true} — keeps the executor inert in
@@ -96,7 +101,7 @@ public class RetryExecutor {
             // Don't sleep after the last attempt — we're about to return
             // the failure regardless.
             if (attempt < rule.getMaxAttempts()) {
-                Duration backoff = computeBackoff(rule, attempt);
+                Duration backoff = delayBeforeRetry(rule, attempt, result);
                 log.debug("Attempt {} failed; sleeping {}ms before retry", attempt, backoff.toMillis());
                 if (!sleepUninterruptibly(backoff)) {
                     // Thread interrupted — surface the most recent failure
@@ -150,6 +155,26 @@ public class RetryExecutor {
         double capped = Math.min(base, rule.getMaxDelay().toMillis());
         double jittered = applyJitter(capped, rule.getJitter());
         return Duration.ofMillis(Math.max(0L, (long) jittered));
+    }
+
+    /**
+     * Delay before the next attempt: the computed backoff, raised to the
+     * provider's {@link SendResult#retryAfter() Retry-After hint} when the
+     * hint is longer. The hint is capped at {@code maxDelay} so a provider
+     * cannot stall the caller beyond the configured bound; the computed
+     * backoff itself is unchanged. Visible for testing.
+     */
+    Duration delayBeforeRetry(RetryRule rule, int attempt, SendResult failure) {
+        Duration computed = computeBackoff(rule, attempt);
+        Duration hint = failure.retryAfter().orElse(null);
+        if (hint == null || hint.compareTo(computed) <= 0) {
+            return computed;
+        }
+        Duration capped = hint.compareTo(rule.getMaxDelay()) > 0 ? rule.getMaxDelay() : hint;
+        Duration delay = capped.compareTo(computed) > 0 ? capped : computed;
+        log.debug("Provider asked to retry after {}; waiting {}ms instead of the computed {}ms (max-delay {}ms)",
+                hint, delay.toMillis(), computed.toMillis(), rule.getMaxDelay().toMillis());
+        return delay;
     }
 
     /**

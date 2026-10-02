@@ -1,6 +1,8 @@
 package com.lazydevs.notification.channel.email.acs;
 
 import com.azure.core.exception.HttpResponseException;
+import com.azure.core.http.HttpHeaderName;
+import com.azure.core.http.HttpHeaders;
 import com.azure.core.http.HttpResponse;
 import com.lazydevs.notification.api.model.FailureType;
 import org.junit.jupiter.api.Test;
@@ -9,6 +11,8 @@ import reactor.core.Exceptions;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.http.HttpTimeoutException;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,6 +28,36 @@ class AcsFailureClassifierTest {
         HttpResponse response = mock(HttpResponse.class);
         when(response.getStatusCode()).thenReturn(status);
         return new HttpResponseException("HTTP " + status, response);
+    }
+
+    private static HttpResponseException httpError(int status, String retryAfter) {
+        HttpResponse response = mock(HttpResponse.class);
+        when(response.getStatusCode()).thenReturn(status);
+        when(response.getHeaders()).thenReturn(new HttpHeaders().set(HttpHeaderName.RETRY_AFTER, retryAfter));
+        return new HttpResponseException("HTTP " + status, response);
+    }
+
+    @Test
+    void retryAfter_readsSecondsAndHttpDates() {
+        Instant now = Instant.parse("2026-10-02T10:00:00Z");
+
+        assertThat(AcsEmailProvider.retryAfter(httpError(429, "30"), now)).contains(Duration.ofSeconds(30));
+        assertThat(AcsEmailProvider.retryAfter(httpError(429, " 5 "), now)).contains(Duration.ofSeconds(5));
+        assertThat(AcsEmailProvider.retryAfter(httpError(503, "Fri, 02 Oct 2026 10:01:30 GMT"), now))
+                .contains(Duration.ofSeconds(90));
+    }
+
+    @Test
+    void retryAfter_ignoresMalformedPastAndZeroValues_andNonHttpErrors() {
+        Instant now = Instant.parse("2026-10-02T10:00:00Z");
+
+        assertThat(AcsEmailProvider.retryAfter(httpError(429, "soon"), now)).isEmpty();
+        assertThat(AcsEmailProvider.retryAfter(httpError(429, "-5"), now)).isEmpty();
+        assertThat(AcsEmailProvider.retryAfter(httpError(429, "0"), now)).isEmpty();
+        assertThat(AcsEmailProvider.retryAfter(httpError(429, "99999999999999999999"), now)).isEmpty();
+        assertThat(AcsEmailProvider.retryAfter(httpError(503, "Fri, 02 Oct 2026 09:59:00 GMT"), now)).isEmpty();
+        assertThat(AcsEmailProvider.retryAfter(httpError(429), now)).isEmpty();
+        assertThat(AcsEmailProvider.retryAfter(new TimeoutException("slow"), now)).isEmpty();
     }
 
     @Test

@@ -5,6 +5,8 @@ import com.azure.communication.email.models.EmailAttachment;
 import com.azure.communication.email.models.EmailMessage;
 import com.azure.core.credential.TokenCredential;
 import com.azure.core.exception.HttpResponseException;
+import com.azure.core.http.HttpHeaderName;
+import com.azure.core.http.HttpHeaders;
 import com.azure.core.http.HttpResponse;
 import com.azure.core.util.BinaryData;
 import com.lazydevs.notification.api.channel.EmailProvider;
@@ -24,12 +26,17 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.DateTimeException;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 
@@ -203,9 +210,16 @@ public class AcsEmailProvider implements EmailProvider {
             log.error("Failed to send email via ACS: to={}, operationId={}, error={}",
                     PiiMasking.maskEmail(recipient.to()), operationId, PiiMasking.redact(e.getMessage()));
             // The id travels with the failure so the attempt can be reconciled; a retry
-            // derives the same id again.
-            return SendResult.failure(e.getClass().getSimpleName(), PiiMasking.redact(describe(e)),
-                    classifyAcs(e), operationId.toString());
+            // derives the same id again. A transient HTTP error may say how long to
+            // wait; the retry executor honours that hint.
+            FailureType type = classifyAcs(e);
+            Map<String, Object> metadata = type == FailureType.TRANSIENT
+                    ? retryAfter(e, Instant.now())
+                            .<Map<String, Object>>map(d -> Map.of(SendResult.RETRY_AFTER_METADATA_KEY, d.toString()))
+                            .orElse(null)
+                    : null;
+            return new SendResult(false, operationId.toString(), e.getClass().getSimpleName(),
+                    PiiMasking.redact(describe(e)), type, Instant.now(), metadata);
         }
     }
 
@@ -441,8 +455,8 @@ public class AcsEmailProvider implements EmailProvider {
      *   <li>Anything else - {@link FailureType#UNKNOWN}, defer to the retry predicate.</li>
      * </ul>
      *
-     * <p>ACS sends {@code Retry-After} with 429; {@code SendResult} has no field
-     * for a delay hint, so the retry executor's own backoff applies.
+     * <p>ACS sends {@code Retry-After} with 429; {@link #retryAfter} reads it
+     * so the retry executor can wait at least that long.
      */
     static FailureType classifyAcs(Throwable t) {
         if (t instanceof HttpResponseException hre && hre.getResponse() != null) {
@@ -457,6 +471,36 @@ public class AcsEmailProvider implements EmailProvider {
             return FailureType.TRANSIENT;
         }
         return FailureType.UNKNOWN;
+    }
+
+    /**
+     * The {@code Retry-After} delay of an ACS HTTP error, measured from
+     * {@code now}. The header is either a number of seconds or an HTTP-date
+     * (RFC 9110, section 10.2.3).
+     *
+     * @return the delay; empty when {@code t} is not an HTTP error, the
+     *         header is absent or malformed, or the delay is not positive
+     */
+    static Optional<Duration> retryAfter(Throwable t, Instant now) {
+        if (!(t instanceof HttpResponseException hre) || hre.getResponse() == null) {
+            return Optional.empty();
+        }
+        HttpHeaders headers = hre.getResponse().getHeaders();
+        String value = headers == null ? null : headers.getValue(HttpHeaderName.RETRY_AFTER);
+        if (!hasText(value)) {
+            return Optional.empty();
+        }
+        String trimmed = value.trim();
+        Duration delay;
+        try {
+            delay = trimmed.chars().allMatch(c -> c >= '0' && c <= '9')
+                    ? Duration.ofSeconds(Long.parseLong(trimmed))
+                    : Duration.between(now, ZonedDateTime.parse(trimmed, DateTimeFormatter.RFC_1123_DATE_TIME)
+                            .toInstant());
+        } catch (NumberFormatException | DateTimeException e) {
+            return Optional.empty();
+        }
+        return delay.isNegative() || delay.isZero() ? Optional.empty() : Optional.of(delay);
     }
 
     /**

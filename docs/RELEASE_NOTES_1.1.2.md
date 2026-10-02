@@ -13,6 +13,9 @@
 - **Health indicators can be switched off one by one.**
   `management.health.dlq.enabled`, `management.health.delivery-events.enabled`, `management.health.idempotency.enabled` and `management.health.rate-limit.enabled` now work, as does `management.health.defaults.enabled`.
 
+- **The retry executor honours a provider's Retry-After.**
+  A provider can pass a delay hint in `SendResult.providerMetadata`; the ACS provider does so for throttling and other transient HTTP errors.
+
 ## Fixes
 
 - **Retry under the same idempotency key after a failure (DD-10).**
@@ -30,6 +33,10 @@
   The Redis stores failed to read a record with a field they did not know, so a record written by a newer version read as absent.
   The Redis and JDBC stores now ignore unknown fields and read an unknown `FailureType` or `DeliveryStatus` constant as `UNKNOWN`.
 
+- **Retry-After from ACS was ignored.**
+  ACS answers throttling with HTTP 429 and a `Retry-After` header, but the `RetryExecutor` retried on its own backoff, which could be shorter and run into the throttle again.
+  The ACS provider now copies the header, as seconds or an HTTP-date, into `SendResult.providerMetadata` under `SendResult.RETRY_AFTER_METADATA_KEY`, and the executor waits at least that long, capped at `notification.retry.max-delay`.
+
 ## Templates
 
 <!-- Template engine changes for 1.1.2 are added by the template branch. -->
@@ -43,6 +50,7 @@ Additive public API:
 - `IdempotencyStore.storedForm(NotificationResponse)`, a static helper for store implementations.
 - `@JsonEnumDefaultValue` on `FailureType.UNKNOWN` and `DeliveryStatus.UNKNOWN`.
 - The property `notification.idempotency.retry-after-failure` (default `true`).
+- `SendResult.RETRY_AFTER_METADATA_KEY` and `SendResult.retryAfter()`.
 
 - The `management.health.<name>.enabled` switches for the four notification health indicators; they default to `management.health.defaults.enabled`, which is `true` unless you set it.
 
@@ -50,6 +58,7 @@ Behaviour changes to be aware of:
 
 - A retry under the key of a failed attempt is dispatched instead of rejected with HTTP 409.
 - `errorMessage` of a failed response is redacted on every path, and an idempotency record of a failed response has no `errorMessage`.
+- A retry after a provider error with a `Retry-After` hint can wait longer than before, up to `notification.retry.max-delay`.
 - If you set `management.health.defaults.enabled=false`, the notification indicators are now switched off with the rest; enable the ones you want explicitly.
 
 Rolling upgrade from 1.1.0 or 1.1.1:

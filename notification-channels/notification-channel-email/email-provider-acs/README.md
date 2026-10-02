@@ -157,7 +157,7 @@ The `SendResult` and the `FAILED` response still carry the operation id, so the 
 The Azure SDK's built-in retry policy retries 408, 429 and 5xx three times by default.
 The provider sets the policy to `sdk-retries` (default 0) so that retries are not multiplied across two layers.
 ACS sends `Retry-After` with 429.
-`SendResult` has no field for a delay hint, so the `RetryExecutor` backoff applies.
+Since 1.1.2 the provider copies it (seconds or an HTTP-date) into `SendResult.providerMetadata` under `SendResult.RETRY_AFTER_METADATA_KEY` on a `TRANSIENT` failure, and the `RetryExecutor` waits at least that long before the next attempt, up to `notification.retry.max-delay`.
 
 ## Message mapping
 

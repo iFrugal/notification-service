@@ -4,6 +4,8 @@ import com.azure.communication.email.models.EmailAddress;
 import com.azure.communication.email.models.EmailAttachment;
 import com.azure.communication.email.models.EmailMessage;
 import com.azure.core.exception.HttpResponseException;
+import com.azure.core.http.HttpHeaderName;
+import com.azure.core.http.HttpHeaders;
 import com.azure.core.http.HttpResponse;
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.channel.RenderedContent;
@@ -244,6 +246,61 @@ class AcsEmailProviderTest {
         assertThat(result.success()).isFalse();
         assertThat(result.errorCode()).isEqualTo("HttpResponseException");
         assertThat(result.failureType()).isEqualTo(FailureType.TRANSIENT);
+    }
+
+    @Test
+    void throttledWithRetryAfterSeconds_putsTheHintInProviderMetadata() {
+        HttpResponseException throttled = httpError(429, "7");
+        when(gateway.send(any(), any())).thenThrow(throttled);
+
+        SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
+
+        assertThat(result.failureType()).isEqualTo(FailureType.TRANSIENT);
+        assertThat(result.providerMetadata()).containsEntry(SendResult.RETRY_AFTER_METADATA_KEY, "PT7S");
+        assertThat(result.retryAfter()).contains(Duration.ofSeconds(7));
+        assertThat(result.messageId()).isNotBlank();
+    }
+
+    @Test
+    void unavailableWithRetryAfterHttpDate_putsTheRemainingDelayInProviderMetadata() {
+        String inTwoMinutes = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME
+                .format(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC).plusSeconds(120));
+        HttpResponseException unavailable = httpError(503, inTwoMinutes);
+        when(gateway.send(any(), any())).thenThrow(unavailable);
+
+        SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
+
+        assertThat(result.failureType()).isEqualTo(FailureType.TRANSIENT);
+        assertThat(result.retryAfter()).hasValueSatisfying(d ->
+                assertThat(d).isBetween(Duration.ofSeconds(100), Duration.ofSeconds(120)));
+    }
+
+    @Test
+    void retryAfterIsIgnored_onPermanentErrors_andWhenAbsentOrMalformed() {
+        HttpResponseException badRequest = httpError(400, "7");
+        HttpResponseException withoutHeader = httpError(429, null);
+        HttpResponseException malformed = httpError(429, "soon");
+        when(gateway.send(any(), any()))
+                .thenThrow(badRequest)
+                .thenThrow(withoutHeader)
+                .thenThrow(malformed);
+
+        for (int i = 0; i < 3; i++) {
+            SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
+            assertThat(result.providerMetadata()).as("attempt %d", i).isNull();
+            assertThat(result.retryAfter()).isEmpty();
+        }
+    }
+
+    private static HttpResponseException httpError(int status, String retryAfter) {
+        HttpResponse response = mock(HttpResponse.class);
+        when(response.getStatusCode()).thenReturn(status);
+        HttpHeaders headers = new HttpHeaders();
+        if (retryAfter != null) {
+            headers.set(HttpHeaderName.RETRY_AFTER, retryAfter);
+        }
+        when(response.getHeaders()).thenReturn(headers);
+        return new HttpResponseException("HTTP " + status, response);
     }
 
     @Test

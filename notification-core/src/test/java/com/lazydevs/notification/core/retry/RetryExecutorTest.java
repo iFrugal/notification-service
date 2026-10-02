@@ -9,6 +9,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -82,6 +84,62 @@ class RetryExecutorTest {
         assertThat(outcome.result().failureType()).isEqualTo(FailureType.UNKNOWN);
         assertThat(outcome.result().errorMessage())
                 .isEqualTo("connection reset sending to j***@example.com");
+    }
+
+    @Test
+    void retryAfterHint_longerThanTheBackoff_isHonoured() {
+        properties.getRetry().setMaxDelay(Duration.ofSeconds(1));
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty());
+        NotificationProperties.RetryRule rule = properties.getRetry().ruleFor(null);
+
+        assertThat(executor.delayBeforeRetry(rule, 1, throttled("PT0.2S"))).isEqualTo(Duration.ofMillis(200));
+        assertThat(executor.delayBeforeRetry(rule, 1, throttled(2))).isEqualTo(Duration.ofSeconds(1));
+    }
+
+    @Test
+    void retryAfterHint_isCappedAtMaxDelay() {
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty());
+        NotificationProperties.RetryRule rule = properties.getRetry().ruleFor(null);
+
+        // max-delay is 10ms in setUp(); the provider asks for an hour.
+        assertThat(executor.delayBeforeRetry(rule, 1, throttled("PT1H"))).isEqualTo(Duration.ofMillis(10));
+    }
+
+    @Test
+    void retryAfterHint_shorterThanTheBackoff_absentOrMalformed_leavesTheBackoffAlone() {
+        properties.getRetry().setInitialDelay(Duration.ofMillis(8));
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty());
+        NotificationProperties.RetryRule rule = properties.getRetry().ruleFor(null);
+        Duration computed = executor.computeBackoff(rule, 1);
+
+        assertThat(computed).isEqualTo(Duration.ofMillis(8));
+        assertThat(executor.delayBeforeRetry(rule, 1, throttled("PT0.001S"))).isEqualTo(computed);
+        assertThat(executor.delayBeforeRetry(rule, 1, SendResult.failure("E", "m", FailureType.TRANSIENT)))
+                .isEqualTo(computed);
+        assertThat(executor.delayBeforeRetry(rule, 1, throttled("in a while"))).isEqualTo(computed);
+        assertThat(executor.delayBeforeRetry(rule, 1, throttled("-3"))).isEqualTo(computed);
+    }
+
+    @Test
+    void retryAfterHint_delaysTheNextAttempt() {
+        properties.getRetry().setMaxDelay(Duration.ofSeconds(2));
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty());
+        AtomicInteger calls = new AtomicInteger();
+        long start = System.nanoTime();
+
+        RetryExecutor.Outcome outcome = executor.execute(() -> calls.incrementAndGet() == 1
+                ? throttled("PT0.15S")
+                : SendResult.success("msg-after-wait"));
+
+        Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
+        assertThat(outcome.result().success()).isTrue();
+        assertThat(outcome.attempts()).isEqualTo(2);
+        assertThat(elapsed).isGreaterThanOrEqualTo(Duration.ofMillis(150));
+    }
+
+    private static SendResult throttled(Object retryAfter) {
+        return new SendResult(false, null, "THROTTLED", "slow down", FailureType.TRANSIENT, Instant.now(),
+                Map.of(SendResult.RETRY_AFTER_METADATA_KEY, retryAfter));
     }
 
     @Test
