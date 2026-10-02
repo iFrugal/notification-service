@@ -17,6 +17,7 @@
 
     <modules>
         <module>push-provider-fcm</module>
+        <module>push-provider-fcm-google-auth</module>
     </modules>
 
 </project>
