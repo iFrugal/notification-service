@@ -228,6 +228,8 @@ final class FcmMultiTokenSender {
                 try {
                     outcomes.add(futures.get(i).get());
                 } catch (InterruptedException e) {
+                    // Restore the flag now; the rest of the batch is then reported without waiting.
+                    Thread.currentThread().interrupt();
                     interrupted = true;
                     outcomes.add(new Outcome(hash, null, FcmFailure.of(FailureType.AMBIGUOUS, CODE_INTERRUPTED,
                             "interrupted before the result of this token was known")));
@@ -237,9 +239,6 @@ final class FcmMultiTokenSender {
                             "the send task failed: " + e.getCause().getClass().getSimpleName())));
                 }
             }
-        }
-        if (interrupted) {
-            Thread.currentThread().interrupt();
         }
         return outcomes;
     }

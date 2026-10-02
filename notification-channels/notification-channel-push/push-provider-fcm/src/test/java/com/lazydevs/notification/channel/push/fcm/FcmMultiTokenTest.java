@@ -44,6 +44,25 @@ class FcmMultiTokenTest {
     }
 
     @Test
+    void interruptedWhileWaiting_keepsTheInterruptFlag_andReportsTheBatchAsAmbiguous() {
+        FcmPushProvider provider = configured(stub, Map.of());
+
+        Thread.currentThread().interrupt();
+        SendResult result;
+        boolean stillInterrupted;
+        try {
+            result = provider.send(request(tokens(TOKEN, TOKEN_2)), null);
+        } finally {
+            stillInterrupted = Thread.interrupted();
+        }
+
+        assertThat(stillInterrupted).isTrue();
+        assertThat(result.success()).isFalse();
+        assertThat(result.failureType()).isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(result.errorCode()).isEqualTo("FCM_INTERRUPTED");
+    }
+
+    @Test
     void mixedBatch_underPolicyAll_isAmbiguous_withPerTokenResults_andOneEvent() {
         RecordingPublisher publisher = new RecordingPublisher();
         FcmPushProvider provider = configured(stub, Map.of());
