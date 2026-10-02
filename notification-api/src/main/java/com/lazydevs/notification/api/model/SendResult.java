@@ -3,6 +3,8 @@ package com.lazydevs.notification.api.model;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -38,10 +40,14 @@ public record SendResult(
      * <p>The value is an ISO-8601 duration string such as {@code "PT30S"}, or
      * a whole number of seconds: an integer, or a string of digits such as
      * {@code "30"}. A provider that receives an HTTP-date converts it to a
-     * duration first. The retry executor waits at least this long before the
-     * next attempt, but never longer than its configured {@code max-delay}.
+     * duration first, for example with
+     * {@link FailureTypes#parseRetryAfter(String, java.time.Clock)}. The retry
+     * executor waits at least this long before the next attempt. When the hint
+     * is longer than its configured {@code max-retry-after} (by default
+     * {@code max-delay}) it stops retrying and surfaces the failure instead.
      *
      * @see #retryAfter()
+     * @see #withRetryAfter(Duration)
      * @since 1.1.2
      */
     public static final String RETRY_AFTER_METADATA_KEY = "retryAfter";
@@ -84,6 +90,30 @@ public record SendResult(
         } catch (NumberFormatException | DateTimeParseException e) {
             return null;
         }
+    }
+
+    /**
+     * A copy of this result carrying {@code retryAfter} as the provider's
+     * retry delay hint under {@link #RETRY_AFTER_METADATA_KEY}, stored as an
+     * ISO-8601 string so it survives serialization. Other metadata entries are
+     * kept.
+     *
+     * @param retryAfter the delay; {@code null} or negative removes the hint
+     * @return the copy; this result is not changed
+     * @since 1.2.0
+     */
+    public SendResult withRetryAfter(Duration retryAfter) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        if (providerMetadata != null) {
+            metadata.putAll(providerMetadata);
+        }
+        if (retryAfter == null || retryAfter.isNegative()) {
+            metadata.remove(RETRY_AFTER_METADATA_KEY);
+        } else {
+            metadata.put(RETRY_AFTER_METADATA_KEY, retryAfter.toString());
+        }
+        return new SendResult(success, messageId, errorCode, errorMessage, failureType, timestamp,
+                metadata.isEmpty() ? null : Collections.unmodifiableMap(metadata));
     }
 
     /**
@@ -145,5 +175,21 @@ public record SendResult(
         return new SendResult(false, messageId, errorCode, errorMessage,
                 failureType == null ? FailureType.UNKNOWN : failureType,
                 Instant.now(), null);
+    }
+
+    /**
+     * Create a classified failure that keeps the provider message id and
+     * carries provider metadata, such as a retry delay hint under
+     * {@link #RETRY_AFTER_METADATA_KEY}.
+     *
+     * @param messageId provider message id, may be {@code null}
+     * @param metadata  provider metadata, may be {@code null}
+     * @since 1.2.0
+     */
+    public static SendResult failure(String errorCode, String errorMessage, FailureType failureType,
+                                     String messageId, Map<String, Object> metadata) {
+        return new SendResult(false, messageId, errorCode, errorMessage,
+                failureType == null ? FailureType.UNKNOWN : failureType,
+                Instant.now(), metadata);
     }
 }

@@ -6,6 +6,8 @@ import com.lazydevs.notification.api.channel.EmailProvider;
 import com.lazydevs.notification.api.channel.SmsProvider;
 import com.lazydevs.notification.api.channel.WhatsAppProvider;
 import com.lazydevs.notification.api.channel.PushProvider;
+import com.lazydevs.notification.api.delivery.DeliveryEventEmitter;
+import com.lazydevs.notification.api.delivery.DeliveryEventPublisher;
 import com.lazydevs.notification.api.exception.ChannelDisabledException;
 import com.lazydevs.notification.api.exception.ProviderNotFoundException;
 import com.lazydevs.notification.api.exception.ProviderRequiredException;
@@ -30,6 +32,7 @@ public class ProviderRegistry {
 
     private final NotificationProperties properties;
     private final ProviderResolver resolver;
+    private final DeliveryEventPublisher deliveryEventPublisher;
 
     /**
      * Cache: tenantId -> channel -> providerName -> provider instance
@@ -48,8 +51,23 @@ public class ProviderRegistry {
      * name, and {@link ProviderResolver} finds it.
      */
     public ProviderRegistry(NotificationProperties properties, ProviderResolver resolver) {
+        this(properties, resolver, DeliveryEventPublisher.NO_OP);
+    }
+
+    /**
+     * @param deliveryEventPublisher given to every provider that implements
+     *                               {@link DeliveryEventEmitter}, before it is
+     *                               configured (DD-25); {@code null} means
+     *                               {@link DeliveryEventPublisher#NO_OP}
+     * @since 1.2.0
+     */
+    public ProviderRegistry(NotificationProperties properties, ProviderResolver resolver,
+                            DeliveryEventPublisher deliveryEventPublisher) {
         this.properties = properties;
         this.resolver = resolver;
+        this.deliveryEventPublisher = deliveryEventPublisher == null
+                ? DeliveryEventPublisher.NO_OP
+                : deliveryEventPublisher;
     }
 
     /**
@@ -144,6 +162,12 @@ public class ProviderRegistry {
         Class<? extends NotificationProvider> providerInterface = getProviderInterface(channel);
         NotificationProvider provider = resolver.resolve(
                 tenantId, providerName, channel, config, providerInterface);
+
+        // Every resolution path (bean name, class name, built-in name) ends
+        // here, so each emitting provider gets the publisher before configure().
+        if (provider instanceof DeliveryEventEmitter emitter) {
+            emitter.setDeliveryEventPublisher(deliveryEventPublisher);
+        }
 
         // Configure with merged properties (channel config + provider config)
         Map<String, Object> mergedConfig = mergeConfig(tenantId, channel, config);

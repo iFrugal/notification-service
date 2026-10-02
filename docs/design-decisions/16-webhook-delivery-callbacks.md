@@ -129,6 +129,14 @@ configured. It logs at INFO and is good enough for "wire it up,
 prove the signature path, and then plug in your real listener" as a
 deployment ramp.
 
+### Provider-originated events (since 1.2.0)
+
+Webhooks are no longer the only source of delivery events.
+A provider that learns a delivery outcome from the send response itself, such as a push service reporting an unregistered device token, publishes a `DeliveryEvent` through the `DeliveryEventPublisher` it receives as a `DeliveryEventEmitter`.
+The default publisher hands the event to the same `DeliveryEventListener` beans this DD introduced, including a `DeliveryEventStore`, on the sending thread.
+An invalid target is published as `BOUNCED` with reason `INVALID_TARGET`; no new `DeliveryStatus` constant is added.
+See [DD-25](./25-ambiguous-failures-retry-after-provider-events.md).
+
 ### Configuration
 
 ```yaml
@@ -181,7 +189,9 @@ we're not in the business of being clever about it.
 - **FCM delivery receipts.** FCM does not offer per-message webhook
   callbacks. The `notification.webhooks.fcm.*` namespace is reserved
   but not implemented; the README calls this out so operators don't
-  expect it.
+  expect it. Since 1.2.0 the outcomes FCM does report in the send
+  response (an unregistered or invalid token) arrive as
+  provider-originated events instead (DD-25).
 - **Replay of historical events.** Providers send events once; we
   don't go re-fetch missed callbacks. If a callback is dropped
   (signature mismatch, downtime), the event is gone.

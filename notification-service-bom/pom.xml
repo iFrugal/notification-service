@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        Parent is ifrugal-parent, NOT the notification-service root: a BOM that
+        inherited the root would also publish the root's dependencyManagement
+        (Spring Boot, Jackson, AWS, Azure, ...) and impose those versions on
+        every application that imports it. This BOM manages only this
+        project's own artifacts.
+        The version is kept equal to the reactor version: the BOM is a reactor
+        module, so maven-release-plugin rewrites it together with the others.
+    -->
+    <parent>
+        <groupId>com.github.ifrugal</groupId>
+        <artifactId>ifrugal-parent</artifactId>
+        <version>1.0.16</version>
+        <relativePath />
+    </parent>
+
+    <groupId>com.github.ifrugal</groupId>
+    <artifactId>notification-service-bom</artifactId>
+    <version>1.1.3-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>notification-service-bom</name>
+    <description>Bill of materials for the notification-service artifacts: import it to keep every module at one version</description>
+    <url>https://github.com/iFrugal/notification-service</url>
+
+    <scm>
+        <connection>scm:git:https://x-access-token:${env.GITHUB_TOKEN}@github.com/iFrugal/notification-service.git</connection>
+        <developerConnection>scm:git:https://x-access-token:${env.GITHUB_TOKEN}@github.com/iFrugal/notification-service.git</developerConnection>
+        <url>https://github.com/iFrugal/notification-service</url>
+        <tag>HEAD</tag>
+    </scm>
+
+    <!--
+        Every published library jar of the reactor, at this BOM's version.
+        scripts/check-bom.sh (run in CI) fails when a jar module is missing here.
+    -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>notification-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>notification-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>notification-kafka</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>notification-rest</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>notification-redis</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>notification-store-jdbc</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>notification-spring-boot-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>email-provider-smtp</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>email-provider-ses</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>email-provider-acs</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>sms-provider-twilio</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <plugins>
+            <!-- Same settings as the root pom, so the reactor-wide Central upload
+                 behaves the same whichever module the plugin reads them from. -->
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>${central-publishing-maven-plugin.version}</version>
+                <configuration>
+                    <autoPublish>true</autoPublish>
+                    <waitUntil>validated</waitUntil>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

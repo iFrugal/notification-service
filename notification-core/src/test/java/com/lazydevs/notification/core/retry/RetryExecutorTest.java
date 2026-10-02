@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -135,6 +137,112 @@ class RetryExecutorTest {
         assertThat(outcome.result().success()).isTrue();
         assertThat(outcome.attempts()).isEqualTo(2);
         assertThat(elapsed).isGreaterThanOrEqualTo(Duration.ofMillis(150));
+    }
+
+    @Test
+    void retryAfterHint_beyondMaxRetryAfter_stopsRetrying_withoutSleeping() {
+        // max-delay is 10ms in setUp(), so max-retry-after defaults to 10ms.
+        List<Duration> sleeps = new ArrayList<>();
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty(), recordingSleeper(sleeps));
+        AtomicInteger calls = new AtomicInteger();
+
+        RetryExecutor.Outcome outcome = executor.execute(() -> {
+            calls.incrementAndGet();
+            return throttled("60");
+        });
+
+        assertThat(outcome.result().success()).isFalse();
+        assertThat(outcome.attempts()).isEqualTo(1);
+        assertThat(calls.get()).isEqualTo(1);
+        assertThat(sleeps).isEmpty();
+    }
+
+    @Test
+    void retryAfterHint_withinARaisedMaxRetryAfter_isWaitedInFull() {
+        properties.getRetry().setMaxRetryAfter(Duration.ofSeconds(5));
+        List<Duration> sleeps = new ArrayList<>();
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty(), recordingSleeper(sleeps));
+        AtomicInteger calls = new AtomicInteger();
+
+        RetryExecutor.Outcome outcome = executor.execute(() -> calls.incrementAndGet() == 1
+                ? throttled("PT2S")
+                : SendResult.success("msg-after-wait"));
+
+        assertThat(outcome.result().success()).isTrue();
+        assertThat(outcome.attempts()).isEqualTo(2);
+        // Longer than max-delay (10ms), within max-retry-after (5s).
+        assertThat(sleeps).containsExactly(Duration.ofSeconds(2));
+    }
+
+    @Test
+    void retryAfterHint_equalToTheCap_isStillWaited() {
+        List<Duration> sleeps = new ArrayList<>();
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty(), recordingSleeper(sleeps));
+        AtomicInteger calls = new AtomicInteger();
+
+        RetryExecutor.Outcome outcome = executor.execute(() -> calls.incrementAndGet() == 1
+                ? throttled("PT0.01S")
+                : SendResult.success("msg-2"));
+
+        assertThat(outcome.attempts()).isEqualTo(2);
+        assertThat(sleeps).containsExactly(Duration.ofMillis(10));
+    }
+
+    @Test
+    void perChannelMaxRetryAfter_appliesToThatChannelOnly() {
+        NotificationProperties.RetryRule sms = makeRule(3, Duration.ofMillis(1));
+        sms.setMaxRetryAfter(Duration.ofMinutes(1));
+        properties.getRetry().getByChannel().put("sms", sms);
+        List<Duration> sleeps = new ArrayList<>();
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty(), recordingSleeper(sleeps));
+
+        RetryExecutor.Outcome email = executor.execute(com.lazydevs.notification.api.Channel.EMAIL,
+                () -> throttled("30"));
+        AtomicInteger smsCalls = new AtomicInteger();
+        RetryExecutor.Outcome smsOutcome = executor.execute(com.lazydevs.notification.api.Channel.SMS,
+                () -> smsCalls.incrementAndGet() == 1 ? throttled("30") : SendResult.success("sms-1"));
+
+        assertThat(email.attempts()).isEqualTo(1);
+        assertThat(smsOutcome.attempts()).isEqualTo(2);
+        assertThat(sleeps).containsExactly(Duration.ofSeconds(30));
+    }
+
+    @Test
+    void ambiguousFailure_isNotRetried_byTheDefaultPredicate() {
+        List<Duration> sleeps = new ArrayList<>();
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty(), recordingSleeper(sleeps));
+        AtomicInteger calls = new AtomicInteger();
+
+        RetryExecutor.Outcome outcome = executor.execute(() -> {
+            calls.incrementAndGet();
+            return SendResult.failure("READ_TIMEOUT", "timed out", FailureType.AMBIGUOUS);
+        });
+
+        assertThat(outcome.attempts()).isEqualTo(1);
+        assertThat(outcome.result().failureType()).isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(calls.get()).isEqualTo(1);
+        assertThat(sleeps).isEmpty();
+    }
+
+    @Test
+    void interruptedSleep_returnsTheFailureSoFar() {
+        RetryExecutor executor = new RetryExecutor(properties, Optional.empty(), d -> false);
+        AtomicInteger calls = new AtomicInteger();
+
+        RetryExecutor.Outcome outcome = executor.execute(() -> {
+            calls.incrementAndGet();
+            return SendResult.failure("E", "m", FailureType.TRANSIENT);
+        });
+
+        assertThat(outcome.attempts()).isEqualTo(1);
+        assertThat(calls.get()).isEqualTo(1);
+    }
+
+    private static RetryExecutor.Sleeper recordingSleeper(List<Duration> sleeps) {
+        return d -> {
+            sleeps.add(d);
+            return true;
+        };
     }
 
     private static SendResult throttled(Object retryAfter) {

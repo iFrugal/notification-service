@@ -1,6 +1,19 @@
 package com.lazydevs.notification.api.model;
 
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.NoRouteToHostException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
+import java.net.http.HttpConnectTimeoutException;
+import java.time.Clock;
+import java.time.DateTimeException;
+import java.time.Duration;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
+import java.util.Optional;
+import javax.net.ssl.SSLHandshakeException;
 
 /**
  * Helpers for mapping native provider errors to {@link FailureType}
@@ -25,6 +38,12 @@ import java.io.IOException;
  * shared ground.
  */
 public final class FailureTypes {
+
+    /** Simple class name HTTP clients use for a connect timeout (Apache HttpClient 4 and 5). */
+    private static final String CONNECT_TIMEOUT_EXCEPTION = "ConnectTimeoutException";
+
+    /** Lower-cased message of the JDK's {@code SocketTimeoutException} on connect. */
+    private static final String JDK_CONNECT_TIMEOUT_MESSAGE = "connect timed out";
 
     private FailureTypes() {
         // utility class
@@ -81,5 +100,102 @@ public final class FailureTypes {
             cur = cur.getCause();
         }
         return FailureType.UNKNOWN;
+    }
+
+    /**
+     * Classify an exception thrown after the request may have been handed to
+     * the provider, by walking its cause chain.
+     *
+     * <p>Unlike {@link #fromException(Throwable)}, which treats every
+     * {@link IOException} as {@link FailureType#TRANSIENT}, this method only
+     * calls a failure transient when the request cannot have left this
+     * process:
+     * <ul>
+     *   <li>{@link ConnectException}, {@link UnknownHostException},
+     *       {@link NoRouteToHostException},
+     *       {@link HttpConnectTimeoutException} or
+     *       {@link SSLHandshakeException} anywhere in the chain -
+     *       {@link FailureType#TRANSIENT}: no connection, so nothing was
+     *       sent. So is a connect timeout reported as a
+     *       {@code SocketTimeoutException}: the JDK's own, reading
+     *       "Connect timed out", and an HTTP client's
+     *       {@code ConnectTimeoutException} (Apache HttpClient 5 makes it a
+     *       {@code SocketTimeoutException}).</li>
+     *   <li>any other {@link IOException} in the chain, including
+     *       {@code SocketTimeoutException} and {@code HttpTimeoutException} -
+     *       {@link FailureType#AMBIGUOUS}: the request may have reached the
+     *       provider and been accepted before the response was lost.</li>
+     *   <li>anything else, including {@code null} -
+     *       {@link FailureType#UNKNOWN}.</li>
+     * </ul>
+     *
+     * @param t the exception, may be {@code null}
+     * @return the classification, never {@code null}
+     * @since 1.2.0
+     */
+    public static FailureType fromExceptionAfterSubmit(Throwable t) {
+        boolean io = false;
+        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
+            if (isConnectFailure(cur)) {
+                return FailureType.TRANSIENT;
+            }
+            io |= cur instanceof IOException;
+        }
+        return io ? FailureType.AMBIGUOUS : FailureType.UNKNOWN;
+    }
+
+    private static boolean isConnectFailure(Throwable t) {
+        return t instanceof ConnectException
+                || t instanceof UnknownHostException
+                || t instanceof NoRouteToHostException
+                || t instanceof HttpConnectTimeoutException
+                || t instanceof SSLHandshakeException
+                || isConnectTimeout(t);
+    }
+
+    /**
+     * A connect timeout that does not have a connect-specific JDK type.
+     * HTTP clients are optional dependencies here, so their
+     * {@code ConnectTimeoutException} is matched by simple name.
+     */
+    private static boolean isConnectTimeout(Throwable t) {
+        if (CONNECT_TIMEOUT_EXCEPTION.equals(t.getClass().getSimpleName())) {
+            return true;
+        }
+        String message = t.getMessage();
+        return t instanceof SocketTimeoutException
+                && message != null
+                && message.toLowerCase(Locale.ROOT).contains(JDK_CONNECT_TIMEOUT_MESSAGE);
+    }
+
+    /**
+     * Parse an HTTP {@code Retry-After} header value (RFC 9110, section
+     * 10.2.3): either a whole number of seconds or an HTTP-date, measured
+     * from {@code clock}.
+     *
+     * <p>Providers put the result on their failure with
+     * {@link SendResult#withRetryAfter(Duration)}.
+     *
+     * @param header the header value, may be {@code null}
+     * @param clock  the clock an HTTP-date is measured against
+     * @return the delay; empty when the header is absent, blank or malformed,
+     *         or the delay is not positive (a date in the past, or zero)
+     * @since 1.2.0
+     */
+    public static Optional<Duration> parseRetryAfter(String header, Clock clock) {
+        if (header == null || header.isBlank()) {
+            return Optional.empty();
+        }
+        String value = header.trim();
+        Duration delay;
+        try {
+            delay = value.chars().allMatch(c -> c >= '0' && c <= '9')
+                    ? Duration.ofSeconds(Long.parseLong(value))
+                    : Duration.between(clock.instant(),
+                            ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant());
+        } catch (NumberFormatException | DateTimeException e) {
+            return Optional.empty();
+        }
+        return delay.isPositive() ? Optional.of(delay) : Optional.empty();
     }
 }

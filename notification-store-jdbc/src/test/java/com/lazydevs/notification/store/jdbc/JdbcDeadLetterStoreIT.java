@@ -1,7 +1,10 @@
 package com.lazydevs.notification.store.jdbc;
 
+import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.model.FailureType;
+import com.lazydevs.notification.api.model.NotificationRequest;
+import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.model.PushRecipient;
 import com.zaxxer.hikari.HikariDataSource;
 import lazydevs.persistence.connection.multitenant.TenantContext;
@@ -15,6 +18,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -94,6 +99,25 @@ class JdbcDeadLetterStoreIT {
         assertThat(entry.request().getRecipient()).isInstanceOfSatisfying(PushRecipient.class,
                 push -> assertThat(push.deviceToken()).isEqualTo("device-token-1"));
         assertThat(store.snapshot().orElseThrow()).hasSize(1);
+    }
+
+    @Test
+    void ambiguousEntry_withA12PushRecipient_roundTrips() {
+        PushRecipient push = new PushRecipient(null, null, null, null, "Hi", "There", null, null, null, null,
+                null, "fid-0123456789abcdef", List.of("token-1", "token-2"));
+        NotificationRequest request = NotificationRequest.builder()
+                .requestId("req-ambiguous").tenantId("acme").callerId("billing").notificationType("TEST")
+                .channel(Channel.PUSH).recipient(push).build();
+        DeadLetterEntry entry = new DeadLetterEntry(Instant.now().truncatedTo(ChronoUnit.MICROS), request,
+                NotificationResponse.failure(request, "fcm", "FCM_TIMEOUT", "timed out"), 1, FailureType.AMBIGUOUS);
+
+        store.add(entry);
+
+        DeadLetterEntry found = store.findByRequestId("acme", "req-ambiguous").orElseThrow();
+        assertThat(found.failureType()).isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(found.request().getRecipient()).isEqualTo(push);
+        assertThat(jdbc.sql("SELECT failure_type FROM " + TABLES.deadLetter()).query(String.class).single())
+                .isEqualTo("AMBIGUOUS");
     }
 
     @Test

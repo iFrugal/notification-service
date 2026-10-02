@@ -702,6 +702,7 @@ spring:
 | `notification.rate-limit.overrides[*]` | — | Per `(tenant, caller, channel)` overrides |
 | `notification.retry.enabled` | `false` | Synchronous retry on transient failures |
 | `notification.retry.max-attempts` | `3` | Global attempts (incl. first try) |
+| `notification.retry.max-retry-after` | `max-delay` | Longest provider `Retry-After` hint the executor waits for; a longer hint stops the retries and the failure goes to the DLQ (since 1.2.0, DD-25) |
 | `notification.retry.by-channel.<name>.*` | — | Per-channel override (DD-23) |
 | `notification.dead-letter.enabled` | `false` | DLQ recording |
 | `notification.dead-letter.max-entries` | `1000` | In-memory bound |

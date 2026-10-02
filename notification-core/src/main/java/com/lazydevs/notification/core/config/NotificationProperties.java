@@ -466,6 +466,19 @@ public class NotificationProperties {
                 message = "retry jitter must be in [0.0, 1.0]")
         private double jitter = 0.5;
 
+        /**
+         * Longest provider retry hint (an HTTP {@code Retry-After}) the
+         * executor waits for. A hint beyond it stops the retries: the
+         * failure is returned at once and goes to the dead-letter store when
+         * one is configured. Defaults to {@code max-delay}.
+         */
+        private java.time.Duration maxRetryAfter;
+
+        @AssertTrue(message = "retry max-retry-after must be positive")
+        public boolean isMaxRetryAfterValid() {
+            return maxRetryAfter == null || maxRetryAfter.isPositive();
+        }
+
         @AssertTrue(message = "retry initialDelay must be positive (zero defeats backoff)")
         public boolean isInitialDelayValid() {
             // Class doc says "Duration.ZERO would defeat backoff" — a
@@ -537,6 +550,7 @@ public class NotificationProperties {
             r.setMultiplier(multiplier);
             r.setMaxDelay(maxDelay);
             r.setJitter(jitter);
+            r.setMaxRetryAfter(maxRetryAfter);
             return r;
         }
     }
@@ -571,6 +585,27 @@ public class NotificationProperties {
         @jakarta.validation.constraints.DecimalMax(value = "1.0",
                 message = "retry jitter must be in [0.0, 1.0]")
         private double jitter = 0.5;
+
+        /**
+         * Longest provider retry hint (an HTTP {@code Retry-After}) the
+         * executor waits for under this rule. A hint beyond it stops the
+         * retries and surfaces the failure. Defaults to this rule's
+         * {@code max-delay}.
+         */
+        private java.time.Duration maxRetryAfter;
+
+        /**
+         * The effective {@code max-retry-after}: the configured value, or
+         * {@code max-delay} when none is set.
+         */
+        public java.time.Duration effectiveMaxRetryAfter() {
+            return maxRetryAfter != null ? maxRetryAfter : maxDelay;
+        }
+
+        @AssertTrue(message = "retry max-retry-after must be positive")
+        public boolean isMaxRetryAfterValid() {
+            return maxRetryAfter == null || maxRetryAfter.isPositive();
+        }
 
         @AssertTrue(message = "retry initialDelay must be positive (zero defeats backoff)")
         public boolean isInitialDelayValid() {

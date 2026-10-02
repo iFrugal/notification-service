@@ -1,5 +1,9 @@
 package com.lazydevs.notification.core.service;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.channel.NotificationProvider;
@@ -24,6 +28,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.Optional;
@@ -279,6 +284,57 @@ class DefaultNotificationServiceRetryTest {
     // -----------------------------------------------------------------
     //  Helpers
     // -----------------------------------------------------------------
+
+    @Test
+    void ambiguousFailure_isNotRetried_goesToDLQ_andLogsOneWarn() {
+        stubRender();
+        stubProviderResolution();
+        when(provider.send(any(), any()))
+                .thenReturn(SendResult.failure("SMTP_READ_TIMEOUT", "Read timed out",
+                        FailureType.AMBIGUOUS, "msg-maybe"));
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        Logger logger = (Logger) LoggerFactory.getLogger(DefaultNotificationService.class);
+        logs.start();
+        logger.addAppender(logs);
+        try {
+            NotificationResponse response = service.send(baseRequest());
+
+            assertThat(response.status()).isEqualTo(NotificationStatus.FAILED);
+            assertThat(response.providerMessageId()).isEqualTo("msg-maybe");
+        } finally {
+            logger.detachAppender(logs);
+        }
+
+        verify(provider, times(1)).send(any(), any());
+        ArgumentCaptor<DeadLetterEntry> captor = ArgumentCaptor.forClass(DeadLetterEntry.class);
+        verify(deadLetterStore).add(captor.capture());
+        assertThat(captor.getValue().attempts()).isEqualTo(1);
+        assertThat(captor.getValue().failureType()).isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(logs.list)
+                .filteredOn(e -> e.getLevel() == Level.WARN)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .singleElement().asString()
+                .contains("not retried: ambiguous", "SMTP_READ_TIMEOUT", "msg-maybe");
+    }
+
+    @Test
+    void retryAfterBeyondTheCap_stopsAfterOneAttempt_andGoesToDLQ() {
+        stubRender();
+        stubProviderResolution();
+        // max-delay is 5ms here, so max-retry-after defaults to 5ms; the provider asks for a minute.
+        when(provider.send(any(), any()))
+                .thenReturn(SendResult.failure("THROTTLED", "slow down", FailureType.TRANSIENT)
+                        .withRetryAfter(Duration.ofSeconds(60)));
+
+        NotificationResponse response = service.send(baseRequest());
+
+        assertThat(response.status()).isEqualTo(NotificationStatus.FAILED);
+        verify(provider, times(1)).send(any(), any());
+        ArgumentCaptor<DeadLetterEntry> captor = ArgumentCaptor.forClass(DeadLetterEntry.class);
+        verify(deadLetterStore).add(captor.capture());
+        assertThat(captor.getValue().attempts()).isEqualTo(1);
+        assertThat(captor.getValue().failureType()).isEqualTo(FailureType.TRANSIENT);
+    }
 
     private void stubRender() {
         when(templateEngine.render(any())).thenReturn(

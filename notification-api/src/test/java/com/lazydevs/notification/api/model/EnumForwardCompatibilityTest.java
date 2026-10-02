@@ -24,6 +24,12 @@ class EnumForwardCompatibilityTest {
     }
 
     @Test
+    void ambiguousIsAKnownFailureType_andWritesByName() throws Exception {
+        assertThat(tolerant.readValue("\"AMBIGUOUS\"", FailureType.class)).isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(tolerant.writeValueAsString(FailureType.AMBIGUOUS)).isEqualTo("\"AMBIGUOUS\"");
+    }
+
+    @Test
     void unknownDeliveryStatusReadsAsUnknown() throws Exception {
         assertThat(tolerant.readValue("\"SOMETHING_NEW\"", DeliveryStatus.class)).isEqualTo(DeliveryStatus.UNKNOWN);
         assertThat(tolerant.readValue("\"BOUNCED\"", DeliveryStatus.class)).isEqualTo(DeliveryStatus.BOUNCED);

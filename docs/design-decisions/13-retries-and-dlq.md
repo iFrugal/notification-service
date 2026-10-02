@@ -72,6 +72,12 @@ Default predicate: retry on `TRANSIENT` and `UNKNOWN`, do not retry on
 `PERMANENT`. Operators can swap in a custom one (e.g. opt out of
 `UNKNOWN` retries, or add an attempt cap that varies per channel).
 
+Since 1.2.0 a fourth constant, `AMBIGUOUS`, marks a failure after which the message may already have reached the provider, such as a read timeout after the request was sent.
+The default predicate does not retry it, because a resend could deliver the message twice; it goes to the dead-letter store instead.
+The default predicate is now `type == null || type == TRANSIENT || type == UNKNOWN`.
+A custom predicate written as `type != PERMANENT` retries `AMBIGUOUS` failures.
+See [DD-25](./25-ambiguous-failures-retry-after-provider-events.md).
+
 ### Retry policy
 
 Configuration:
@@ -95,8 +101,14 @@ provider outage simultaneously.
 
 Since 1.1.2 a provider can ask for a longer wait.
 It puts the delay into `SendResult.providerMetadata` under `SendResult.RETRY_AFTER_METADATA_KEY` (`"retryAfter"`), as an ISO-8601 duration string or a whole number of seconds, typically from an HTTP `Retry-After` header.
-The executor then waits `max(delay, min(retryAfter, maxDelay))`: the hint can lengthen the wait up to `max-delay` but never shortens it, and an absent, negative or malformed hint is ignored.
+The executor then waits `max(delay, retryAfter)`: the hint can lengthen the wait but never shortens it, and an absent, negative or malformed hint is ignored.
 The ACS provider sets the hint on `TRANSIENT` HTTP errors that carry `Retry-After`.
+
+Since 1.2.0 the hint is bounded by `max-retry-after` (default: `max-delay`, settable globally and per channel).
+In 1.1.2 a longer hint was cut down to `max-delay`, which meant retrying before the provider said it would accept the request.
+Now a hint longer than `max-retry-after` stops the retries: the executor logs a WARN and returns the failure, which goes to the dead-letter store.
+`SendResult.withRetryAfter(Duration)` and `FailureTypes.parseRetryAfter(header, clock)` (delta-seconds or HTTP-date) help providers set the hint.
+See [DD-25](./25-ambiguous-failures-retry-after-provider-events.md).
 
 Implementation: a small in-process `RetryExecutor` helper rather than
 adding Resilience4j. The semantics we need are narrow (one retry loop
@@ -179,7 +191,9 @@ heap.
 What gets pushed to the DLQ:
 
 - A `PERMANENT` failure (no retries attempted).
+- An `AMBIGUOUS` failure (no retries attempted by the default predicate; since 1.2.0).
 - An `UNKNOWN` or `TRANSIENT` failure that exhausted `max-attempts`.
+- A `TRANSIENT` failure whose retry hint exceeds `max-retry-after` (since 1.2.0).
 
 What does NOT go to the DLQ:
 
@@ -366,3 +380,5 @@ without changing service code.
   per-logical-send, not per-retry.
 - [11-caller-identity.md](./11-caller-identity.md) — DLQ entries
   include `callerId` for traceability.
+- [25-ambiguous-failures-retry-after-provider-events.md](./25-ambiguous-failures-retry-after-provider-events.md) -
+  the `AMBIGUOUS` failure type and the retry-after cap.

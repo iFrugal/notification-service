@@ -6,9 +6,12 @@ import jakarta.mail.MessagingException;
 import jakarta.mail.SendFailedException;
 import jakarta.mail.internet.AddressException;
 import jakarta.mail.internet.InternetAddress;
+import org.eclipse.angus.mail.util.MailConnectException;
+import org.eclipse.angus.mail.util.SocketConnectException;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,8 +58,36 @@ class SmtpFailureClassifierTest {
         // generic-transient mapping — same semantic outcome here, but
         // the test lets us verify the cause-chain walk works.
         MessagingException t = new MessagingException(
-                "smtp connect failed", new SocketTimeoutException("timeout"));
+                "smtp connect failed", new ConnectException("connection refused"));
         assertThat(SmtpEmailProvider.classifySmtp(t)).isEqualTo(FailureType.TRANSIENT);
+    }
+
+    @Test
+    void readTimeout_isAmbiguous_becauseTheServerMayHaveAcceptedTheMessage() {
+        MessagingException t = new MessagingException(
+                "Exception reading response", new SocketTimeoutException("Read timed out"));
+        assertThat(SmtpEmailProvider.classifySmtp(t)).isEqualTo(FailureType.AMBIGUOUS);
+    }
+
+    @Test
+    void connectTimeout_isTransient_becauseNothingWasSent() {
+        MessagingException jdkConnectTimeout = new MessagingException(
+                "Couldn't connect to host", new SocketTimeoutException("Connect timed out"));
+        assertThat(SmtpEmailProvider.classifySmtp(jdkConnectTimeout)).isEqualTo(FailureType.TRANSIENT);
+
+        // Angus wraps every connect failure in MailConnectException.
+        MessagingException mailConnect = new MailConnectException(new SocketConnectException(
+                "Couldn't connect to host", new SocketTimeoutException("Connect timed out"),
+                "smtp.example.com", 25, 5000));
+        assertThat(SmtpEmailProvider.classifySmtp(mailConnect)).isEqualTo(FailureType.TRANSIENT);
+    }
+
+    @Test
+    void mailConnectException_isTransient_whenTheConnectionIsRefused() {
+        MessagingException mailConnect = new MailConnectException(new SocketConnectException(
+                "Couldn't connect to host", new ConnectException("Connection refused"),
+                "smtp.example.com", 25, 5000));
+        assertThat(SmtpEmailProvider.classifySmtp(mailConnect)).isEqualTo(FailureType.TRANSIENT);
     }
 
     @Test

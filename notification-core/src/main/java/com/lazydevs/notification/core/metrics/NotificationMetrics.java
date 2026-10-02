@@ -39,6 +39,7 @@ import java.util.Optional;
  *   <li>{@code notification.dlq.size} — gauge</li>
  *   <li>{@code notification.delivery-events.received.total{provider, status}} — counter</li>
  *   <li>{@code notification.delivery-events.size} — gauge</li>
+ *   <li>{@code notification.delivery-events.emitted.total{provider, status}} - counter (since 1.2.0)</li>
  *   <li>{@code notification.webhook.signature.failed.total{provider}} — counter</li>
  * </ul>
  *
@@ -60,6 +61,7 @@ public class NotificationMetrics {
     private static final String M_DELIVERY_RECEIVED = "notification.delivery-events.received.total";
     private static final String M_DELIVERY_SIZE = "notification.delivery-events.size";
     private static final String M_WEBHOOK_SIG_FAILED = "notification.webhook.signature.failed.total";
+    private static final String M_DELIVERY_EMITTED = "notification.delivery-events.emitted.total";
 
     // Common tag keys / values reused across multiple meters. Pulled out
     // as constants so a rename is one place, and to silence S1192.
@@ -142,6 +144,18 @@ public class NotificationMetrics {
      */
     public void recordDeliveryEventReceived(String providerName, DeliveryStatus status) {
         registry.counter(M_DELIVERY_RECEIVED,
+                "provider", providerName == null ? UNKNOWN_LOWER : providerName,
+                TAG_STATUS, status == null ? UNKNOWN_UPPER : status.name())
+                .increment();
+    }
+
+    /**
+     * Record a delivery event a provider published itself while sending
+     * (DD-25), as opposed to one received by webhook.
+     * Tags: {@code provider}, {@code status}.
+     */
+    public void recordDeliveryEventEmitted(String providerName, DeliveryStatus status) {
+        registry.counter(M_DELIVERY_EMITTED,
                 "provider", providerName == null ? UNKNOWN_LOWER : providerName,
                 TAG_STATUS, status == null ? UNKNOWN_UPPER : status.name())
                 .increment();
