@@ -12,9 +12,11 @@ import com.lazydevs.notification.core.config.NotificationProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.RedisStringCommands.SetOption;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.data.redis.core.types.Expiration;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -33,6 +35,27 @@ import java.util.Optional;
  */
 @Slf4j
 public class RedisIdempotencyStore implements IdempotencyStore {
+
+    /**
+     * Compare-and-delete for {@link #release}: deletes {@code KEYS[1]} only
+     * if the stored record is COMPLETE and belongs to {@code ARGV[1]}. A
+     * script runs atomically, so a concurrent re-claim between the read
+     * and the delete is impossible. An unparseable value is left alone.
+     */
+    static final RedisScript<Long> RELEASE_SCRIPT = RedisScript.of("""
+            local value = redis.call('GET', KEYS[1])
+            if not value then
+              return 0
+            end
+            local ok, rec = pcall(cjson.decode, value)
+            if not ok or type(rec) ~= 'table' then
+              return 0
+            end
+            if rec['status'] == 'COMPLETE' and rec['notificationId'] == ARGV[1] then
+              return redis.call('DEL', KEYS[1])
+            end
+            return 0
+            """, Long.class);
 
     private final StringRedisTemplate redis;
     private final ObjectMapper json;
@@ -111,6 +134,15 @@ public class RedisIdempotencyStore implements IdempotencyStore {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialise IdempotencyRecord", e);
         }
+    }
+
+    @Override
+    public boolean release(IdempotencyKey key, String notificationId) {
+        if (notificationId == null) {
+            return false;
+        }
+        Long deleted = redis.execute(RELEASE_SCRIPT, List.of(redisKey(key)), notificationId);
+        return deleted != null && deleted == 1L;
     }
 
     @Override

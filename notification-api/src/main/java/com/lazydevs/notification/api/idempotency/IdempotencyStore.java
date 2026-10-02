@@ -61,6 +61,37 @@ public interface IdempotencyStore {
     void markComplete(IdempotencyKey key, NotificationResponse response);
 
     /**
+     * Remove the {@link IdempotencyStatus#COMPLETE COMPLETE} record for
+     * {@code key}, but only if it still belongs to {@code notificationId}
+     * (compare-and-delete). The service calls this after recording a
+     * {@code FAILED} or {@code REJECTED} outcome, and before re-claiming a
+     * key whose last outcome was a failure, so a retry under the same key
+     * can win {@link #markInProgress(IdempotencyKey, String)} again (DD-10
+     * "FAILED is fresh").
+     *
+     * <p>Implementations MUST make the check and the delete one atomic step,
+     * and MUST NOT remove an {@link IdempotencyStatus#IN_PROGRESS IN_PROGRESS}
+     * record or a record claimed by another notification id: either would
+     * let a second caller win {@code markInProgress} while a send is in
+     * flight.
+     *
+     * <p>The default returns {@code false} and changes nothing, which keeps
+     * the 1.1.x behaviour for stores that do not implement it: the failed
+     * record stays until its TTL elapses and a retry under the same key is
+     * answered with a conflict.
+     *
+     * @param key            the composite scope.
+     * @param notificationId the notification id the record must belong to.
+     * @return {@code true} if the record was removed; {@code false} if there
+     *         was no record, it belonged to another notification id, it was
+     *         still in progress, or the store does not support release.
+     * @since 1.1.2
+     */
+    default boolean release(IdempotencyKey key, String notificationId) {
+        return false;
+    }
+
+    /**
      * Remove records whose {@code recordedAt} timestamp is older than the
      * configured TTL.
      *

@@ -192,6 +192,20 @@ public class NotificationProperties {
         private long maxEntries = 100_000L;
 
         /**
+         * Whether a request may retry under the same idempotency key after
+         * the previous attempt ended {@code FAILED} or {@code REJECTED}.
+         * When {@code true} (the default) the failed record is released so
+         * the retry dispatches again (DD-10 "FAILED is fresh"); when
+         * {@code false} the failed record is kept and a retry under the same
+         * key gets HTTP 409 until the TTL elapses, as in 1.1.0 and 1.1.1.
+         * Has no effect with a custom store that does not implement
+         * {@code IdempotencyStore.release}.
+         *
+         * @since 1.1.2
+         */
+        private boolean retryAfterFailure = true;
+
+        /**
          * Backing store. Deprecated: select the store family with
          * {@code notification.store.type} (or
          * {@code notification.redis.idempotency.enabled}) instead; this value

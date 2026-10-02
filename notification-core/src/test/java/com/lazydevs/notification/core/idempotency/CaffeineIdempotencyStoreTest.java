@@ -140,6 +140,94 @@ class CaffeineIdempotencyStoreTest {
     }
 
     @Test
+    void release_afterAFailedOutcome_letsARetryClaimTheKey() {
+        CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(properties);
+        IdempotencyKey key = key("acme", "failed-1");
+        store.markInProgress(key, "req-1");
+        store.markComplete(key, failedResponse("req-1"));
+
+        assertThat(store.release(key, "req-1")).isTrue();
+
+        assertThat(store.findExisting(key)).isEmpty();
+        assertThat(store.markInProgress(key, "req-2")).isTrue();
+        assertThat(store.findExisting(key).orElseThrow().notificationId()).isEqualTo("req-2");
+    }
+
+    @Test
+    void release_withAnotherNotificationId_returnsFalseAndKeepsTheRecord() {
+        CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(properties);
+        IdempotencyKey key = key("acme", "failed-2");
+        store.markInProgress(key, "req-1");
+        store.markComplete(key, failedResponse("req-1"));
+
+        assertThat(store.release(key, "req-other")).isFalse();
+        assertThat(store.release(key, null)).isFalse();
+
+        assertThat(store.findExisting(key).orElseThrow().notificationId()).isEqualTo("req-1");
+        assertThat(store.markInProgress(key, "req-2")).isFalse();
+    }
+
+    @Test
+    void release_neverRemovesAnInProgressRecord() {
+        CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(properties);
+        IdempotencyKey key = key("acme", "in-flight");
+        store.markInProgress(key, "req-1");
+
+        assertThat(store.release(key, "req-1")).isFalse();
+
+        assertThat(store.findExisting(key).orElseThrow().status()).isEqualTo(IdempotencyStatus.IN_PROGRESS);
+    }
+
+    @Test
+    void release_ofAnAbsentKey_returnsFalse() {
+        CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(properties);
+
+        assertThat(store.release(key("acme", "never-seen"), "req-1")).isFalse();
+    }
+
+    @Test
+    void concurrentRetriesOnAFailedKey_exactlyOneWinner() throws Exception {
+        // Mirrors the service's retry path: every racer releases the failed
+        // record, then tries markInProgress. markInProgress stays the gate.
+        CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(properties);
+        int threads = 32;
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            for (int round = 0; round < 20; round++) {
+                IdempotencyKey key = key("acme", "retry-race-" + round);
+                store.markInProgress(key, "failed-req");
+                store.markComplete(key, failedResponse("failed-req"));
+                CountDownLatch start = new CountDownLatch(1);
+                CountDownLatch finish = new CountDownLatch(threads);
+                AtomicInteger winners = new AtomicInteger();
+                for (int i = 0; i < threads; i++) {
+                    String requestId = "retry-" + round + "-" + i;
+                    pool.submit(() -> {
+                        try {
+                            start.await();
+                            store.release(key, "failed-req");
+                            if (store.markInProgress(key, requestId)) {
+                                winners.incrementAndGet();
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        } finally {
+                            finish.countDown();
+                        }
+                    });
+                }
+                start.countDown();
+                finish.await();
+
+                assertThat(winners.get()).as("winners in round %d", round).isEqualTo(1);
+                assertThat(store.findExisting(key).orElseThrow().status()).isEqualTo(IdempotencyStatus.IN_PROGRESS);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void ttl_expiresEntries() {
         properties.getIdempotency().setTtl(Duration.ofMillis(50));
         CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(properties);
@@ -186,6 +274,15 @@ class CaffeineIdempotencyStoreTest {
 
     private static IdempotencyKey key(String tenant, String idempotencyKey) {
         return new IdempotencyKey(tenant, null, idempotencyKey);
+    }
+
+    private static NotificationResponse failedResponse(String requestId) {
+        return new NotificationResponse(
+                requestId, "corr-" + requestId, "acme", null, Channel.EMAIL,
+                "smtp", NotificationStatus.FAILED, null,
+                "SMTP_421", "try again later",
+                Instant.now(), Instant.now(), null,
+                null);
     }
 
     private static NotificationResponse sentResponse(String requestId) {

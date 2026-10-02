@@ -10,10 +10,12 @@ import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.model.EmailRecipient;
+import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.model.SendResult;
 import com.lazydevs.notification.core.config.NotificationProperties;
+import com.lazydevs.notification.core.idempotency.CaffeineIdempotencyStore;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,7 +49,7 @@ import static org.mockito.Mockito.when;
  *   <li>No prior record → fresh dispatch, store entries written.</li>
  *   <li>IN_PROGRESS → 409 (IdempotencyInProgressException).</li>
  *   <li>COMPLETE + replayable status → return cached response, no provider call.</li>
- *   <li>COMPLETE + FAILED status → fall through to fresh dispatch.</li>
+ *   <li>COMPLETE + FAILED status → released, then fresh dispatch.</li>
  * </ul>
  * Plus race-loss on {@code markInProgress}, no-key bypass, and
  * markComplete-in-finally for exception paths.
@@ -68,6 +70,8 @@ class DefaultNotificationServiceIdempotencyTest {
     void setUp() {
         // enrichRequest() reads defaultTenant; lenient because not every test triggers it.
         lenient().when(properties.getDefaultTenant()).thenReturn("default");
+        // The failure path reads idempotency.retryAfterFailure (default true).
+        lenient().when(properties.getIdempotency()).thenReturn(new NotificationProperties.IdempotencyProperties());
         // Rate limiter not configured in this suite — DD-12 wires it as an
         // Optional that's empty when notification.rate-limit.enabled=false,
         // matching production behaviour for tests that don't exercise it.
@@ -176,24 +180,89 @@ class DefaultNotificationServiceIdempotencyTest {
     }
 
     @Test
-    void send_failedPriorAttempt_treatsAsFresh() {
-        NotificationRequest req = baseRequest("idem-failed");
-        NotificationResponse priorFailure = failedResponse("prior-req-id");
-        IdempotencyRecord priorRecord = new IdempotencyRecord(
-                "prior-req-id", IdempotencyStatus.COMPLETE, priorFailure, Instant.now());
-        when(idempotencyStore.findExisting(any())).thenReturn(Optional.of(priorRecord));
-        when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
+    void send_retryAfterFailedAttempt_dispatchesAgain_withRealStore() {
+        // Reproduction for the 1.1.1 bug: the FAILED row made markInProgress
+        // return false, so the retry got a 409 until the TTL elapsed.
+        NotificationProperties realProperties = new NotificationProperties();
+        CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(realProperties);
+        DefaultNotificationService realStoreService = serviceWith(realProperties, store);
+        stubProvider();
+        when(provider.send(any(), any()))
+                .thenReturn(SendResult.failure("SMTP_421", "try again later", FailureType.TRANSIENT))
+                .thenReturn(SendResult.success("provider-msg-2"));
+
+        NotificationResponse first = realStoreService.send(baseRequest("idem-failed"));
+        NotificationResponse retry = realStoreService.send(baseRequest("idem-failed"));
+
+        assertThat(first.status()).isEqualTo(NotificationStatus.FAILED);
+        assertThat(retry.status()).isEqualTo(NotificationStatus.SENT);
+        assertThat(retry.idempotentReplay()).isNull();
+        verify(provider, times(2)).send(any(), any());
+        // recordDuplicateHit must NOT fire for a retry after FAILED - it is
+        // a genuinely fresh dispatch, not a cache hit.
+        verify(auditService, never()).recordDuplicateHit(any(), any());
+
+        // The successful retry is now the cached outcome: a third call replays.
+        NotificationResponse third = realStoreService.send(baseRequest("idem-failed"));
+        assertThat(third.idempotentReplay()).isTrue();
+        assertThat(third.requestId()).isEqualTo(retry.requestId());
+        verify(provider, times(2)).send(any(), any());
+    }
+
+    @Test
+    void send_retryAfterFailedAttempt_withRetryAfterFailureOff_keepsThe409() {
+        NotificationProperties realProperties = new NotificationProperties();
+        realProperties.getIdempotency().setRetryAfterFailure(false);
+        CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(realProperties);
+        DefaultNotificationService realStoreService = serviceWith(realProperties, store);
+        stubProvider();
+        when(provider.send(any(), any()))
+                .thenReturn(SendResult.failure("SMTP_421", "try again later", FailureType.TRANSIENT));
+
+        NotificationRequest firstRequest = baseRequest("idem-strict");
+        NotificationResponse first = realStoreService.send(firstRequest);
+
+        assertThat(first.status()).isEqualTo(NotificationStatus.FAILED);
+        assertThatThrownBy(() -> realStoreService.send(baseRequest("idem-strict")))
+                .isInstanceOf(IdempotencyInProgressException.class)
+                .hasFieldOrPropertyWithValue("inProgressNotificationId", firstRequest.getRequestId());
+        verify(provider, times(1)).send(any(), any());
+    }
+
+    @Test
+    void send_failedRowFromAnOlderVersion_isReleasedAndRetried() {
+        // A 1.1.0 / 1.1.1 node left a COMPLETE + FAILED row behind. The retry
+        // releases it (compare-and-delete on its notificationId) and dispatches.
+        NotificationProperties realProperties = new NotificationProperties();
+        CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(realProperties);
+        IdempotencyKey key = new IdempotencyKey("acme", null, "idem-legacy");
+        store.markInProgress(key, "prior-req-id");
+        store.markComplete(key, failedResponse("prior-req-id"));
+        DefaultNotificationService realStoreService = serviceWith(realProperties, store);
         stubProviderHappyPath();
 
-        NotificationResponse response = service.send(req);
+        NotificationResponse retry = realStoreService.send(baseRequest("idem-legacy"));
 
-        // Fresh dispatch happened — provider was called, response is SENT.
-        assertThat(response.status()).isEqualTo(NotificationStatus.SENT);
-        verify(idempotencyStore).markInProgress(any(), anyString());
+        assertThat(retry.status()).isEqualTo(NotificationStatus.SENT);
+        IdempotencyRecord stored = store.findExisting(key).orElseThrow();
+        assertThat(stored.notificationId()).isEqualTo(retry.requestId());
+        assertThat(stored.response().status()).isEqualTo(NotificationStatus.SENT);
+    }
+
+    @Test
+    void send_failure_withStoreThatCannotRelease_keepsTheCompleteRow() {
+        // A third-party store that does not override release() gets the
+        // 1.1.x behaviour: the FAILED response is recorded with markComplete.
+        when(idempotencyStore.findExisting(any())).thenReturn(Optional.empty());
+        when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
+        stubProvider();
+        when(provider.send(any(), any())).thenReturn(SendResult.failure("SMTP_421", "try again later"));
+
+        NotificationResponse response = service.send(baseRequest("idem-third-party"));
+
+        assertThat(response.status()).isEqualTo(NotificationStatus.FAILED);
         verify(idempotencyStore).markComplete(any(), any(NotificationResponse.class));
-        // recordDuplicateHit must NOT fire for FAILED replays — those are
-        // genuinely fresh dispatches, not cache hits.
-        verify(auditService, never()).recordDuplicateHit(any(), any());
+        verify(idempotencyStore).release(any(), eq(response.requestId()));
     }
 
     @Test
@@ -248,6 +317,21 @@ class DefaultNotificationServiceIdempotencyTest {
     // -----------------------------------------------------------------
     //  Helpers
     // -----------------------------------------------------------------
+
+    private DefaultNotificationService serviceWith(NotificationProperties props, IdempotencyStore store) {
+        return new DefaultNotificationService(
+                props, providerRegistry, templateEngine, auditService,
+                Optional.of(store), Optional.empty(),
+                Optional.empty(), Optional.empty(), Optional.empty());
+    }
+
+    private void stubProvider() {
+        when(templateEngine.render(any())).thenReturn(
+                new RenderedContent("subj", "body", null, "ORDER_CONFIRMATION"));
+        when(providerRegistry.getProvider(anyString(), any(Channel.class), any()))
+                .thenReturn(provider);
+        lenient().when(provider.getProviderName()).thenReturn("smtp");
+    }
 
     private void stubProviderHappyPath() {
         // The send-path mock stack: render → resolve provider → provider.send.

@@ -147,6 +147,7 @@ serialized `IdempotencyRecord`. The DD-10 contract:
 | `findExisting(key)` | `GET k` (returns `Optional.empty()` on nil) |
 | `markInProgress(key, requestId)` | `SET k <json> NX EX <ttl>` — atomic claim. Returns false on collision. |
 | `markComplete(key, response)` | `SET k <json> EX <ttl>` (overwrites; preserves notificationId from prior IN_PROGRESS via the JSON) |
+| `release(key, notificationId)` | Lua script: `GET k`, then `DEL k` only if the record is `COMPLETE` and belongs to `notificationId` (since 1.1.2, DD-10 "Release on failure") |
 
 `SET ... NX EX` is the standard atomic-claim idiom. TTL is set on the
 key itself, so Redis evicts naturally — no separate sweeper needed.
