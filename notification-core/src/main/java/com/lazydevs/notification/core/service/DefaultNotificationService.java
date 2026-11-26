@@ -644,14 +644,14 @@ public class DefaultNotificationService implements NotificationService {
     private static final String CALLER_ID_ATTRIBUTE = "notification.callerId";
 
     /**
-     * Strip ASCII control characters from a value before it goes into a
-     * log line — defense against log-injection through caller-supplied
+     * Replace ASCII control characters and line breaks in a value before it
+     * goes into a log line - defense against log-injection through caller-supplied
      * fields like {@code requestId} and provider-supplied
      * {@code providerName}. Also sanitizes {@code null} to a literal
      * {@code "null"} so the log line stays well-formed even when a
      * caller leaves a field empty.
      */
     private static String sanitizeForLog(String s) {
-        return s == null ? "null" : s.replaceAll("[\\p{Cntrl}]", "_");
+        return s == null ? "null" : s.replaceAll("[\\p{Cntrl}]", "_").replaceAll("\\R", "_");
     }
 }

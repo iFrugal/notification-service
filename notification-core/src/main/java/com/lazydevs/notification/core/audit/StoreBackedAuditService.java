@@ -140,8 +140,8 @@ public class StoreBackedAuditService implements NotificationAuditService {
             case null -> null;
             case EmailRecipient email -> nonBlank(List.of(nullToEmpty(email.to())))
                     + nonBlank(email.cc()) + nonBlank(email.bcc());
-            case SmsRecipient sms -> 1;
-            case WhatsAppRecipient whatsApp -> 1;
+            case SmsRecipient _ -> 1;
+            case WhatsAppRecipient _ -> 1;
             case PushRecipient push -> pushCount(push);
         };
     }
@@ -173,7 +173,11 @@ public class StoreBackedAuditService implements NotificationAuditService {
         return hasText(tenant) ? tenant : defaultTenant;
     }
 
+    /**
+     * The value with control characters and line breaks replaced by {@code _}, so a
+     * caller- or provider-supplied value cannot forge log lines; {@code "null"} for null.
+     */
     private static String sanitize(String s) {
-        return s == null ? "null" : s.replaceAll("\\p{Cntrl}", "_");
+        return s == null ? "null" : s.replaceAll("\\p{Cntrl}", "_").replaceAll("\\R", "_");
     }
 }

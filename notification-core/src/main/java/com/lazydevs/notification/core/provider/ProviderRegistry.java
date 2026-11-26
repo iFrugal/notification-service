@@ -406,7 +406,7 @@ public class ProviderRegistry {
         allProviders.add(provider);
         failedBuilds.remove(key);
         log.info("Initialized provider on first use: tenant={}, channel={}, provider={}",
-                key.tenantId(), key.channel(), key.providerName());
+                sanitize(key.tenantId()), key.channel(), sanitize(key.providerName()));
         return provider;
     }
 
@@ -419,10 +419,10 @@ public class ProviderRegistry {
         String message = String.valueOf(e.getMessage());
         String previous = failedBuilds.put(key, message);
         if (message.equals(previous)) {
-            log.debug("Provider {} still cannot be initialized: {}", key.display(), message);
+            log.debug("Provider {} still cannot be initialized: {}", sanitize(key.display()), sanitize(message));
         } else {
             log.warn("Provider {} could not be initialized; its sends fail with {} until it can: {}",
-                    key.display(), PROVIDER_NOT_CONFIGURED, message);
+                    sanitize(key.display()), PROVIDER_NOT_CONFIGURED, sanitize(message));
         }
     }
 
@@ -513,5 +513,13 @@ public class ProviderRegistry {
             case WHATSAPP -> WhatsAppProvider.class;
             case PUSH -> PushProvider.class;
         };
+    }
+
+    /**
+     * The value with control characters and line breaks replaced by {@code _}, so a
+     * caller- or provider-supplied value cannot forge log lines; {@code "null"} for null.
+     */
+    private static String sanitize(String s) {
+        return s == null ? "null" : s.replaceAll("\\p{Cntrl}", "_").replaceAll("\\R", "_");
     }
 }

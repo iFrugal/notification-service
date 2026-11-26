@@ -274,7 +274,11 @@ final class IdempotencyCoordinator {
                 || status == NotificationStatus.ACCEPTED;
     }
 
+    /**
+     * The value with control characters and line breaks replaced by {@code _}, so a
+     * caller- or provider-supplied value cannot forge log lines; {@code "null"} for null.
+     */
     private static String sanitize(String s) {
-        return s == null ? "null" : s.replaceAll("\\p{Cntrl}", "_");
+        return s == null ? "null" : s.replaceAll("\\p{Cntrl}", "_").replaceAll("\\R", "_");
     }
 }
