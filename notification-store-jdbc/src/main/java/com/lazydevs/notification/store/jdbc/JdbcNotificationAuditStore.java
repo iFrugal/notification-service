@@ -55,6 +55,12 @@ public class JdbcNotificationAuditStore implements NotificationAuditStore, JdbcP
             + " sent_at, delivered_at, failed_at, updated_at, created_at, expires_at";
     private static final String SELECT = "SELECT id, " + COLUMNS + " FROM ";
 
+    private static final String TENANT = "tenant";
+    private static final String REQUEST_ID = "requestId";
+    private static final String PROVIDER = "provider";
+    private static final String STATUS = "status";
+    private static final String LIMIT = "limit";
+
     private final JdbcClient jdbc;
     private final ObjectMapper json;
     private final long retentionMillis;
@@ -120,19 +126,19 @@ public class JdbcNotificationAuditStore implements NotificationAuditStore, JdbcP
     @Override
     public void insert(NotificationAudit audit) {
         jdbc.sql(insertSql)
-                .param("tenant", audit.getTenantId(), Types.VARCHAR)
-                .param("requestId", Objects.requireNonNull(audit.getRequestId(), "requestId"), Types.VARCHAR)
+                .param(TENANT, audit.getTenantId(), Types.VARCHAR)
+                .param(REQUEST_ID, Objects.requireNonNull(audit.getRequestId(), REQUEST_ID), Types.VARCHAR)
                 .param("correlationId", audit.getCorrelationId(), Types.VARCHAR)
                 .param("callerId", audit.getCallerId(), Types.VARCHAR)
                 .param("idemKey", audit.getIdempotencyKey(), Types.VARCHAR)
                 .param("replayOf", audit.getReplayOf(), Types.VARCHAR)
                 .param("notificationType", audit.getNotificationType(), Types.VARCHAR)
                 .param("channel", name(audit.getChannel()), Types.VARCHAR)
-                .param("provider", audit.getProvider(), Types.VARCHAR)
+                .param(PROVIDER, audit.getProvider(), Types.VARCHAR)
                 .param("templateId", audit.getTemplateId(), Types.VARCHAR)
                 .param("recipientSummary", audit.getRecipientSummary(), Types.VARCHAR)
                 .param("recipientCount", audit.getRecipientCount(), Types.INTEGER)
-                .param("status", name(Objects.requireNonNull(audit.getStatus(), "status")), Types.VARCHAR)
+                .param(STATUS, name(Objects.requireNonNull(audit.getStatus(), STATUS)), Types.VARCHAR)
                 .param("failureType", name(audit.getFailureType()), Types.VARCHAR)
                 .param("providerMessageId", audit.getProviderMessageId(), Types.VARCHAR)
                 .param("errorCode", audit.getErrorCode(), Types.VARCHAR)
@@ -151,8 +157,8 @@ public class JdbcNotificationAuditStore implements NotificationAuditStore, JdbcP
     @Override
     public boolean recordOutcome(NotificationResponse outcome) {
         return jdbc.sql(outcomeSql)
-                .param("status", name(Objects.requireNonNull(outcome.status(), "status")), Types.VARCHAR)
-                .param("provider", outcome.provider(), Types.VARCHAR)
+                .param(STATUS, name(Objects.requireNonNull(outcome.status(), STATUS)), Types.VARCHAR)
+                .param(PROVIDER, outcome.provider(), Types.VARCHAR)
                 .param("providerMessageId", outcome.providerMessageId(), Types.VARCHAR)
                 .param("errorCode", outcome.errorCode(), Types.VARCHAR)
                 .param("errorMessage", outcome.errorMessage(), Types.VARCHAR)
@@ -160,16 +166,16 @@ public class JdbcNotificationAuditStore implements NotificationAuditStore, JdbcP
                 .param("processedAt", timestamp(outcome.processedAt()), Types.TIMESTAMP_WITH_TIMEZONE)
                 .param("sentAt", timestamp(outcome.sentAt()), Types.TIMESTAMP_WITH_TIMEZONE)
                 .param("failed", NotificationAudit.isFailure(outcome.status()), Types.BOOLEAN)
-                .param("tenant", outcome.tenantId(), Types.VARCHAR)
-                .param("requestId", outcome.requestId(), Types.VARCHAR)
+                .param(TENANT, outcome.tenantId(), Types.VARCHAR)
+                .param(REQUEST_ID, outcome.requestId(), Types.VARCHAR)
                 .update() > 0;
     }
 
     @Override
     public Optional<NotificationAudit> find(String tenantId, String requestId) {
         return jdbc.sql(findSql)
-                .param("tenant", tenantId, Types.VARCHAR)
-                .param("requestId", requestId, Types.VARCHAR)
+                .param(TENANT, tenantId, Types.VARCHAR)
+                .param(REQUEST_ID, requestId, Types.VARCHAR)
                 .query(this::mapRow)
                 .optional();
     }
@@ -177,7 +183,7 @@ public class JdbcNotificationAuditStore implements NotificationAuditStore, JdbcP
     @Override
     public Optional<NotificationAudit> findByIdempotencyKey(String tenantId, String callerId, String idempotencyKey) {
         return jdbc.sql(findByKeySql)
-                .param("tenant", tenantId, Types.VARCHAR)
+                .param(TENANT, tenantId, Types.VARCHAR)
                 .param("callerId", callerId, Types.VARCHAR)
                 .param("idemKey", idempotencyKey, Types.VARCHAR)
                 .query(this::mapRow)
@@ -187,8 +193,8 @@ public class JdbcNotificationAuditStore implements NotificationAuditStore, JdbcP
     @Override
     public List<NotificationAudit> findRecent(String tenantId, int limit) {
         return jdbc.sql(recentSql)
-                .param("tenant", tenantId, Types.VARCHAR)
-                .param("limit", JdbcStoreSupport.requirePositive(limit, "limit"))
+                .param(TENANT, tenantId, Types.VARCHAR)
+                .param(LIMIT, JdbcStoreSupport.requirePositive(limit, LIMIT))
                 .query(this::mapRow)
                 .list();
     }
@@ -196,7 +202,7 @@ public class JdbcNotificationAuditStore implements NotificationAuditStore, JdbcP
     @Override
     public int purgeExpired(int batchSize) {
         return jdbc.sql(purgeSql)
-                .param("limit", JdbcStoreSupport.requirePositive(batchSize, "batchSize"))
+                .param(LIMIT, JdbcStoreSupport.requirePositive(batchSize, "batchSize"))
                 .update();
     }
 
@@ -213,16 +219,16 @@ public class JdbcNotificationAuditStore implements NotificationAuditStore, JdbcP
                 .replayOf(rs.getString("replay_of"))
                 .notificationType(rs.getString("notification_type"))
                 .channel(JdbcStoreSupport.enumOrDefault(Channel.class, rs.getString("channel"), null))
-                .provider(rs.getString("provider"))
+                .provider(rs.getString(PROVIDER))
                 .templateId(rs.getString("template_id"))
                 .recipientSummary(rs.getString("recipient_summary"))
                 .recipientCount(recipientCount)
-                .status(JdbcStoreSupport.enumOrDefault(NotificationStatus.class, rs.getString("status"), null))
+                .status(JdbcStoreSupport.enumOrDefault(NotificationStatus.class, rs.getString(STATUS), null))
                 .failureType(failureType(rs.getString("failure_type")))
                 .providerMessageId(rs.getString("provider_message_id"))
                 .errorCode(rs.getString("error_code"))
                 .errorMessage(rs.getString("error_message"))
-                .metadata(metadata(rs.getString("metadata")))
+                .metadata(metadata(rs.getString("metadata")).orElse(null))
                 .receivedAt(JdbcStoreSupport.instant(rs, "received_at"))
                 .processedAt(JdbcStoreSupport.instant(rs, "processed_at"))
                 .sentAt(JdbcStoreSupport.instant(rs, "sent_at"))
@@ -248,15 +254,16 @@ public class JdbcNotificationAuditStore implements NotificationAuditStore, JdbcP
         }
     }
 
-    private Map<String, String> metadata(String value) {
+    /** Stored metadata JSON; empty when the column is null or malformed (read as absent, not as an empty map). */
+    private Optional<Map<String, String>> metadata(String value) {
         if (value == null) {
-            return null;
+            return Optional.empty();
         }
         try {
-            return json.readValue(value, METADATA);
+            return Optional.of(json.readValue(value, METADATA));
         } catch (JsonProcessingException e) {
             log.warn("Malformed audit metadata JSON; reading it as absent: {}", e.getMessage());
-            return null;
+            return Optional.empty();
         }
     }
 

@@ -207,7 +207,8 @@ class JdbcStoreRlsIT {
         assertThat(acme.audit.find("globex", "g-1")).isEmpty();
         assertThat(acme.audit.recordOutcome(NotificationResponse.success(
                 PostgresTestSupport.request("globex", "g-1"), "smtp", "m-1"))).isFalse();
-        assertThatThrownBy(() -> acme.audit.insert(audit("globex", "a-2")))
+        NotificationAudit foreignRow = audit("globex", "a-2");
+        assertThatThrownBy(() -> acme.audit.insert(foreignRow))
                 .isInstanceOf(DataAccessException.class);
         assertThat(countAll(TABLES.audit())).isEqualTo(2);
     }

@@ -56,6 +56,11 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
     /** PostgreSQL SQLSTATE {@code undefined_column}. */
     private static final String UNDEFINED_COLUMN = "42703";
 
+    private static final String WHERE = " WHERE ";
+    private static final String FINGERPRINT = "fingerprint";
+    private static final String RESPONSE = "response";
+    private static final String NOTIFICATION_ID = "notificationId";
+
     private final JdbcClient jdbc;
     private final ObjectMapper json;
     private final long ttlMillis;
@@ -70,6 +75,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
     private final String releaseSql;
     private final String settleSql;
     private final String purgeSql;
+    private final String fingerprintProbeSql;
 
     /**
      * The 1.2.0 constructor: the fingerprint column is detected on first use
@@ -102,19 +108,22 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
         // Compare-and-delete in one statement: only a COMPLETE row that still
         // belongs to the given notification id goes; a re-claimed
         // (IN_PROGRESS) row or another caller's row is left alone.
-        this.releaseSql = "DELETE FROM " + t + " WHERE " + keyMatch
+        this.releaseSql = "DELETE FROM " + t + WHERE + keyMatch
                 + " AND notification_id = :notificationId AND status = 'COMPLETE'";
 
         // Compare-and-set in one statement: only a live IN_PROGRESS row that
         // still belongs to the given notification id is settled (DD-32).
         this.settleSql = "UPDATE " + t + " SET status = 'COMPLETE', response = :response,"
                 + " recorded_at = now(), expires_at = " + nowPlusMillis("ttl")
-                + " WHERE " + keyMatch + " AND notification_id = :notificationId AND status = 'IN_PROGRESS'"
+                + WHERE + keyMatch + " AND notification_id = :notificationId AND status = 'IN_PROGRESS'"
                 + " AND expires_at > now()";
 
         this.purgeSql = "DELETE FROM " + t + " WHERE (tenant_key, caller_key, idem_key) IN ("
                 + "SELECT tenant_key, caller_key, idem_key FROM " + t
                 + " WHERE expires_at <= now() LIMIT :limit FOR UPDATE SKIP LOCKED)";
+
+        // Built once from the validated table name (JdbcStoreTables), never per call.
+        this.fingerprintProbeSql = "SELECT fingerprint FROM " + t + " WHERE 1 = 0";
     }
 
     /**
@@ -146,7 +155,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
 
     private Optional<Boolean> probeFingerprintColumn() {
         try {
-            jdbc.sql("SELECT fingerprint FROM " + table + " WHERE 1 = 0").query().listOfRows();
+            jdbc.sql(fingerprintProbeSql).query().listOfRows();
             return Optional.of(Boolean.TRUE);
         } catch (DataAccessException e) {
             if (isUndefinedColumn(e)) {
@@ -189,12 +198,13 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
         if (present.isEmpty()) {
             return withFingerprint;
         }
+        boolean hasColumn = present.get();
         synchronized (this) {
             if (statements == null) {
-                if (!present.get()) {
+                if (!hasColumn) {
                     log.warn(missingFingerprintMessage());
                 }
-                statements = present.get() ? withFingerprint : withoutFingerprint;
+                statements = hasColumn ? withFingerprint : withoutFingerprint;
             }
             return statements;
         }
@@ -218,8 +228,8 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
     @Override
     public boolean markInProgress(IdempotencyKey key, String notificationId, String fingerprint) {
         int rows = keyParams(jdbc.sql(statements().markInProgress()), key)
-                .param("notificationId", Objects.requireNonNull(notificationId, "notificationId"), Types.VARCHAR)
-                .param("fingerprint", fingerprint, Types.VARCHAR)
+                .param(NOTIFICATION_ID, Objects.requireNonNull(notificationId, NOTIFICATION_ID), Types.VARCHAR)
+                .param(FINGERPRINT, fingerprint, Types.VARCHAR)
                 .param("ttl", ttlMillis)
                 .update();
         return rows == 1;
@@ -228,8 +238,8 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
     @Override
     public void markComplete(IdempotencyKey key, NotificationResponse response) {
         keyParams(jdbc.sql(statements().markComplete()), key)
-                .param("notificationId", Objects.requireNonNullElse(response.requestId(), ""), Types.VARCHAR)
-                .param("response", storedJson(response), Types.VARCHAR)
+                .param(NOTIFICATION_ID, Objects.requireNonNullElse(response.requestId(), ""), Types.VARCHAR)
+                .param(RESPONSE, storedJson(response), Types.VARCHAR)
                 .param("ttl", ttlMillis)
                 .update();
     }
@@ -240,8 +250,8 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
             return false;
         }
         int rows = keyParams(jdbc.sql(settleSql), key)
-                .param("notificationId", notificationId, Types.VARCHAR)
-                .param("response", storedJson(response), Types.VARCHAR)
+                .param(NOTIFICATION_ID, notificationId, Types.VARCHAR)
+                .param(RESPONSE, storedJson(response), Types.VARCHAR)
                 .param("ttl", ttlMillis)
                 .update();
         return rows == 1;
@@ -262,7 +272,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
             return false;
         }
         int rows = keyParams(jdbc.sql(releaseSql), key)
-                .param("notificationId", notificationId, Types.VARCHAR)
+                .param(NOTIFICATION_ID, notificationId, Types.VARCHAR)
                 .update();
         return rows == 1;
     }
@@ -291,7 +301,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
     }
 
     private IdempotencyRecord mapRecord(ResultSet rs, int rowNum) throws SQLException {
-        String body = rs.getString("response");
+        String body = rs.getString(RESPONSE);
         NotificationResponse response = null;
         if (body != null) {
             try {
@@ -308,7 +318,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
                 IdempotencyStatus.valueOf(rs.getString("status")),
                 response,
                 JdbcStoreSupport.instant(rs, "recorded_at"),
-                rs.getString("fingerprint"));
+                rs.getString(FINGERPRINT));
     }
 
     /**
@@ -322,7 +332,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
                     + (fingerprint ? " fingerprint," : "") + " created_at, recorded_at, expires_at";
             String find = "SELECT notification_id, status, response, "
                     + (fingerprint ? "fingerprint" : "NULL AS fingerprint") + ", recorded_at FROM " + t
-                    + " WHERE " + keyMatch + " AND expires_at > now()";
+                    + WHERE + keyMatch + " AND expires_at > now()";
 
             String markInProgress = "INSERT INTO " + t + " AS t (" + columns + ")"
                     + " VALUES (:tenant, :caller, :key, :notificationId, 'IN_PROGRESS', NULL,"
