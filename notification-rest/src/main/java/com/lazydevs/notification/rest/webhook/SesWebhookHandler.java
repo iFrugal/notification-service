@@ -35,7 +35,7 @@ import java.util.Objects;
 public class SesWebhookHandler implements WebhookHandler {
 
     /** Handler id and provider name. */
-    public static final String ID = "ses";
+    public static final String HANDLER_ID = "ses";
 
     /** Path below the handler id. */
     public static final String SNS_PATH = "sns";
@@ -57,7 +57,7 @@ public class SesWebhookHandler implements WebhookHandler {
 
     @Override
     public String id() {
-        return ID;
+        return HANDLER_ID;
     }
 
     @Override
@@ -70,18 +70,38 @@ public class SesWebhookHandler implements WebhookHandler {
         if (!cfg.isEnabled()) {
             return WebhookBodies.error(404, "ses webhook is not enabled");
         }
-
         JsonNode envelope;
         try {
-            envelope = json.readTree(request.body());
+            envelope = readEnvelope(request.body());
+        } catch (IllegalArgumentException e) {
+            return WebhookBodies.error(400, "body is not valid JSON: " + e.getMessage());
+        }
+        WebhookResponse rejected = verify(cfg, envelope);
+        if (rejected != null) {
+            return rejected;
+        }
+        return dispatchEnvelope(envelope);
+    }
+
+    /**
+     * @throws IllegalArgumentException with the parse problem when the body is not JSON or empty
+     */
+    private JsonNode readEnvelope(byte[] body) {
+        JsonNode envelope;
+        try {
+            envelope = json.readTree(body);
         } catch (IOException e) {
             String reason = e instanceof JsonProcessingException jpe ? jpe.getOriginalMessage() : e.getMessage();
-            return WebhookBodies.error(400, "body is not valid JSON: " + reason);
+            throw new IllegalArgumentException(reason, e);
         }
         if (envelope == null || envelope.isMissingNode()) {
-            return WebhookBodies.error(400, "body is not valid JSON: empty body");
+            throw new IllegalArgumentException("empty body");
         }
+        return envelope;
+    }
 
+    /** @return the 403 answer when the signature or the topic is wrong, else {@code null} */
+    private WebhookResponse verify(WebhookProperties.SesWebhook cfg, JsonNode envelope) {
         if (cfg.isSignatureVerification()) {
             if (!snsVerifier.verify(envelope)) {
                 log.warn("SES/SNS webhook: signature verification failed");
@@ -102,7 +122,10 @@ public class SesWebhookHandler implements WebhookHandler {
                     WebhookBodies.sanitize(topicArn), WebhookBodies.sanitize(cfg.getTopicArn()));
             return WebhookBodies.signatureFailed();
         }
+        return null;
+    }
 
+    private WebhookResponse dispatchEnvelope(JsonNode envelope) {
         String type = textOrNull(envelope, "Type");
         if ("SubscriptionConfirmation".equals(type)) {
             // Operators confirm the subscription manually - we don't
@@ -175,7 +198,7 @@ public class SesWebhookHandler implements WebhookHandler {
             attrs.put("notificationtype", notificationType);
             return new DeliveryEvent(
                     Instant.now(),
-                    ID,
+                    HANDLER_ID,
                     providerMessageId,
                     providerEventId,
                     status,

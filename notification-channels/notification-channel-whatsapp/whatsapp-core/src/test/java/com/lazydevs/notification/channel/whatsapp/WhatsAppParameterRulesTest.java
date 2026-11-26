@@ -45,7 +45,8 @@ class WhatsAppParameterRulesTest {
                 .isInstanceOf(TemplateValidationException.class)
                 .hasMessageContaining("1024")
                 .satisfies(e -> assertThat(e.getMessage()).doesNotContain(secret));
-        assertThatThrownBy(() -> WhatsAppParameterRules.check("t", "v", List.of("a")))
+        List<String> notText = List.of("a");
+        assertThatThrownBy(() -> WhatsAppParameterRules.check("t", "v", notText))
                 .isInstanceOf(TemplateValidationException.class).hasMessageContaining("not a text value");
         assertThatThrownBy(() -> WhatsAppParameterRules.check("t", "v", "private value\n"))
                 .satisfies(e -> assertThat(e.getMessage()).doesNotContain("private value"));

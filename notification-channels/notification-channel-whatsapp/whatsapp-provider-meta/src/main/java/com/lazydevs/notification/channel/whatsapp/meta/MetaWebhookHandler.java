@@ -299,14 +299,17 @@ public class MetaWebhookHandler implements WebhookHandler {
             return null;
         }
         String title = errorTitle == null ? "" : PiiMasking.redact(errorTitle);
-        return errorCode == null ? title : (errorCode + (title.isEmpty() ? "" : " " + title));
+        if (errorCode == null) {
+            return title;
+        }
+        return title.isEmpty() ? errorCode.toString() : errorCode + " " + title;
     }
 
     private Instant timestamp(String unixSeconds) {
         if (unixSeconds != null) {
             try {
                 return Instant.ofEpochSecond(Long.parseLong(unixSeconds.strip()));
-            } catch (NumberFormatException | DateTimeException e) {
+            } catch (NumberFormatException | DateTimeException _) {
                 // fall through to now
             }
         }

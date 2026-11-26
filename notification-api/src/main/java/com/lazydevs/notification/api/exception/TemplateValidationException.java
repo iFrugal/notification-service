@@ -13,6 +13,8 @@ import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
  *
  * @since 1.4.0
  */
+// Every library exception extends NotificationException; the depth comes from RuntimeException's own parents.
+@SuppressWarnings("java:S110")
 public class TemplateValidationException extends NotificationException {
 
     /** Error code of every template validation failure. */

@@ -79,7 +79,7 @@ public class WebhookController {
         this(new WebhookDispatcher(
                 List.of(new TwilioWebhookHandler(properties), new SesWebhookHandler(properties)),
                 listeners == null ? List.of() : listeners,
-                metrics == null ? Optional.empty() : metrics));
+                metrics));
     }
 
     @RequestMapping(value = "/{handlerId}/{*subPath}", method = {RequestMethod.GET, RequestMethod.POST})

@@ -33,7 +33,7 @@ import java.util.Objects;
 public class TwilioWebhookHandler implements WebhookHandler {
 
     /** Handler id and provider name. */
-    public static final String ID = "twilio";
+    public static final String HANDLER_ID = "twilio";
 
     /** Path below the handler id. */
     public static final String STATUS_PATH = "status";
@@ -54,7 +54,7 @@ public class TwilioWebhookHandler implements WebhookHandler {
 
     @Override
     public String id() {
-        return ID;
+        return HANDLER_ID;
     }
 
     @Override
@@ -113,7 +113,7 @@ public class TwilioWebhookHandler implements WebhookHandler {
         String eventId = accountSid + ":" + messageSid + ":" + messageStatus;
         return new DeliveryEvent(
                 Instant.now(),
-                ID,
+                HANDLER_ID,
                 messageSid,
                 eventId,
                 status,
@@ -121,21 +121,24 @@ public class TwilioWebhookHandler implements WebhookHandler {
                 attrs);
     }
 
+    /**
+     * Map a Twilio message status.
+     *
+     * <p>Twilio's {@code undelivered} with a permanent error code is a true
+     * bounce. A soft failure, such as a carrier outage, is reported the same
+     * way, so some provider-side failures class as BOUNCED until a mapping per
+     * error code ships. The intermediate states (queued, accepted, sending,
+     * sent) add nothing to the send result, so they are UNKNOWN and the
+     * listener decides.
+     */
     static DeliveryStatus mapTwilioStatus(String twilioStatus) {
         if (twilioStatus == null) {
             return DeliveryStatus.UNKNOWN;
         }
         return switch (twilioStatus.toLowerCase(Locale.ROOT)) {
             case "delivered" -> DeliveryStatus.DELIVERED;
-            // Twilio "undelivered" + a permanent error code is a true bounce;
-            // a soft failure (carrier outage) lands here too, and we accept
-            // that some FAILED_AT_PROVIDER cases will class as BOUNCED until
-            // per-error-code mapping ships.
             case "undelivered" -> DeliveryStatus.BOUNCED;
             case "failed" -> DeliveryStatus.FAILED_AT_PROVIDER;
-            // queued / accepted / sending / sent are intermediate states - the
-            // original SendResult already covered the accept moment, so they
-            // don't add new info. Map to UNKNOWN and let the listener decide.
             default -> DeliveryStatus.UNKNOWN;
         };
     }

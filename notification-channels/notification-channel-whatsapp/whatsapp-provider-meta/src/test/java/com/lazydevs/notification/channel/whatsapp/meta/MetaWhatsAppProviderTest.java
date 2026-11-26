@@ -206,7 +206,7 @@ class MetaWhatsAppProviderTest {
 
         assertThat(provider.send(request(), content()).success()).isTrue();
         assertThat(stub.requests().getFirst().path()).isEqualTo("/v25.0/100000000000009/messages");
-        assertThat(provider.getHealthDetails().get("credentials")).isNotEqualTo("properties");
+        assertThat(provider.getHealthDetails()).doesNotContainEntry("credentials", "properties");
 
         MetaWhatsAppProvider failing = new MetaWhatsAppProvider(null, tenant -> {
             throw new IllegalStateException("vault down");
@@ -222,9 +222,11 @@ class MetaWhatsAppProviderTest {
     void lifecycle_isEnforced() {
         MetaWhatsAppProvider provider = new MetaWhatsAppProvider();
         Map<String, Object> noCredentials = Map.of();
+        NotificationRequest request = request();
+        RenderedContent content = content();
 
         assertThatThrownBy(provider::init).isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> provider.send(request(), content())).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> provider.send(request, content)).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> provider.configure(noCredentials))
                 .isInstanceOf(ProviderConfigurationException.class)
                 .hasMessageContaining("MetaCredentialsProvider");

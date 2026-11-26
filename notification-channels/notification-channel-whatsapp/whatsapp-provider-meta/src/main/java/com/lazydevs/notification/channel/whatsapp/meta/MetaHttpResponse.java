@@ -61,10 +61,11 @@ public record MetaHttpResponse(int statusCode, Map<String, List<String>> headers
 
     @Override
     public boolean equals(Object o) {
-        return o instanceof MetaHttpResponse other
-                && statusCode == other.statusCode
-                && headers.equals(other.headers)
-                && Arrays.equals(body, other.body);
+        return o instanceof MetaHttpResponse(int otherStatus, Map<String, List<String>> otherHeaders,
+                byte[] otherBody)
+                && statusCode == otherStatus
+                && headers.equals(otherHeaders)
+                && Arrays.equals(body, otherBody);
     }
 
     @Override

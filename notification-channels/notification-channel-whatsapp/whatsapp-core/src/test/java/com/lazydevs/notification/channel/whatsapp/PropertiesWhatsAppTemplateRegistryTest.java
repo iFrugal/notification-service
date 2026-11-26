@@ -68,26 +68,29 @@ class PropertiesWhatsAppTemplateRegistryTest {
 
     @Test
     void incompleteBindings_failConstruction_namingTheProperty() {
-        assertThatThrownBy(() -> new PropertiesWhatsAppTemplateRegistry(
-                properties("acme", "order-shipped", template(null, "en", List.of()))))
+        WhatsAppProperties noName = properties("acme", "order-shipped", template(null, "en", List.of()));
+        assertThatThrownBy(() -> new PropertiesWhatsAppTemplateRegistry(noName))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("notification.whatsapp.templates.acme.order-shipped")
                 .hasMessageContaining("name");
-        assertThatThrownBy(() -> new PropertiesWhatsAppTemplateRegistry(
-                properties("acme", "x", template("x", " ", List.of()))))
+        WhatsAppProperties blankLanguage = properties("acme", "x", template("x", " ", List.of()));
+        assertThatThrownBy(() -> new PropertiesWhatsAppTemplateRegistry(blankLanguage))
                 .hasMessageContaining("language");
-        assertThatThrownBy(() -> new PropertiesWhatsAppTemplateRegistry(
-                properties("acme", "x", template("x", "en", List.of("ok", " ")))))
+        WhatsAppProperties blankVariable = properties("acme", "x", template("x", "en", List.of("ok", " ")));
+        assertThatThrownBy(() -> new PropertiesWhatsAppTemplateRegistry(blankVariable))
                 .hasMessageContaining("body variable 2");
         WhatsAppProperties.Template badButton = template("x", "en", List.of());
         badButton.getButtons().add(button(10, "url", "v"));
-        assertThatThrownBy(() -> new PropertiesWhatsAppTemplateRegistry(properties("acme", "x", badButton)))
+        WhatsAppProperties badButtonProperties = properties("acme", "x", badButton);
+        assertThatThrownBy(() -> new PropertiesWhatsAppTemplateRegistry(badButtonProperties))
                 .hasMessageContaining("button index");
         WhatsAppProperties.Template noIndex = template("x", "en", List.of());
         noIndex.getButtons().add(button(null, "url", "v"));
-        assertThatThrownBy(() -> new PropertiesWhatsAppTemplateRegistry(properties("acme", "x", noIndex)))
+        WhatsAppProperties noIndexProperties = properties("acme", "x", noIndex);
+        assertThatThrownBy(() -> new PropertiesWhatsAppTemplateRegistry(noIndexProperties))
                 .hasMessageContaining("button index is required");
-        assertThatThrownBy(() -> new PropertiesWhatsAppTemplateRegistry(properties("acme", "x", null)))
+        WhatsAppProperties emptyEntry = properties("acme", "x", null);
+        assertThatThrownBy(() -> new PropertiesWhatsAppTemplateRegistry(emptyEntry))
                 .hasMessageContaining("is empty");
     }
 

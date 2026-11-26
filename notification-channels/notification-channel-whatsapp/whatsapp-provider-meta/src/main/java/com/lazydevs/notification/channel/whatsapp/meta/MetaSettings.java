@@ -54,7 +54,7 @@ public record MetaSettings(
 
     public static final String BASE_URL = "base-url";
     public static final String API_VERSION = "api-version";
-    public static final String TIMEOUT = "timeout";
+    public static final String TIMEOUT_KEY = "timeout";
     public static final String PHONE_NUMBER_ID = "phone-number-id";
     public static final String ACCESS_TOKEN = "access-token";
     public static final String WABA_ID = "waba-id";
@@ -92,9 +92,9 @@ public record MetaSettings(
         if (!API_VERSION_PATTERN.matcher(apiVersion).matches()) {
             throw invalid("'" + API_VERSION + "' must look like v25.0, got '" + apiVersion + "'");
         }
-        Duration timeout = duration(props, TIMEOUT, DEFAULT_TIMEOUT);
+        Duration timeout = duration(props, TIMEOUT_KEY, DEFAULT_TIMEOUT);
         if (timeout.isZero() || timeout.isNegative()) {
-            throw invalid("'" + TIMEOUT + "' must be positive");
+            throw invalid("'" + TIMEOUT_KEY + "' must be positive");
         }
         Duration pairFloor = duration(props, PAIR_RATE_LIMIT_RETRY_AFTER, DEFAULT_PAIR_RATE_LIMIT_RETRY_AFTER);
         if (pairFloor.isNegative()) {
@@ -141,7 +141,7 @@ public record MetaSettings(
         URI uri;
         try {
             uri = new URI(trimmed);
-        } catch (URISyntaxException e) {
+        } catch (URISyntaxException _) {
             throw invalid("'" + BASE_URL + "' is not a URL");
         }
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
@@ -162,7 +162,7 @@ public record MetaSettings(
             // Only literal addresses reach here in practice; a name is not resolved for anything else.
             return host.chars().allMatch(c -> Character.isDigit(c) || c == '.' || c == ':' || c == '[' || c == ']')
                     && InetAddress.getByName(host).isLoopbackAddress();
-        } catch (UnknownHostException e) {
+        } catch (UnknownHostException _) {
             return false;
         }
     }
@@ -196,7 +196,7 @@ public record MetaSettings(
                 }
                 try {
                     return Duration.parse(text);
-                } catch (DateTimeParseException e) {
+                } catch (DateTimeParseException _) {
                     throw invalid("'" + key + "' is not a duration: '" + text + "'");
                 }
             }

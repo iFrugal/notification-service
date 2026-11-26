@@ -56,12 +56,13 @@ public record MetaHttpRequest(String method, URI uri, Map<String, String> header
 
     @Override
     public boolean equals(Object o) {
-        return o instanceof MetaHttpRequest other
-                && method.equals(other.method)
-                && uri.equals(other.uri)
-                && headers.equals(other.headers)
-                && Arrays.equals(body, other.body)
-                && timeout.equals(other.timeout);
+        return o instanceof MetaHttpRequest(String otherMethod, URI otherUri, Map<String, String> otherHeaders,
+                byte[] otherBody, Duration otherTimeout)
+                && method.equals(otherMethod)
+                && uri.equals(otherUri)
+                && headers.equals(otherHeaders)
+                && Arrays.equals(body, otherBody)
+                && timeout.equals(otherTimeout);
     }
 
     @Override

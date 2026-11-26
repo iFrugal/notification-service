@@ -28,7 +28,7 @@ final class MetaJson {
         try {
             JsonNode node = MAPPER.readTree(body);
             return node instanceof ObjectNode object ? Optional.of(object) : Optional.empty();
-        } catch (IOException e) {
+        } catch (IOException _) {
             return Optional.empty();
         }
     }

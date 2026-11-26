@@ -147,7 +147,7 @@ public class WhatsAppContentRenderer implements ChannelContentRenderer {
         if (hasText(rawIndex)) {
             try {
                 index = Integer.parseInt(rawIndex.strip());
-            } catch (NumberFormatException e) {
+            } catch (NumberFormatException _) {
                 throw new TemplateValidationException("WhatsApp template '" + name + "': " + variable
                         + " index is not a number");
             }

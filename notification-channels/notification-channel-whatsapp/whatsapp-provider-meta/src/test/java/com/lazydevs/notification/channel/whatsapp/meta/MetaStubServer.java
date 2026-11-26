@@ -15,8 +15,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -36,6 +38,8 @@ final class MetaStubServer implements AutoCloseable {
     private final List<SendRequest> requests = new CopyOnWriteArrayList<>();
     private final ConcurrentLinkedQueue<StubResponse> script = new ConcurrentLinkedQueue<>();
     private final AtomicInteger counter = new AtomicInteger();
+    /** Released by {@link #close()}, so a delayed answer never outlives the test. */
+    private final CountDownLatch closed = new CountDownLatch(1);
 
     /** A scripted answer; {@code delay} is slept before answering. */
     record StubResponse(int status, Map<String, String> headers, String body, Duration delay) {
@@ -72,6 +76,7 @@ final class MetaStubServer implements AutoCloseable {
 
     @Override
     public void close() {
+        closed.countDown();
         server.stop(0);
     }
 
@@ -128,11 +133,14 @@ final class MetaStubServer implements AutoCloseable {
         }
     }
 
-    private static void respond(HttpExchange exchange, StubResponse response) throws IOException {
+    private void respond(HttpExchange exchange, StubResponse response) throws IOException {
         if (!response.delay().isZero()) {
+            // Hold the answer back (for the client's read timeout) until the delay passes or the stub closes.
             try {
-                Thread.sleep(response.delay());
-            } catch (InterruptedException e) {
+                if (closed.await(response.delay().toMillis(), TimeUnit.MILLISECONDS)) {
+                    return;
+                }
+            } catch (InterruptedException _) {
                 Thread.currentThread().interrupt();
                 return;
             }
