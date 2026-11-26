@@ -197,7 +197,23 @@ class AcsEmailProviderTest {
     }
 
     @Test
-    void ioErrorDuringTheSendRequest_isAmbiguous_andCarriesTheOperationId() {
+    void timeoutFailureTypeAmbiguous_connectionReset_isAmbiguous_andCarriesTheOperationId() {
+        AcsEmailProvider ambiguous = new AcsEmailProvider(new AcsEmailProperties(null,
+                "endpoint=https://x.communication.azure.com/;accesskey=a2V5", null, SENDER, List.of(),
+                SendMode.WAIT, Duration.ofSeconds(60), 0, null, FailureType.AMBIGUOUS), gateway);
+        when(gateway.send(any(), any())).thenThrow(new UncheckedIOException(new IOException("Connection reset")));
+        NotificationRequest request = request(to("user@example.com"));
+        request.setTenantId("acme");
+        request.setRequestId("req-io");
+
+        SendResult result = ambiguous.send(request, htmlAndText());
+
+        assertThat(result.failureType()).isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(result.messageId()).isNotNull();
+    }
+
+    @Test
+    void preSubmissionIoError_isTransient_andCarriesTheOperationId() {
         when(gateway.send(any(), any())).thenThrow(new UncheckedIOException(new IOException("Connection reset")));
         NotificationRequest request = request(to("user@example.com"));
         request.setTenantId("acme");
@@ -208,7 +224,7 @@ class AcsEmailProviderTest {
         ArgumentCaptor<EmailMessage> message = ArgumentCaptor.forClass(EmailMessage.class);
         verify(gateway).send(message.capture(), any());
         assertThat(result.success()).isFalse();
-        assertThat(result.failureType()).isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(result.failureType()).isEqualTo(FailureType.TRANSIENT);
         assertThat(result.messageId())
                 .isEqualTo(AcsEmailProvider.operationIdFor("acme", "req-io", message.getValue()).toString());
     }
@@ -304,14 +320,14 @@ class AcsEmailProviderTest {
     }
 
     @Test
-    void unauthorized_isTransientWithCredentialHint() {
+    void unauthorized_isPermanentWithCredentialHint() {
         HttpResponse response = mock(HttpResponse.class);
         when(response.getStatusCode()).thenReturn(401);
         when(gateway.send(any(), any())).thenThrow(new HttpResponseException("Denied", response));
 
         SendResult result = provider.send(request(to("user@example.com")), htmlAndText());
 
-        assertThat(result.failureType()).isEqualTo(FailureType.TRANSIENT);
+        assertThat(result.failureType()).isEqualTo(FailureType.PERMANENT);
         assertThat(result.errorMessage()).contains("Denied").contains("check the ACS credentials");
     }
 

@@ -4,7 +4,6 @@ import com.azure.communication.email.models.EmailAddress;
 import com.azure.communication.email.models.EmailAttachment;
 import com.azure.communication.email.models.EmailMessage;
 import com.azure.core.credential.TokenCredential;
-import com.azure.core.exception.ClientAuthenticationException;
 import com.azure.core.exception.HttpResponseException;
 import com.azure.core.http.HttpHeaderName;
 import com.azure.core.http.HttpHeaders;
@@ -212,7 +211,7 @@ public class AcsEmailProvider implements EmailProvider {
             // The id travels with the failure so the attempt can be reconciled; a retry
             // derives the same id again. A transient HTTP error may say how long to
             // wait; the retry executor honours that hint.
-            FailureType type = classifyAcs(e);
+            FailureType type = classifyAcs(e, settings.timeoutFailureType());
             Map<String, Object> metadata = type == FailureType.TRANSIENT
                     ? retryAfter(e, Instant.now())
                             .<Map<String, Object>>map(d -> Map.of(SendResult.RETRY_AFTER_METADATA_KEY, d.toString()))
@@ -443,62 +442,54 @@ public class AcsEmailProvider implements EmailProvider {
 
     /**
      * Map an ACS SDK exception to a {@link FailureType} for retry and
-     * idempotency decisions (DD-13, DD-31).
+     * idempotency decisions (DD-13, DD-25, DD-31).
      *
      * <ul>
-     *   <li>A credential failure ({@link ClientAuthenticationException} anywhere
-     *       in the cause chain, including azure-identity's
-     *       {@code CredentialUnavailableException}) or an HTTP 401/403 -
-     *       {@link FailureType#TRANSIENT}: a configuration problem, the message
-     *       never reached a mailbox, so it is safe to send again once fixed.</li>
-     *   <li>Any other {@link HttpResponseException} - the HTTP status decides via
+     *   <li>{@link HttpResponseException} - the HTTP status decides via
      *       {@link FailureTypes#fromHttpStatus}: 408, 429 (throttling) and 5xx are
-     *       {@link FailureType#TRANSIENT} (ACS answered and did not accept the
-     *       message); other 4xx are {@link FailureType#PERMANENT}.</li>
-     *   <li>A failure to connect ({@code ConnectException}, unknown host, connect
-     *       timeout, TLS handshake) - {@link FailureType#TRANSIENT}: nothing was
-     *       sent.</li>
-     *   <li>A {@link TimeoutException}, or any other {@code IOException} such as a
-     *       read timeout or a connection reset - {@link FailureType#AMBIGUOUS}: the
-     *       request may have reached ACS and been accepted before the answer was
-     *       lost.</li>
+     *       {@link FailureType#TRANSIENT}; other 4xx, including 401/403 credential
+     *       problems, are {@link FailureType#PERMANENT}.</li>
+     *   <li>{@link TimeoutException} or any {@code IOException} (including
+     *       {@code HttpTimeoutException}) in the cause chain -
+     *       {@link FailureType#TRANSIENT} by default: ACS de-duplicates a resend
+     *       on its {@code Operation-Id}, so a retry cannot deliver twice (DD-25).
+     *       With {@code timeoutFailureType} {@link FailureType#AMBIGUOUS}, only a
+     *       failure to connect (nothing was sent) stays {@code TRANSIENT}; a read
+     *       timeout, a reset or another I/O error, which may follow an accepted
+     *       request, is {@code AMBIGUOUS}.</li>
      *   <li>Anything else - {@link FailureType#UNKNOWN}, defer to the retry predicate.</li>
      * </ul>
      *
      * <p>ACS sends {@code Retry-After} with 429; {@link #retryAfter} reads it
      * so the retry executor can wait at least that long.
+     *
+     * @param timeoutFailureType {@code timeout-failure-type}: {@link FailureType#TRANSIENT}
+     *                           or {@link FailureType#AMBIGUOUS}
      */
-    static FailureType classifyAcs(Throwable t) {
-        if (isCredentialFailure(t)) {
-            return FailureType.TRANSIENT;
-        }
+    static FailureType classifyAcs(Throwable t, FailureType timeoutFailureType) {
         if (t instanceof HttpResponseException hre && hre.getResponse() != null) {
-            int status = hre.getResponse().getStatusCode();
-            return isAuthStatus(status) ? FailureType.TRANSIENT : FailureTypes.fromHttpStatus(status);
+            return FailureTypes.fromHttpStatus(hre.getResponse().getStatusCode());
         }
-        FailureType io = FailureTypes.fromExceptionAfterSubmit(t);
-        if (io != FailureType.UNKNOWN) {
-            return io;
-        }
-        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
-            if (cur instanceof TimeoutException) {
-                return FailureType.AMBIGUOUS;
+        if (timeoutFailureType == FailureType.AMBIGUOUS) {
+            FailureType io = FailureTypes.fromExceptionAfterSubmit(t);
+            if (io != FailureType.UNKNOWN) {
+                return io;
             }
+            return hasTimeout(t) ? FailureType.AMBIGUOUS : FailureType.UNKNOWN;
+        }
+        if (hasTimeout(t) || FailureTypes.fromException(t) == FailureType.TRANSIENT) {
+            return FailureType.TRANSIENT;
         }
         return FailureType.UNKNOWN;
     }
 
-    private static boolean isCredentialFailure(Throwable t) {
+    private static boolean hasTimeout(Throwable t) {
         for (Throwable cur = t; cur != null; cur = cur.getCause()) {
-            if (cur instanceof ClientAuthenticationException) {
+            if (cur instanceof TimeoutException) {
                 return true;
             }
         }
         return false;
-    }
-
-    private static boolean isAuthStatus(int status) {
-        return status == 401 || status == 403;
     }
 
     /**
@@ -526,7 +517,7 @@ public class AcsEmailProvider implements EmailProvider {
         if (t instanceof HttpResponseException hre) {
             HttpResponse response = hre.getResponse();
             int status = response == null ? 0 : response.getStatusCode();
-            if (isAuthStatus(status)) {
+            if (status == 401 || status == 403) {
                 return message + " (HTTP " + status + ": check the ACS credentials - the connection string"
                         + " access key, or the role assignment of the TokenCredential identity on the"
                         + " Communication Services resource)";
