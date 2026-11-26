@@ -1,11 +1,13 @@
 package com.lazydevs.notification.api.model;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.NotificationStatus;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -50,6 +52,11 @@ import java.util.Map;
  *                          an ACS {@code acsStatus} or a retry hint.
  *                          {@code null} when the provider gave none; omitted
  *                          from JSON when {@code null}. Since 1.3.0 (DD-31).
+ * @param retryAfter        how long the provider asked to wait before the next
+ *                          attempt, from {@link SendResult#retryAfter()} (for
+ *                          example an HTTP 429 {@code Retry-After}) on a failed
+ *                          send. {@code null} when the provider gave no hint;
+ *                          omitted from JSON when {@code null}. Since 1.3.0 (DD-31).
  */
 public record NotificationResponse(
         String requestId,
@@ -67,22 +74,26 @@ public record NotificationResponse(
         Instant sentAt,
         @JsonIgnore Boolean idempotentReplay,
         @JsonInclude(JsonInclude.Include.NON_NULL) FailureType failureType,
-        @JsonInclude(JsonInclude.Include.NON_NULL) Map<String, Object> providerMetadata) {
+        @JsonInclude(JsonInclude.Include.NON_NULL) Map<String, Object> providerMetadata,
+        // ISO-8601 ("PT30S") whatever the mapper's duration settings, so REST and stores agree
+        @JsonInclude(JsonInclude.Include.NON_NULL) @JsonFormat(shape = JsonFormat.Shape.STRING) Duration retryAfter) {
 
     /**
      * Canonical constructor. Copies {@code providerMetadata} into an
-     * unmodifiable map so the response stays a value.
+     * unmodifiable map so the response stays a value; a negative or zero
+     * {@code retryAfter} is no hint ({@code null}).
      */
     @JsonCreator
     public NotificationResponse {
         providerMetadata = providerMetadata == null ? null
                 : Collections.unmodifiableMap(new LinkedHashMap<>(providerMetadata));
+        retryAfter = retryAfter == null || retryAfter.isNegative() || retryAfter.isZero() ? null : retryAfter;
     }
 
     /**
-     * The 1.2.0 constructor, without {@link #failureType()} and
-     * {@link #providerMetadata()} (both {@code null}). Kept so code that
-     * builds responses directly keeps compiling.
+     * The 1.2.0 constructor, without {@link #failureType()},
+     * {@link #providerMetadata()} and {@link #retryAfter()} (all {@code null}).
+     * Kept so code that builds responses directly keeps compiling.
      */
     @SuppressWarnings("java:S107") // mirrors the record components
     public NotificationResponse(String requestId, String correlationId, String tenantId, String callerId,
@@ -91,7 +102,7 @@ public record NotificationResponse(
                                 Instant receivedAt, Instant processedAt, Instant sentAt,
                                 Boolean idempotentReplay) {
         this(requestId, correlationId, tenantId, callerId, channel, provider, status, providerMessageId,
-                errorCode, errorMessage, receivedAt, processedAt, sentAt, idempotentReplay, null, null);
+                errorCode, errorMessage, receivedAt, processedAt, sentAt, idempotentReplay, null, null, null);
     }
 
     /**
@@ -104,7 +115,7 @@ public record NotificationResponse(
     public NotificationResponse withFailureType(FailureType type) {
         return new NotificationResponse(requestId, correlationId, tenantId, callerId, channel, provider, status,
                 providerMessageId, errorCode, errorMessage, receivedAt, processedAt, sentAt, idempotentReplay,
-                type, providerMetadata);
+                type, providerMetadata, retryAfter);
     }
 
     /**
@@ -118,7 +129,7 @@ public record NotificationResponse(
     public NotificationResponse withProviderMetadata(Map<String, Object> metadata) {
         return new NotificationResponse(requestId, correlationId, tenantId, callerId, channel, provider, status,
                 providerMessageId, errorCode, errorMessage, receivedAt, processedAt, sentAt, idempotentReplay,
-                failureType, metadata == null || metadata.isEmpty() ? null : metadata);
+                failureType, metadata == null || metadata.isEmpty() ? null : metadata, retryAfter);
     }
 
     /**
@@ -132,7 +143,20 @@ public record NotificationResponse(
     public NotificationResponse withErrorMessage(String message) {
         return new NotificationResponse(requestId, correlationId, tenantId, callerId, channel, provider, status,
                 providerMessageId, errorCode, message, receivedAt, processedAt, sentAt, idempotentReplay,
-                failureType, providerMetadata);
+                failureType, providerMetadata, retryAfter);
+    }
+
+    /**
+     * A copy of this response with the provider's retry hint.
+     *
+     * @param delay the delay, may be {@code null}; zero or negative is no hint
+     * @return the copy; this response is not changed
+     * @since 1.3.0
+     */
+    public NotificationResponse withRetryAfter(Duration delay) {
+        return new NotificationResponse(requestId, correlationId, tenantId, callerId, channel, provider, status,
+                providerMessageId, errorCode, errorMessage, receivedAt, processedAt, sentAt, idempotentReplay,
+                failureType, providerMetadata, delay);
     }
 
     // ======================================================================
@@ -328,6 +352,7 @@ public record NotificationResponse(
                 cached.sentAt(),
                 Boolean.TRUE,
                 cached.failureType(),
-                cached.providerMetadata());
+                cached.providerMetadata(),
+                cached.retryAfter());
     }
 }

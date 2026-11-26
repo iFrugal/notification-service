@@ -207,6 +207,28 @@ class DefaultNotificationServiceIdempotencyPolicyTest {
     }
 
     @Test
+    void retryAfter_isCopiedFromTheProvider_andKeptInTheStoredReplay() {
+        properties.getIdempotency().setFailurePolicy(IdempotencyFailurePolicy.RELEASE_TRANSIENT);
+        when(provider.send(any(), any())).thenReturn(SendResult.failure("THROTTLED", "slow down",
+                FailureType.PERMANENT).withRetryAfter(Duration.ofSeconds(30)));
+        DefaultNotificationService service = service();
+
+        NotificationResponse first = service.send(request("k-retry-after", "Ada"));
+        NotificationResponse replay = service.send(request("k-retry-after", "Ada"));
+
+        assertThat(first.retryAfter()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(replay.idempotentReplay()).isTrue();
+        assertThat(replay.retryAfter()).isEqualTo(Duration.ofSeconds(30));
+    }
+
+    @Test
+    void retryAfter_isNullWithoutAProviderHint() {
+        when(provider.send(any(), any())).thenReturn(SendResult.failure("E", "bad", FailureType.PERMANENT));
+
+        assertThat(service().send(request("k-no-hint", "Ada")).retryAfter()).isNull();
+    }
+
+    @Test
     void releaseTransient_withStoreScrubbedErrorMessage_replaysTheScrubbedMessage() {
         properties.getIdempotency().setFailurePolicy(IdempotencyFailurePolicy.RELEASE_TRANSIENT);
         properties.getIdempotency().setStoreScrubbedErrorMessage(true);

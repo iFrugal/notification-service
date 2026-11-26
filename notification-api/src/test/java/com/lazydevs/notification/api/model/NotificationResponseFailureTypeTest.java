@@ -8,6 +8,7 @@ import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.NotificationStatus;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -50,6 +51,28 @@ class NotificationResponseFailureTypeTest {
         assertThat(read.failureType()).isEqualTo(FailureType.AMBIGUOUS);
         assertThat(read.providerMetadata()).containsEntry("acsStatus", "UNCONFIRMED");
         assertThat(read.errorCode()).isEqualTo("ACS_TIMEOUT");
+    }
+
+    @Test
+    void retryAfter_isOmittedWhenNull_roundTrips_andSurvivesCopiesAndReplay() throws Exception {
+        NotificationResponse failed = NotificationResponse.failed(request(), "acs", "THROTTLED", "slow down",
+                Instant.parse("2026-01-01T00:00:00Z")).withRetryAfter(Duration.ofSeconds(30));
+
+        assertThat(json.writeValueAsString(failed.withRetryAfter(null))).doesNotContain("retryAfter");
+        String body = json.writeValueAsString(failed);
+        assertThat(body).contains("\"retryAfter\":\"PT30S\"");
+        assertThat(json.readValue(body, NotificationResponse.class).retryAfter()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(failed.withFailureType(FailureType.TRANSIENT).withProviderMetadata(Map.of("k", "v"))
+                .withErrorMessage(null).retryAfter()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(NotificationResponse.replayedFrom(failed).retryAfter()).isEqualTo(Duration.ofSeconds(30));
+    }
+
+    @Test
+    void retryAfter_zeroOrNegative_isNoHint() {
+        NotificationResponse failed = NotificationResponse.failure(request(), "acs", "E", "m");
+
+        assertThat(failed.withRetryAfter(Duration.ZERO).retryAfter()).isNull();
+        assertThat(failed.withRetryAfter(Duration.ofSeconds(-1)).retryAfter()).isNull();
     }
 
     @Test

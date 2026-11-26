@@ -32,7 +32,7 @@ class NotificationAuditTest {
         assertThat(audit.getFailedAt()).isNull();
 
         NotificationResponse failed = new NotificationResponse("r", null, "t", null, Channel.EMAIL, "ses",
-                NotificationStatus.REJECTED, "m-2", "E", "msg", NOW, null, null, null, FailureType.PERMANENT, null);
+                NotificationStatus.REJECTED, "m-2", "E", "msg", NOW, null, null, null, FailureType.PERMANENT, null, null);
         Instant later = NOW.plusSeconds(5);
         audit.applyOutcome(failed, later);
         assertThat(audit.getProvider()).isEqualTo("ses");

@@ -327,7 +327,7 @@ class RedisIdempotencyStoreIntegrationTest extends AbstractRedisIntegrationTest 
         NotificationResponse timedOut = new NotificationResponse(
                 "req-1", null, "acme", null, Channel.EMAIL, null, NotificationStatus.FAILED, null,
                 "IN_PROGRESS_TIMEOUT", "timed out", Instant.now(), Instant.now(), null, null,
-                FailureType.AMBIGUOUS, null);
+                FailureType.AMBIGUOUS, null, null);
 
         assertThat(store.settleInProgress(k, "someone-else", timedOut)).isFalse();
         assertThat(store.settleInProgress(k, null, timedOut)).isFalse();

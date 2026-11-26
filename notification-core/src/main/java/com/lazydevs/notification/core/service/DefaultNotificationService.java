@@ -252,7 +252,8 @@ public class DefaultNotificationService implements NotificationService {
                         PiiMasking.redact(result.errorMessage()),
                         receivedAt)
                         .withFailureType(failureTypeOf(result))
-                        .withProviderMetadata(result.providerMetadata());
+                        .withProviderMetadata(result.providerMetadata())
+                        .withRetryAfter(result.retryAfter().orElse(null));
 
                 if (result.failureType() == FailureType.AMBIGUOUS && attempts == 1) {
                     // The provider may have accepted the message, so it is not

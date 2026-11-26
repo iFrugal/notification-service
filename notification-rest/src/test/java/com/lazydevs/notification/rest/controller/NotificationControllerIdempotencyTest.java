@@ -53,6 +53,29 @@ class NotificationControllerIdempotencyTest {
     }
 
     @Test
+    void failedResponse_carriesRetryAfter_onlyWhenSet() throws Exception {
+        NotificationRequest body = NotificationRequest.builder()
+                .notificationType("ORDER_CONFIRMATION")
+                .channel(Channel.EMAIL)
+                .recipient(new EmailRecipient(null, "user@example.com", null, null, null, null))
+                .build();
+        NotificationResponse throttled = NotificationResponse.failed(body, "acs", "THROTTLED", "slow down",
+                Instant.now()).withRetryAfter(java.time.Duration.ofSeconds(30));
+        when(notificationService.send(any())).thenReturn(throttled, throttled.withRetryAfter(null));
+
+        mockMvc.perform(post("/api/v1/notifications")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Tenant-Id", "acme")
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(jsonPath("$.retryAfter").value("PT30S"));
+        mockMvc.perform(post("/api/v1/notifications")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Tenant-Id", "acme")
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(jsonPath("$.retryAfter").doesNotExist());
+    }
+
+    @Test
     void duplicateInFlight_returns409WithSpecBody() throws Exception {
         when(notificationService.send(any()))
                 .thenThrow(new IdempotencyInProgressException("orig-req-12345"));
