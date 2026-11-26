@@ -182,6 +182,16 @@ public class AdminController {
             }
         }
 
+        // DD-29: with lazy-init, a provider no send has needed yet is not a
+        // fault and keeps the status UP; one whose last build failed does not.
+        for (Map.Entry<String, ProviderRegistry.PendingState> entry
+                : providerRegistry.getUninitializedProviders().entrySet()) {
+            providerStatus.put(entry.getKey(), entry.getValue().name());
+            if (entry.getValue() == ProviderRegistry.PendingState.INIT_FAILED) {
+                allHealthy = false;
+            }
+        }
+
         result.put(FIELD_STATUS, allHealthy ? "UP" : "DEGRADED");
         result.put("providers", providerStatus);
 

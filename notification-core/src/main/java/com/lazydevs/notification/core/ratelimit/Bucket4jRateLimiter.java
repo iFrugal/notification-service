@@ -4,18 +4,17 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.core.config.NotificationProperties;
-import com.lazydevs.notification.core.config.NotificationProperties.RateLimitOverride;
 import com.lazydevs.notification.core.config.NotificationProperties.RateLimitProperties;
-import com.lazydevs.notification.core.config.NotificationProperties.RateLimitRule;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
+import io.github.bucket4j.TimeMeter;
+import io.github.bucket4j.local.LocalBucketBuilder;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -62,40 +61,50 @@ public class Bucket4jRateLimiter implements RateLimiter {
      */
     private static final Duration BUCKET_CACHE_IDLE_TTL = Duration.ofHours(1);
 
-    private final RateLimitProperties config;
-    private final Cache<RateLimitKey, Bucket> buckets;
+    /** Tenant id shown for a channel-scoped (shared) bucket in {@link #snapshot()}. */
+    static final String SHARED_TENANT = "*";
 
     /**
-     * Sorted-by-specificity-desc snapshot of overrides — built once at
-     * startup so {@link #ruleFor} doesn't have to re-sort per request.
+     * Cache key of a bucket. A channel-scoped bucket is keyed by
+     * {@code ("*", ruleId, channel)} with {@code shared=true}, so it can never
+     * collide with the bucket of a real {@code (tenant, caller, channel)}.
      */
-    private final List<RateLimitOverride> sortedOverrides;
+    private record BucketKey(boolean shared, RateLimitKey key) {
+    }
+
+    private final RateLimitRuleResolver resolver;
+    private final Cache<BucketKey, Bucket> buckets;
+    private final TimeMeter timeMeter;
 
     public Bucket4jRateLimiter(NotificationProperties properties) {
-        this.config = properties.getRateLimit();
+        this(properties, TimeMeter.SYSTEM_MILLISECONDS);
+    }
+
+    /**
+     * Test seam: buckets read time from {@code timeMeter}.
+     */
+    Bucket4jRateLimiter(NotificationProperties properties, TimeMeter timeMeter) {
+        RateLimitProperties config = properties.getRateLimit();
+        this.resolver = new RateLimitRuleResolver(config);
+        this.timeMeter = timeMeter;
         this.buckets = Caffeine.newBuilder()
                 .maximumSize(BUCKET_CACHE_MAX_SIZE)
                 .expireAfterAccess(BUCKET_CACHE_IDLE_TTL)
                 .build();
-        // Most specific match first: (tenant, caller, channel) >
-        // (tenant, caller) > (tenant). Ties broken by configuration order.
-        this.sortedOverrides = config.getOverrides() == null
-                ? List.of()
-                : config.getOverrides().stream()
-                        .sorted(Comparator.comparingInt(this::specificity).reversed())
-                        .toList();
         log.info("Bucket4jRateLimiter initialized: default={}, {} override(s), maxBuckets={}",
-                config.getDefaultRule(), sortedOverrides.size(), BUCKET_CACHE_MAX_SIZE);
+                config.getDefaultRule(), resolver.overrideCount(), BUCKET_CACHE_MAX_SIZE);
     }
 
     @Override
     public Decision tryConsume(RateLimitKey key) {
-        Bucket bucket = buckets.get(key, this::buildBucket);
+        RateLimitRuleResolver.Resolution resolution = resolver.resolve(key);
+        Bucket bucket = buckets.get(bucketKey(key, resolution), k -> buildBucket(resolution));
         ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(1);
         if (probe.isConsumed()) {
             return Decision.allow();
         }
-        // nanosToWaitForRefill is documented as "time until at least 1 token is available"
+        // nanosToWaitForRefill is "time until at least 1 token is available";
+        // with several bands it is the time until every band has one (DD-30).
         Duration retryAfter = Duration.ofNanos(probe.getNanosToWaitForRefill());
         // Don't log the user-controlled key components here — taint-tracking
         // tools can't statically prove our control-char scrub is sufficient,
@@ -107,68 +116,37 @@ public class Bucket4jRateLimiter implements RateLimiter {
     }
 
     /**
-     * Build a Bucket4j bucket from the resolved rule for this key.
-     * Called by Caffeine on cache miss, so it runs at most once per
-     * unique key (until eviction).
+     * Give one token back to the bucket {@code key} resolves to (DD-30).
+     * Bucket4j's {@code addTokens} never fills a band above its capacity. A
+     * bucket that is no longer cached is full by definition, so there is
+     * nothing to give back.
      */
-    private Bucket buildBucket(RateLimitKey key) {
-        RateLimitRule rule = ruleFor(key);
-        // New builder API — replaces the deprecated Bandwidth.classic /
-        // Refill.greedy combo (CodeQL flagged both as deprecated).
-        Bandwidth bandwidth = Bandwidth.builder()
-                .capacity(rule.getCapacity())
-                .refillGreedy(rule.getRefillTokens(), rule.getRefillPeriod())
-                .build();
-        return Bucket.builder().addLimit(bandwidth).build();
+    @Override
+    public void refund(RateLimitKey key) {
+        Bucket bucket = buckets.getIfPresent(bucketKey(key, resolver.resolve(key)));
+        if (bucket != null) {
+            bucket.addTokens(1);
+        }
+    }
+
+    private static BucketKey bucketKey(RateLimitKey key, RateLimitRuleResolver.Resolution resolution) {
+        if (resolution.channelScoped()) {
+            return new BucketKey(true, new RateLimitKey(SHARED_TENANT, resolution.ruleId(),
+                    key.channel().toLowerCase(Locale.ROOT)));
+        }
+        return new BucketKey(false, key);
     }
 
     /**
-     * Resolve which rule applies to this key, walking from most specific
-     * to least specific (DD-23 inserts the {@code byChannel} default
-     * between per-tuple overrides and the global default):
-     *
-     * <pre>
-     *   (tenant, caller, channel) → (tenant, caller, *) → (tenant, *, *)
-     *     → byChannel[channel]
-     *     → default
-     * </pre>
+     * Build a Bucket4j bucket from the resolved rule. Called by Caffeine on
+     * cache miss, so it runs at most once per bucket key (until eviction).
      */
-    private RateLimitRule ruleFor(RateLimitKey key) {
-        for (RateLimitOverride o : sortedOverrides) {
-            if (matches(o, key)) {
-                return o;
-            }
+    private Bucket buildBucket(RateLimitRuleResolver.Resolution resolution) {
+        LocalBucketBuilder builder = Bucket.builder().withCustomTimePrecision(timeMeter);
+        for (Bandwidth band : RateLimitRuleResolver.bucketConfiguration(resolution.rule()).getBandwidths()) {
+            builder.addLimit(band);
         }
-        // DD-23: per-channel default sits between per-tuple overrides
-        // and the global default. A tenant who's negotiated a higher
-        // bucket via an override above still wins; this slot is the
-        // "globally, SMS is more bounded than the catch-all" backstop.
-        if (key.channel() != null) {
-            RateLimitRule perChannel = config.getByChannel()
-                    .get(key.channel().toLowerCase(java.util.Locale.ROOT));
-            if (perChannel != null) {
-                return perChannel;
-            }
-        }
-        return config.getDefaultRule();
-    }
-
-    private static boolean matches(RateLimitOverride o, RateLimitKey key) {
-        if (!key.tenantId().equals(o.getTenant())) {
-            return false;
-        }
-        if (o.getCaller() != null && !o.getCaller().equals(key.callerId())) {
-            return false;
-        }
-        return o.getChannel() == null || o.getChannel().equalsIgnoreCase(key.channel());
-    }
-
-    private int specificity(RateLimitOverride o) {
-        // Tenant is required; +1 each for caller and channel narrowing.
-        int s = 1;
-        if (o.getCaller() != null) s++;
-        if (o.getChannel() != null) s++;
-        return s;
+        return builder.build();
     }
 
     /**
@@ -177,11 +155,15 @@ public class Bucket4jRateLimiter implements RateLimiter {
      * {@link RateLimiter} SPI because the SPI is meant to stay portable
      * across backends and Redis won't expose this kind of in-memory
      * introspection.
+     *
+     * <p>A channel-scoped bucket (DD-30) is listed under
+     * {@code ("*", ruleId, channel)}. With several bands, the count is the
+     * smallest band's.
      */
     public Map<RateLimitKey, Long> snapshot() {
         Map<RateLimitKey, Long> out = new LinkedHashMap<>();
         // asMap() gives a live view — iterating is safe, mutating it is not.
-        buckets.asMap().forEach((k, v) -> out.put(k, v.getAvailableTokens()));
+        buckets.asMap().forEach((k, v) -> out.put(k.key(), v.getAvailableTokens()));
         return Map.copyOf(out);
     }
 
