@@ -30,6 +30,21 @@ public class NotificationProperties {
     private String defaultTenant = "default";
 
     /**
+     * Provider fallback to {@link #defaultTenant} for tenants that have no
+     * entry under {@code notification.tenants} (DD-28).
+     *
+     * @since 1.3.0
+     */
+    private TenantFallbackProperties tenantFallback = new TenantFallbackProperties();
+
+    /**
+     * Provider lifecycle settings shared by every tenant (DD-29).
+     *
+     * @since 1.3.0
+     */
+    private ProvidersProperties providers = new ProvidersProperties();
+
+    /**
      * REST API configuration
      */
     private RestProperties rest = new RestProperties();
@@ -878,6 +893,43 @@ public class NotificationProperties {
              */
             private boolean signatureVerification = true;
         }
+    }
+
+    /**
+     * Tenant provider fallback (DD-28).
+     *
+     * @since 1.3.0
+     */
+    @Data
+    public static class TenantFallbackProperties {
+        /**
+         * When {@code true}, a tenant with no entry under
+         * {@code notification.tenants} sends through the providers of
+         * {@code notification.default-tenant}. Only provider resolution falls
+         * back; the request keeps its own tenant id for idempotency, rate
+         * limits, templates and audit. {@code false} (the default) keeps the
+         * 1.2.0 behaviour: such a tenant fails with {@code TENANT_NOT_FOUND}.
+         */
+        private boolean enabled = false;
+    }
+
+    /**
+     * Provider lifecycle settings (DD-29).
+     *
+     * @since 1.3.0
+     */
+    @Data
+    public static class ProvidersProperties {
+        /**
+         * When {@code true}, providers are configured and initialised on the
+         * first send that needs them instead of at startup, so the
+         * application boots even when a provider's settings are missing.
+         * A failed build is not cached; the send fails with
+         * {@code PROVIDER_NOT_CONFIGURED} ({@code TRANSIENT}) and the next
+         * send tries again. {@code false} (the default) keeps the 1.2.0
+         * fail-fast startup.
+         */
+        private boolean lazyInit = false;
     }
 
     @Data

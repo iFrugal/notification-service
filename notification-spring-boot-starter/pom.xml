@@ -73,6 +73,13 @@
             <artifactId>email-provider-acs</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- The Azure HTTP client the ACS provider needs to build its client,
+             so the lazy-init test (DD-29) can prove the provider builds. -->
+        <dependency>
+            <groupId>com.azure</groupId>
+            <artifactId>azure-core-http-jdk-httpclient</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>${project.groupId}</groupId>
             <artifactId>sms-provider-twilio</artifactId>
