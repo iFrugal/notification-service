@@ -9,6 +9,7 @@ import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.guard.RecipientGuard;
 import com.lazydevs.notification.api.idempotency.IdempotencyReleasePolicy;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
+import com.lazydevs.notification.api.push.PushDeviceRegistry;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.util.MessageScrubber;
 import com.lazydevs.notification.api.webhook.WebhookHandler;
@@ -27,6 +28,8 @@ import com.lazydevs.notification.core.service.NoOpAuditService;
 import com.lazydevs.notification.core.service.NotificationServiceExtensions;
 import com.lazydevs.notification.core.service.NotificationAuditService;
 import com.lazydevs.notification.core.store.StoreTypeValidator;
+import com.lazydevs.notification.core.push.PushContentRenderer;
+import com.lazydevs.notification.core.push.PushTargetExpansion;
 import com.lazydevs.notification.core.template.ChannelContentRenderer;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
 import com.lazydevs.notification.core.webhook.WebhookDispatcher;
@@ -194,11 +197,41 @@ public class NotificationCoreAutoConfiguration {
             Optional<DeliveryEventStore> deliveryEventStore,
             Optional<RecipientGuard> recipientGuard,
             Optional<IdempotencyReleasePolicy> releasePolicy,
-            ObjectProvider<ChannelContentRenderer> renderers) {
+            ObjectProvider<ChannelContentRenderer> renderers,
+            ObjectProvider<PushDeviceRegistry> pushDeviceRegistry) {
         return new DefaultNotificationService(properties, providerRegistry, templateEngine, auditService,
                 idempotencyStore, rateLimiter, retryExecutor, deadLetterStore, metrics,
                 new NotificationServiceExtensions(messageScrubber, Clock.systemUTC(),
                         deliveryEventStore.orElse(null), recipientGuard.orElse(null),
-                        releasePolicy.orElse(null), renderers.orderedStream().toList()));
+                        releasePolicy.orElse(null), renderers.orderedStream().toList(),
+                        pushTargetExpansion(properties, pushDeviceRegistry.getIfAvailable())));
+    }
+
+    /**
+     * Push user targeting (DD-37) is on exactly when a {@link PushDeviceRegistry} bean
+     * exists. {@code notification.push.devices.enabled=true} without one (the Redis store
+     * family has no registry) fails startup instead of silently refusing every user target.
+     */
+    static PushTargetExpansion pushTargetExpansion(NotificationProperties properties, PushDeviceRegistry registry) {
+        NotificationProperties.PushProperties push = properties.getPush();
+        if (registry == null && push.getDevices().isEnabled()) {
+            throw new IllegalStateException("notification.push.devices.enabled=true needs a PushDeviceRegistry:"
+                    + " use notification.store.type=memory or jdbc (notification-store-jdbc), or declare a"
+                    + " PushDeviceRegistry bean");
+        }
+        return new PushTargetExpansion(registry, push.getUserTargets().getMultiTokenPolicy());
+    }
+
+    /**
+     * Renders push templates with {@code [TITLE]}, {@code [BODY]} and {@code [DATA key="..."]}
+     * sections (DD-37); a template without sections renders as before. Turn it off with
+     * {@code notification.push.template-sections.enabled=false} to declare another
+     * {@link ChannelContentRenderer} for PUSH.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "notification.push.template-sections", name = "enabled",
+            havingValue = "true", matchIfMissing = true)
+    public PushContentRenderer pushContentRenderer(NotificationTemplateEngine templateEngine) {
+        return new PushContentRenderer(templateEngine);
     }
 }

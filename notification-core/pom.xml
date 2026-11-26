@@ -135,4 +135,22 @@
         </dependency>
     </dependencies>
 
+    <build>
+        <plugins>
+            <!-- The test-jar carries PushDeviceRegistryContractTest, which
+                 notification-store-jdbc runs against its JDBC registry (DD-37). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
 </project>

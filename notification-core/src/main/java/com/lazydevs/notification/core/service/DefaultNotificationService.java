@@ -20,6 +20,7 @@ import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.model.NotificationView;
 import com.lazydevs.notification.api.model.SendResult;
+import com.lazydevs.notification.api.push.PushTargeting;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.util.MessageScrubber;
 import com.lazydevs.notification.api.util.PiiMasking;
@@ -29,6 +30,7 @@ import com.lazydevs.notification.core.idempotency.RequestFingerprint;
 import com.lazydevs.notification.core.metrics.NotificationMetrics;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.retry.RetryExecutor;
+import com.lazydevs.notification.core.push.PushTargetExpansion;
 import com.lazydevs.notification.core.template.ChannelContentRenderer;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
 import lazydevs.persistence.connection.multitenant.TenantContext;
@@ -67,6 +69,7 @@ public class DefaultNotificationService implements NotificationService {
     private final NotificationViews views;
     private final RecipientGuard recipientGuard;
     private final Map<com.lazydevs.notification.api.Channel, ChannelContentRenderer> renderers;
+    private final PushTargetExpansion pushTargets;
     private final Executor asyncExecutor;
 
     /**
@@ -122,6 +125,7 @@ public class DefaultNotificationService implements NotificationService {
         this.views = new NotificationViews(extensions.deliveryEvents());
         this.recipientGuard = extensions.recipientGuard();
         this.renderers = renderersByChannel(extensions.renderers());
+        this.pushTargets = extensions.pushTargets();
         this.asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
         // Optional<IdempotencyStore>: empty when notification.idempotency.enabled=false.
         IdempotencyReleasePolicy releasePolicy = extensions.releasePolicy() != null ? extensions.releasePolicy()
@@ -180,12 +184,12 @@ public class DefaultNotificationService implements NotificationService {
             // it (the fingerprint and the claim above used that one too); the
             // audit record and the provider only ever see the guarded recipient.
             RecipientGuard.Decision guard = guard(request);
-            NotificationRequest dispatched = guard != null && guard.changed()
+            NotificationRequest guarded = guard != null && guard.changed()
                     ? request.toBuilder().recipient(guard.recipient()).build()
                     : request;
 
             // Record audit (received)
-            fillRecipientSummary(auditService.recordReceived(dispatched), dispatched);
+            fillRecipientSummary(auditService.recordReceived(guarded), guarded);
 
             // Render content (already rendered when validate-before-dispatch is on, DD-27):
             // the channel's renderer when one is registered (DD-35), otherwise the
@@ -196,7 +200,12 @@ public class DefaultNotificationService implements NotificationService {
                         "Every recipient was blocked by the recipient guard");
             }
             RenderedContent content = guard == null ? rendered
-                    : withSubjectPrefix(rendered, guard.subjectPrefix(), dispatched);
+                    : withSubjectPrefix(rendered, guard.subjectPrefix(), guarded);
+
+            // Push user targeting (DD-37): a recipient that names a user goes to the
+            // user's active devices. Only the provider sees the tokens; the request the
+            // caller sent, kept by idempotency, audit and the DLQ, still names the user.
+            NotificationRequest dispatched = pushTargets.expand(guarded);
 
             // Get provider
             NotificationProvider provider = providerRegistry.getProvider(
@@ -303,7 +312,11 @@ public class DefaultNotificationService implements NotificationService {
             // DD-13: configuration / template / provider-resolution
             // failures are PERMANENT — retrying won't help — but still
             // worth recording so operators see them in /admin/dead-letter.
-            recordDeadLetter(request, response, 1, FailureType.PERMANENT);
+            // A user without devices is not an operator problem and a replay
+            // cannot succeed until the user registers one (DD-37), so it is not.
+            if (!PushTargeting.NO_DEVICES.equals(e.getErrorCode())) {
+                recordDeadLetter(request, response, 1, FailureType.PERMANENT);
+            }
             recordSendMetric(request.getChannel(), response.status(), receivedAt);
             return response;
 

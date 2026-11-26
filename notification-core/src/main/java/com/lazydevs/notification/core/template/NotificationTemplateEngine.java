@@ -50,6 +50,7 @@ import java.time.temporal.ChronoField;
 import java.time.temporal.TemporalAccessor;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -238,6 +239,49 @@ public class NotificationTemplateEngine {
 
         // Parse the rendered content based on channel
         return parseRenderedContent(channel, renderedContent, templateId, markers, htmlBody);
+    }
+
+    /**
+     * Render the request's template as plain text with this engine's template lookup,
+     * helpers and FreeMarker configuration, after {@code prepareSource} rewrote the
+     * template source; for a {@link ChannelContentRenderer} that parses its own sections.
+     *
+     * <p>The template is resolved exactly as {@link #render} resolves it (tenant, then
+     * default; cached), so any template source the engine is configured with serves both.
+     * {@code prepareSource} sees the source as stored, for example to swap section markers
+     * for per-render random tokens that template data cannot forge; it must not load
+     * anything itself.
+     *
+     * @param request       the request; its channel, template id or notification type and
+     *                      tenant select the template
+     * @param prepareSource rewrites the template source before rendering, not {@code null}
+     * @return the tenant and template id rendered, and the output
+     * @throws com.lazydevs.notification.api.exception.TemplateNotFoundException when there is no template
+     * @throws TemplateRenderException when the template is invalid or does not fit the data
+     * @since 1.4.0
+     */
+    public RawOutput renderRaw(NotificationRequest request, UnaryOperator<String> prepareSource) {
+        Objects.requireNonNull(prepareSource, "prepareSource");
+        String tenantId = tenantOf(request);
+        String templateId = request.getTemplateId() != null
+                ? request.getTemplateId()
+                : request.getNotificationType();
+        LoadedTemplate template = resolveTemplate(tenantId, request.getChannel(), templateId);
+        String source = prepareSource.apply(template.source());
+        String output = process(new RenderTarget(tenantId, templateId, template.name()), source,
+                enrichWithHelpers(request.getTemplateData()));
+        return new RawOutput(tenantId, templateId, output);
+    }
+
+    /**
+     * The output of {@link #renderRaw}.
+     *
+     * @param tenantId   the tenant whose template was rendered (its own or the default one)
+     * @param templateId the template id rendered
+     * @param output     the rendered text, untrimmed
+     * @since 1.4.0
+     */
+    public record RawOutput(String tenantId, String templateId, String output) {
     }
 
     /**
