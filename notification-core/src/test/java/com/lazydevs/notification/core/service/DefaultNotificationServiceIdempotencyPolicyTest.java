@@ -410,7 +410,7 @@ class DefaultNotificationServiceIdempotencyPolicyTest {
         DefaultNotificationService service = new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService, Optional.of(store), Optional.empty(),
                 Optional.empty(), Optional.empty(), Optional.empty(),
-                new NotificationServiceExtensions(dropAll, Clock.systemUTC()));
+                NotificationServiceExtensions.of(dropAll, Clock.systemUTC()));
 
         NotificationResponse response = service.send(request("k-scrub", "Ada"));
 
@@ -435,7 +435,7 @@ class DefaultNotificationServiceIdempotencyPolicyTest {
         return new DefaultNotificationService(
                 properties, providerRegistry, templateEngine, auditService,
                 Optional.of(idempotencyStore), limiter, Optional.empty(), Optional.empty(), Optional.empty(),
-                new NotificationServiceExtensions(MessageScrubber.placeholders(), clock));
+                NotificationServiceExtensions.of(MessageScrubber.placeholders(), clock));
     }
 
     private static NotificationRequest request(String idempotencyKey, String name) {

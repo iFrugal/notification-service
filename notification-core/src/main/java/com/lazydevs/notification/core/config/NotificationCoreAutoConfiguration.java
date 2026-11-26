@@ -1,12 +1,15 @@
 package com.lazydevs.notification.core.config;
 
 import com.lazydevs.notification.api.NotificationService;
+import com.lazydevs.notification.api.audit.NotificationAuditStore;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.delivery.DeliveryEventListener;
 import com.lazydevs.notification.api.delivery.DeliveryEventPublisher;
+import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.util.MessageScrubber;
+import com.lazydevs.notification.core.audit.StoreBackedAuditService;
 import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.delivery.ListenerDeliveryEventPublisher;
 import com.lazydevs.notification.core.metrics.NotificationMetrics;
@@ -110,6 +113,26 @@ public class NotificationCoreAutoConfiguration {
         return MessageScrubber.placeholders();
     }
 
+    /**
+     * The audit service of {@code notification.audit.enabled=true} (DD-33):
+     * records go to the {@link NotificationAuditStore} of the selected store
+     * family. Backs off when the application declares its own
+     * {@link NotificationAuditService}.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "notification.audit", name = "enabled", havingValue = "true")
+    @ConditionalOnMissingBean(NotificationAuditService.class)
+    public StoreBackedAuditService storeBackedAuditService(ObjectProvider<NotificationAuditStore> stores,
+                                                           NotificationProperties properties) {
+        NotificationAuditStore store = stores.getIfAvailable();
+        if (store == null) {
+            throw new IllegalStateException("notification.audit.enabled=true needs a NotificationAuditStore:"
+                    + " use notification.store.type=memory or jdbc (notification-store-jdbc), or declare a"
+                    + " NotificationAuditStore or NotificationAuditService bean");
+        }
+        return new StoreBackedAuditService(store, properties.getDefaultTenant(), Clock.systemUTC());
+    }
+
     @Bean
     @ConditionalOnMissingBean(NotificationService.class)
     public DefaultNotificationService defaultNotificationService(
@@ -122,9 +145,11 @@ public class NotificationCoreAutoConfiguration {
             Optional<RetryExecutor> retryExecutor,
             Optional<DeadLetterStore> deadLetterStore,
             Optional<NotificationMetrics> metrics,
-            MessageScrubber messageScrubber) {
+            MessageScrubber messageScrubber,
+            Optional<DeliveryEventStore> deliveryEventStore) {
         return new DefaultNotificationService(properties, providerRegistry, templateEngine, auditService,
                 idempotencyStore, rateLimiter, retryExecutor, deadLetterStore, metrics,
-                new NotificationServiceExtensions(messageScrubber, Clock.systemUTC()));
+                new NotificationServiceExtensions(messageScrubber, Clock.systemUTC(),
+                        deliveryEventStore.orElse(null)));
     }
 }

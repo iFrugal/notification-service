@@ -73,6 +73,35 @@ public interface NotificationAuditService {
     Optional<NotificationAudit> findByRequestId(String requestId);
 
     /**
+     * Find the audit record of {@code requestId} in {@code tenantId}
+     * (DD-33). The default narrows {@link #findByRequestId(String)} to the
+     * tenant; implementations backed by a store override it.
+     *
+     * @param tenantId  the tenant
+     * @param requestId the request ID
+     * @return the audit record if found
+     * @since 1.3.0
+     */
+    default Optional<NotificationAudit> findByRequestId(String tenantId, String requestId) {
+        return findByRequestId(requestId).filter(a -> java.util.Objects.equals(tenantId, a.getTenantId()));
+    }
+
+    /**
+     * Find the most recent audit record sent under an idempotency key
+     * (DD-33). The default returns empty.
+     *
+     * @param tenantId       the tenant
+     * @param callerId       the calling service, may be {@code null}
+     * @param idempotencyKey the key
+     * @return the audit record if found
+     * @since 1.3.0
+     */
+    default Optional<NotificationAudit> findByIdempotencyKey(String tenantId, String callerId,
+                                                             String idempotencyKey) {
+        return Optional.empty();
+    }
+
+    /**
      * Check if audit is enabled.
      *
      * @return true if audit is enabled

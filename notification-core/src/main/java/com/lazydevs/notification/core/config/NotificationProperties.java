@@ -43,6 +43,7 @@ public class NotificationProperties {
     /**
      * Audit configuration
      */
+    @Valid
     private AuditProperties audit = new AuditProperties();
 
     /**
@@ -161,11 +162,29 @@ public class NotificationProperties {
 
     @Data
     public static class AuditProperties {
+        /**
+         * Keep an audit record per send, the data behind
+         * {@code NotificationService.find} (DD-33). The record lives in the
+         * store family of {@code notification.store.type} (memory or jdbc).
+         */
         private boolean enabled = false;
+        /** Not implemented; the request payload is never stored. */
         private boolean storeRequestPayload = false;
+        /** Not implemented; the provider response is never stored. */
         private boolean storeResponsePayload = false;
+        /** Days an audit record is kept before it expires and becomes purgeable. */
+        @Min(value = 1, message = "audit retention-days must be at least 1")
         private int retentionDays = 90;
+        /** Not implemented; audit writes are synchronous and never fail a send. */
         private boolean async = true;
+        /**
+         * Bound of the in-memory audit store ({@code notification.store.type=memory});
+         * least recently written records are evicted first.
+         *
+         * @since 1.3.0
+         */
+        @Min(value = 1, message = "audit max-entries must be at least 1")
+        private long maxEntries = 10_000L;
     }
 
     @Data

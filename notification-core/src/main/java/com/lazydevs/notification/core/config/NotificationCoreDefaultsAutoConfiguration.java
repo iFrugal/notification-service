@@ -1,21 +1,28 @@
 package com.lazydevs.notification.core.config;
 
+import com.lazydevs.notification.api.audit.NotificationAuditStore;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.retry.RetryPredicate;
+import com.lazydevs.notification.core.audit.InMemoryNotificationAuditStore;
 import com.lazydevs.notification.core.deadletter.InMemoryDeadLetterStore;
 import com.lazydevs.notification.core.delivery.InMemoryDeliveryEventStore;
 import com.lazydevs.notification.core.idempotency.CaffeineIdempotencyStore;
 import com.lazydevs.notification.core.ratelimit.Bucket4jRateLimiter;
 import com.lazydevs.notification.core.retry.RetryExecutor;
+import com.lazydevs.notification.core.store.ConditionalOnStoreType;
+import com.lazydevs.notification.core.store.StoreFeature;
+import com.lazydevs.notification.core.store.StoreType;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.util.Optional;
 
 /**
@@ -69,6 +76,19 @@ public class NotificationCoreDefaultsAutoConfiguration {
     @ConditionalOnMissingBean(DeliveryEventStore.class)
     public InMemoryDeliveryEventStore inMemoryDeliveryEventStore(NotificationProperties properties) {
         return new InMemoryDeliveryEventStore(properties);
+    }
+
+    /**
+     * In-memory audit store (DD-33). Unlike the other in-memory defaults it
+     * carries {@link ConditionalOnStoreType}: there is no Redis audit store,
+     * so with the Redis family it must not register silently in its place.
+     */
+    @Bean
+    @ConditionalOnStoreType(feature = StoreFeature.AUDIT, type = StoreType.MEMORY)
+    @ConditionalOnMissingBean(NotificationAuditStore.class)
+    public InMemoryNotificationAuditStore inMemoryNotificationAuditStore(NotificationProperties properties) {
+        return new InMemoryNotificationAuditStore(properties.getAudit().getMaxEntries(),
+                Duration.ofDays(properties.getAudit().getRetentionDays()), Clock.systemUTC());
     }
 
     @Bean

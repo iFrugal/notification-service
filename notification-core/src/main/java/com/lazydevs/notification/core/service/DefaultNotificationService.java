@@ -14,6 +14,7 @@ import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.NotificationAudit;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
+import com.lazydevs.notification.api.model.NotificationView;
 import com.lazydevs.notification.api.model.SendResult;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.util.MessageScrubber;
@@ -54,6 +55,7 @@ public class DefaultNotificationService implements NotificationService {
     private final Optional<DeadLetterStore> deadLetterStore;
     private final Optional<NotificationMetrics> metrics;
     private final MessageScrubber scrubber;
+    private final NotificationViews views;
     private final Executor asyncExecutor;
 
     /**
@@ -106,6 +108,7 @@ public class DefaultNotificationService implements NotificationService {
         // the classpath (DD-22). Send-path methods call metrics.ifPresent(...).
         this.metrics = metrics;
         this.scrubber = extensions.messageScrubber();
+        this.views = new NotificationViews(extensions.deliveryEvents());
         this.asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
         // Optional<IdempotencyStore>: empty when notification.idempotency.enabled=false.
         this.idempotency = idempotencyStore.map(store -> new IdempotencyCoordinator(
@@ -435,6 +438,34 @@ public class DefaultNotificationService implements NotificationService {
             return null;
         }
         return new IdempotencyKey(request.getTenantId(), request.getCallerId(), request.getIdempotencyKey());
+    }
+
+    /**
+     * Status view over the audit record (DD-33). Empty when audit is off.
+     */
+    @Override
+    public Optional<NotificationView> find(String tenantId, String requestId) {
+        if (!StringUtils.hasText(requestId)) {
+            return Optional.empty();
+        }
+        return auditService.findByRequestId(tenantOrDefault(tenantId), requestId).map(views::toView);
+    }
+
+    /**
+     * Status view of the latest request under an idempotency key (DD-33).
+     * Empty when audit is off.
+     */
+    @Override
+    public Optional<NotificationView> findByIdempotencyKey(String tenantId, String callerId, String idempotencyKey) {
+        if (!StringUtils.hasText(idempotencyKey)) {
+            return Optional.empty();
+        }
+        return auditService.findByIdempotencyKey(tenantOrDefault(tenantId),
+                StringUtils.hasText(callerId) ? callerId : null, idempotencyKey).map(views::toView);
+    }
+
+    private String tenantOrDefault(String tenantId) {
+        return StringUtils.hasText(tenantId) ? tenantId : properties.getDefaultTenant();
     }
 
     @Override

@@ -31,6 +31,12 @@
       }
     },
     {
+      "name": "notification.audit.max-entries",
+      "type": "java.lang.Long",
+      "description": "Bound of the in-memory audit store (notification.store.type=memory); least recently written records are evicted first.",
+      "defaultValue": 10000
+    },
+    {
       "name": "notification.idempotency.failure-policy",
       "type": "com.lazydevs.notification.core.idempotency.IdempotencyFailurePolicy",
       "description": "What happens to an idempotency key after a failed send: RELEASE_ALL (retry dispatches again), KEEP (retry gets HTTP 409 until the TTL) or RELEASE_TRANSIENT (release only after a TRANSIENT failure; other failures are replayed). Unset follows retry-after-failure, which gives RELEASE_ALL."
