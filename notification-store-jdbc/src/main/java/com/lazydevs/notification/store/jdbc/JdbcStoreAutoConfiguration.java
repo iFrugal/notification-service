@@ -4,6 +4,7 @@ import com.lazydevs.notification.api.audit.NotificationAuditStore;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
+import com.lazydevs.notification.api.push.PushDeviceRegistry;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -45,6 +46,9 @@ public class JdbcStoreAutoConfiguration {
     static final int DEFAULT_DEAD_LETTER_MAX_ENTRIES = 1_000;
     static final int DEFAULT_DELIVERY_EVENT_MAX_ENTRIES = 5_000;
     static final int DEFAULT_AUDIT_RETENTION_DAYS = 90;
+    static final int DEFAULT_MAX_DEVICES_PER_USER = 10;
+    static final Duration DEFAULT_DEVICE_STALE_AFTER = Duration.ofDays(60);
+    static final Duration DEFAULT_DEVICE_PURGE_AFTER = Duration.ofDays(270);
 
     @Bean
     @ConditionalOnMissingBean
@@ -117,6 +121,28 @@ public class JdbcStoreAutoConfiguration {
                 .orElse(DEFAULT_AUDIT_RETENTION_DAYS);
         return new JdbcNotificationAuditStore(jdbcClient(properties, dataSources), JdbcStoreJson.create(),
                 JdbcStoreTables.of(properties), Duration.ofDays(retentionDays));
+    }
+
+    /**
+     * The push device registry (DD-37) for {@code notification.push.devices.enabled=true}.
+     * Its expired devices ({@code notification.push.devices.purge-after}, default 270 days
+     * after they were last seen) are purged with the other stores.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "notification.push.devices", name = "enabled", havingValue = "true")
+    @ConditionalOnMissingBean(PushDeviceRegistry.class)
+    public JdbcPushDeviceRegistry jdbcPushDeviceRegistry(JdbcStoreProperties properties,
+                                                         JdbcStoreDataSourceResolver dataSources,
+                                                         Environment environment) {
+        Binder binder = Binder.get(environment);
+        int maxDevices = binder.bind("notification.push.devices.max-devices-per-user", Integer.class)
+                .orElse(DEFAULT_MAX_DEVICES_PER_USER);
+        Duration staleAfter = binder.bind("notification.push.devices.stale-after", Duration.class)
+                .orElse(DEFAULT_DEVICE_STALE_AFTER);
+        Duration purgeAfter = binder.bind("notification.push.devices.purge-after", Duration.class)
+                .orElse(DEFAULT_DEVICE_PURGE_AFTER);
+        return new JdbcPushDeviceRegistry(dataSources.resolve(properties.getDatasourceBeanName()),
+                JdbcStoreJson.create(), JdbcStoreTables.of(properties), maxDevices, staleAfter, purgeAfter);
     }
 
     @Bean

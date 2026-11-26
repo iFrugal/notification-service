@@ -6,6 +6,7 @@ import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.model.PushRecipient;
 import com.lazydevs.notification.api.model.SmsRecipient;
 import com.lazydevs.notification.api.model.WhatsAppRecipient;
+import com.lazydevs.notification.api.push.PushDevice;
 import org.springframework.aot.hint.BindingReflectionHintsRegistrar;
 import org.springframework.aot.hint.RuntimeHints;
 import org.springframework.aot.hint.RuntimeHintsRegistrar;
@@ -30,6 +31,7 @@ public class JdbcStoreRuntimeHints implements RuntimeHintsRegistrar {
                 EmailRecipient.class,
                 SmsRecipient.class,
                 WhatsAppRecipient.class,
-                PushRecipient.class);
+                PushRecipient.class,
+                PushDevice.class);
     }
 }

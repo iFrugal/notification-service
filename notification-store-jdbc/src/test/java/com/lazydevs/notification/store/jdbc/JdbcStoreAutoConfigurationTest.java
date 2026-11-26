@@ -6,7 +6,9 @@ import com.lazydevs.notification.api.delivery.DeliveryEventListener;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.idempotency.IdempotencyKey;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
+import com.lazydevs.notification.api.push.PushDeviceRegistry;
 import com.lazydevs.notification.core.config.NotificationCoreDefaultsAutoConfiguration;
+import com.lazydevs.notification.core.push.PushDeviceCleanupListener;
 import com.lazydevs.notification.core.deadletter.InMemoryDeadLetterStore;
 import com.lazydevs.notification.core.idempotency.CaffeineIdempotencyStore;
 import org.junit.jupiter.api.Test;
@@ -115,6 +117,27 @@ class JdbcStoreAutoConfigurationTest {
                     assertThat(context).getBean(NotificationAuditStore.class)
                             .isInstanceOf(JdbcNotificationAuditStore.class);
                 });
+    }
+
+    @Test
+    void pushDevicesEnabled_registersTheJdbcRegistry_inThePurger_andTheCleanupListener() {
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        NotificationCoreDefaultsAutoConfiguration.class, JdbcStoreAutoConfiguration.class))
+                .withUserConfiguration(SingleDataSource.class)
+                .withPropertyValues("notification.store.type=jdbc", "notification.push.devices.enabled=true",
+                        "notification.push.devices.max-devices-per-user=5", "notification.push.devices.stale-after=30d")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(PushDeviceRegistry.class);
+                    assertThat(context).getBean(PushDeviceRegistry.class).isInstanceOf(JdbcPushDeviceRegistry.class);
+                    assertThat(context.getBean(JdbcStorePurger.class).stores())
+                            .hasAtLeastOneElementOfType(JdbcPushDeviceRegistry.class);
+                    assertThat(context).hasSingleBean(PushDeviceCleanupListener.class);
+                });
+        runner.withUserConfiguration(SingleDataSource.class)
+                .withPropertyValues("notification.store.type=jdbc")
+                .run(context -> assertThat(context).doesNotHaveBean(PushDeviceRegistry.class));
     }
 
     @Test

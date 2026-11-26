@@ -5,6 +5,9 @@ import com.lazydevs.notification.api.delivery.DeliveryStatus;
 import com.lazydevs.notification.api.idempotency.IdempotencyKey;
 import com.lazydevs.notification.api.model.NotificationAudit;
 import com.lazydevs.notification.api.model.NotificationResponse;
+import com.lazydevs.notification.api.push.PushDeviceRegistration;
+import com.lazydevs.notification.api.push.PushPlatform;
+import com.lazydevs.notification.api.push.PushTokens;
 import com.zaxxer.hikari.HikariDataSource;
 import lazydevs.persistence.connection.multitenant.TenantContext;
 import org.junit.jupiter.api.AfterAll;
@@ -59,7 +62,7 @@ class JdbcStoreRlsIT {
         admin.sql("CREATE ROLE " + APP_ROLE + " LOGIN PASSWORD '" + APP_PASSWORD + "'"
                 + " NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE").update();
         for (String table : List.of(TABLES.idempotency(), TABLES.deadLetter(), TABLES.deliveryEvent(),
-                TABLES.audit())) {
+                TABLES.audit(), TABLES.pushDevice())) {
             admin.sql("GRANT SELECT, INSERT, UPDATE, DELETE ON " + table + " TO " + APP_ROLE).update();
             admin.sql("ALTER TABLE " + table + " ENABLE ROW LEVEL SECURITY").update();
             admin.sql("CREATE POLICY tenant_isolation ON " + table
@@ -211,6 +214,35 @@ class JdbcStoreRlsIT {
         assertThatThrownBy(() -> acme.audit.insert(foreignRow))
                 .isInstanceOf(DataAccessException.class);
         assertThat(countAll(TABLES.audit())).isEqualTo(2);
+    }
+
+    @Test
+    void pushDeviceRegistryOnlySeesItsTenant() {
+        JdbcPushDeviceRegistry acmeDevices = new JdbcPushDeviceRegistry(acmeDataSource, PostgresTestSupport.JSON,
+                TABLES, 10, Duration.ofDays(60), Duration.ofDays(270));
+        JdbcPushDeviceRegistry globexDevices = new JdbcPushDeviceRegistry(globexDataSource, PostgresTestSupport.JSON,
+                TABLES, 10, Duration.ofDays(60), Duration.ofDays(270));
+
+        TenantContext.setTenantId("acme");
+        acmeDevices.register(PushDeviceRegistration.of("u1", "inst-1", PushPlatform.ANDROID, "shared-token"));
+        TenantContext.setTenantId("globex");
+        globexDevices.register(PushDeviceRegistration.of("u1", "inst-1", PushPlatform.ANDROID, "shared-token"));
+        // The same token in another tenant is another device: neither moves the other.
+        assertThat(countAll(TABLES.pushDevice())).isEqualTo(2);
+
+        // Even a registry asked for the other tenant's scope sees nothing through the policy.
+        TenantContext.setTenantId("globex");
+        assertThat(acmeDevices.activeDevices("u1", null)).isEmpty();
+        assertThat(acmeDevices.unregisterAll("u1")).isZero();
+        assertThat(acmeDevices.removeByTokenHash(PushTokens.hash("shared-token"), "invalid_target")).isZero();
+        PushDeviceRegistration foreign = new PushDeviceRegistration("globex", "u2", "inst-2", null,
+                PushPlatform.IOS, "other-token", null, null, null);
+        assertThatThrownBy(() -> acmeDevices.register(foreign)).isInstanceOf(DataAccessException.class);
+
+        TenantContext.setTenantId("acme");
+        assertThat(acmeDevices.activeDevices("u1", null)).extracting("tenantId").containsExactly("acme");
+        assertThat(acmeDevices.removeByTokenHash(PushTokens.hash("shared-token"), "invalid_target")).isEqualTo(1);
+        assertThat(countAll(TABLES.pushDevice())).isEqualTo(1);
     }
 
     private static NotificationAudit audit(String tenant, String requestId) {

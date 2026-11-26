@@ -108,3 +108,31 @@ CREATE INDEX IF NOT EXISTS notification_audit_idem_key_idx ON notification_audit
 CREATE INDEX IF NOT EXISTS notification_audit_tenant_received_idx ON notification_audit (tenant_key, received_at);
 
 CREATE INDEX IF NOT EXISTS notification_audit_expires_at_idx ON notification_audit (expires_at);
+
+CREATE TABLE IF NOT EXISTS notification_push_device (
+    id              BIGINT        GENERATED ALWAYS AS IDENTITY,
+    tenant_id       VARCHAR(255),
+    tenant_key      VARCHAR(255)  GENERATED ALWAYS AS (COALESCE(tenant_id, '')) STORED,
+    user_id         VARCHAR(255)  NOT NULL,
+    installation_id VARCHAR(255)  NOT NULL,
+    app_id          VARCHAR(255),
+    platform        VARCHAR(16)   NOT NULL,
+    token           VARCHAR(4096) NOT NULL,
+    token_hash      VARCHAR(32)   NOT NULL,
+    token_sha256    CHAR(64)      NOT NULL,
+    locale          VARCHAR(35),
+    timezone        VARCHAR(64),
+    attributes      TEXT          NOT NULL,
+    created_at      TIMESTAMPTZ   NOT NULL,
+    last_seen_at    TIMESTAMPTZ   NOT NULL,
+    expires_at      TIMESTAMPTZ   NOT NULL,
+    CONSTRAINT notification_push_device_pk PRIMARY KEY (id),
+    CONSTRAINT notification_push_device_installation_uq UNIQUE (tenant_key, user_id, installation_id),
+    CONSTRAINT notification_push_device_token_uq UNIQUE (tenant_key, token_sha256)
+);
+
+CREATE INDEX IF NOT EXISTS notification_push_device_user_seen_idx ON notification_push_device (tenant_key, user_id, last_seen_at);
+
+CREATE INDEX IF NOT EXISTS notification_push_device_token_hash_idx ON notification_push_device (tenant_key, token_hash);
+
+CREATE INDEX IF NOT EXISTS notification_push_device_expires_at_idx ON notification_push_device (expires_at);

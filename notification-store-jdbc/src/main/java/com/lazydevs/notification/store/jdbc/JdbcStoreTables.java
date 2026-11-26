@@ -71,6 +71,15 @@ public record JdbcStoreTables(String schema, String tablePrefix) {
     }
 
     /**
+     * Qualified name of the push device table (DD-37).
+     *
+     * @since 1.4.0
+     */
+    public String pushDevice() {
+        return qualified("push_device");
+    }
+
+    /**
      * Unqualified name for a constraint or index. PostgreSQL creates
      * indexes in the schema of their table, so these never carry the
      * schema.
