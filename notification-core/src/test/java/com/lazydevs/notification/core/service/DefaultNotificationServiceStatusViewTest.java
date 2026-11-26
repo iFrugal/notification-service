@@ -120,6 +120,60 @@ class DefaultNotificationServiceStatusViewTest {
     }
 
     @Test
+    void readBeforeDelivered_neverMovesBackwards_andReadCountsAsDelivered() {
+        when(provider.send(any(), any())).thenReturn(SendResult.success("m-3"));
+        DefaultNotificationService service = service(Clock.systemUTC());
+        service.send(request("r-3", null));
+        Instant sent = Instant.parse("2026-11-26T10:00:00Z");
+        Instant read = sent.plusSeconds(5);
+        deliveryEvents.add(new DeliveryEvent(sent, "ses", "m-3", "e-1", DeliveryStatus.SENT, null, null));
+        deliveryEvents.add(new DeliveryEvent(read, "ses", "m-3", "e-2", DeliveryStatus.READ, null, null));
+
+        NotificationView readOnly = service.find("acme", "r-3").orElseThrow();
+        assertThat(readOnly.deliveryStatus()).isEqualTo("READ");
+        assertThat(readOnly.deliveredAt()).isEqualTo(read);
+
+        // The delivered callback arrives late, and a duplicate SENT is stamped even later
+        deliveryEvents.add(new DeliveryEvent(sent.plusSeconds(2), "ses", "m-3", "e-3", DeliveryStatus.DELIVERED,
+                null, null));
+        deliveryEvents.add(new DeliveryEvent(read.plusSeconds(10), "ses", "m-3", "e-4", DeliveryStatus.SENT, null,
+                null));
+        NotificationView view = service.find("acme", "r-3").orElseThrow();
+        assertThat(view.deliveryStatus()).isEqualTo("READ");
+        assertThat(view.deliveryStatusAt()).isEqualTo(read);
+        assertThat(view.deliveredAt()).isEqualTo(sent.plusSeconds(2));
+    }
+
+    @Test
+    void sentAndDeliveredInTheSameSecond_showsDelivered() {
+        when(provider.send(any(), any())).thenReturn(SendResult.success("m-4"));
+        DefaultNotificationService service = service(Clock.systemUTC());
+        service.send(request("r-4", null));
+        Instant second = Instant.parse("2026-11-26T10:00:00Z");
+        deliveryEvents.add(new DeliveryEvent(second, "ses", "m-4", "e-1", DeliveryStatus.DELIVERED, null, null));
+        deliveryEvents.add(new DeliveryEvent(second, "ses", "m-4", "e-2", DeliveryStatus.SENT, null, null));
+
+        NotificationView view = service.find("acme", "r-4").orElseThrow();
+        assertThat(view.deliveryStatus()).isEqualTo("DELIVERED");
+        assertThat(view.deliveredAt()).isEqualTo(second);
+    }
+
+    @Test
+    void aLaterFailureAfterSent_isShown() {
+        when(provider.send(any(), any())).thenReturn(SendResult.success("m-5"));
+        DefaultNotificationService service = service(Clock.systemUTC());
+        service.send(request("r-5", null));
+        Instant sent = Instant.parse("2026-11-26T10:00:00Z");
+        deliveryEvents.add(new DeliveryEvent(sent, "ses", "m-5", "e-1", DeliveryStatus.SENT, null, null));
+        deliveryEvents.add(new DeliveryEvent(sent.plusSeconds(1), "ses", "m-5", "e-2",
+                DeliveryStatus.FAILED_AT_PROVIDER, "x", null));
+
+        NotificationView view = service.find("acme", "r-5").orElseThrow();
+        assertThat(view.deliveryStatus()).isEqualTo("FAILED_AT_PROVIDER");
+        assertThat(view.deliveredAt()).isNull();
+    }
+
+    @Test
     void permanentFailure_isClassifiedAndScrubbed() {
         when(provider.send(any(), any())).thenReturn(SendResult.failure("SES_REJECT",
                 "Address jane.doe@example.com suppressed", FailureType.PERMANENT));

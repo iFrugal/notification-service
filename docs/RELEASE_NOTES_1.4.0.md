@@ -46,6 +46,7 @@ The upgrade is additive: without the new modules on the classpath and without ne
   With `validate-before-dispatch` on, a `TemplateValidationException` is thrown to the caller before the idempotency claim, the rate limit and the audit (REST 400), like a `TemplateRenderException` (422); with it off, both are a `FAILED` response.
 - **New delivery statuses** `SENT` and `READ` can reach your listeners and delivery event store from the Meta webhook.
   `READ` can arrive before `DELIVERED`: a listener that projects a current status must never move it backwards.
+  The status view (`NotificationService.find`, 1.3.0) does so: its `deliveryStatus` is the latest event by timestamp, except that a `SENT` or `DELIVERED` never replaces a further step, and a `READ` sets `deliveredAt` (to the `DELIVERED` event's time when one arrived, else the read time).
 
 ## API additions and compatibility
 
