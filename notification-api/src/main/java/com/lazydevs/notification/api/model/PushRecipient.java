@@ -63,6 +63,7 @@ public record PushRecipient(
      * The 1.2 shape, without {@code userId} and {@code appId}. Kept so code
      * compiled against 1.2 and 1.3 keeps working.
      */
+    @SuppressWarnings("java:S107") // one parameter per record component of the 1.2 shape
     public PushRecipient(String id, String deviceToken, String topic, String condition, String title,
                          String body, Map<String, String> data, Integer badge, String sound,
                          String imageUrl, String clickAction, String fid, List<String> deviceTokens) {
