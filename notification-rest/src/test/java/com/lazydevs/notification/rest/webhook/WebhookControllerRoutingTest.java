@@ -1,5 +1,6 @@
 package com.lazydevs.notification.rest.webhook;
 
+import com.lazydevs.notification.api.delivery.DeliveryEvent;
 import com.lazydevs.notification.api.webhook.WebhookHandler;
 import com.lazydevs.notification.api.webhook.WebhookRequest;
 import com.lazydevs.notification.api.webhook.WebhookResponse;
@@ -11,6 +12,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -106,5 +108,25 @@ class WebhookControllerRoutingTest {
                 .containsEntry("b", List.of("x y"))
                 .containsEntry("flag", List.of(""));
         assertThat(WebhookController.queryParameters(null)).isEmpty();
+    }
+
+    @Test
+    @SuppressWarnings("removal")
+    void deprecated12Constructor_stillServesTwilioAndSes() throws Exception {
+        NotificationProperties properties = new NotificationProperties();
+        properties.getWebhooks().getTwilio().setEnabled(true);
+        properties.getWebhooks().getTwilio().setSignatureVerification(false);
+        List<DeliveryEvent> events = new ArrayList<>();
+        MockMvc legacy = MockMvcBuilders.standaloneSetup(
+                new WebhookController(properties, List.of(events::add), Optional.empty())).build();
+
+        legacy.perform(post("/api/v1/webhooks/twilio/status")
+                        .contentType("application/x-www-form-urlencoded")
+                        .content("MessageSid=SM9&MessageStatus=delivered"))
+                .andExpect(status().isOk());
+        legacy.perform(post("/api/v1/webhooks/ses/sns").contentType("application/json").content("{}"))
+                .andExpect(status().isNotFound());
+
+        assertThat(events).hasSize(1);
     }
 }

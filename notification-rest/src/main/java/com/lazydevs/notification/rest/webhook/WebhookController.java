@@ -1,7 +1,10 @@
 package com.lazydevs.notification.rest.webhook;
 
+import com.lazydevs.notification.api.delivery.DeliveryEventListener;
 import com.lazydevs.notification.api.webhook.WebhookRequest;
 import com.lazydevs.notification.api.webhook.WebhookResponse;
+import com.lazydevs.notification.core.config.NotificationProperties;
+import com.lazydevs.notification.core.metrics.NotificationMetrics;
 import com.lazydevs.notification.core.webhook.WebhookDispatcher;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -23,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * REST surface that ingests provider-side delivery callbacks (DD-16, DD-36).
@@ -56,6 +60,26 @@ public class WebhookController {
 
     public WebhookController(WebhookDispatcher dispatcher) {
         this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
+    }
+
+    /**
+     * The 1.2 constructor: a controller over the built-in Twilio and SES
+     * handlers only.
+     *
+     * @param properties the notification properties (Twilio and SES settings)
+     * @param listeners  the delivery event listeners, may be {@code null}
+     * @param metrics    the metrics, when Micrometer is present
+     * @deprecated since 1.4.0; build a {@link WebhookDispatcher} with the handlers you need
+     *             and use {@link #WebhookController(WebhookDispatcher)}
+     */
+    @Deprecated(since = "1.4.0", forRemoval = true)
+    public WebhookController(NotificationProperties properties,
+                             List<DeliveryEventListener> listeners,
+                             Optional<NotificationMetrics> metrics) {
+        this(new WebhookDispatcher(
+                List.of(new TwilioWebhookHandler(properties), new SesWebhookHandler(properties)),
+                listeners == null ? List.of() : listeners,
+                metrics == null ? Optional.empty() : metrics));
     }
 
     @RequestMapping(value = "/{handlerId}/{*subPath}", method = {RequestMethod.GET, RequestMethod.POST})

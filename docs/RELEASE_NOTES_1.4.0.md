@@ -70,6 +70,7 @@ Other additions:
 - `RenderedContent.payload(Class)` returns the payload when it has that type.
 - `TemplateValidationException` (`TEMPLATE_VALIDATION_FAILED`, HTTP 400).
 - `TwilioWebhookHandler` and `SesWebhookHandler` in `notification-rest`; `WebhookController` now takes a `WebhookDispatcher`.
+  Its 1.2 constructor `(NotificationProperties, List<DeliveryEventListener>, Optional<NotificationMetrics>)` is kept, deprecated for removal, and serves Twilio and SES as before.
 - `BuiltInProviders` lists `WHATSAPP:meta` as implemented.
 
 ## Upgrade notes
