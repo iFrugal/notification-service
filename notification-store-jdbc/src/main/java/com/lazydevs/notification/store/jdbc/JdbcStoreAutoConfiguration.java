@@ -1,5 +1,6 @@
 package com.lazydevs.notification.store.jdbc;
 
+import com.lazydevs.notification.api.audit.NotificationAuditStore;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
@@ -43,6 +44,7 @@ public class JdbcStoreAutoConfiguration {
     static final Duration DEFAULT_IDEMPOTENCY_TTL = Duration.ofHours(24);
     static final int DEFAULT_DEAD_LETTER_MAX_ENTRIES = 1_000;
     static final int DEFAULT_DELIVERY_EVENT_MAX_ENTRIES = 5_000;
+    static final int DEFAULT_AUDIT_RETENTION_DAYS = 90;
 
     @Bean
     @ConditionalOnMissingBean
@@ -91,6 +93,23 @@ public class JdbcStoreAutoConfiguration {
                 .orElse(DEFAULT_DELIVERY_EVENT_MAX_ENTRIES);
         return new JdbcDeliveryEventStore(jdbcClient(properties, dataSources), JdbcStoreJson.create(),
                 JdbcStoreTables.of(properties), properties.getDeliveryEventRetention(), maxEntries);
+    }
+
+    /**
+     * Audit records behind the status view (DD-33), kept for
+     * {@code notification.audit.retention-days} (default 90).
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "notification.audit", name = "enabled", havingValue = "true")
+    @ConditionalOnMissingBean(NotificationAuditStore.class)
+    public JdbcNotificationAuditStore jdbcNotificationAuditStore(JdbcStoreProperties properties,
+                                                                 JdbcStoreDataSourceResolver dataSources,
+                                                                 Environment environment) {
+        int retentionDays = Binder.get(environment)
+                .bind("notification.audit.retention-days", Integer.class)
+                .orElse(DEFAULT_AUDIT_RETENTION_DAYS);
+        return new JdbcNotificationAuditStore(jdbcClient(properties, dataSources), JdbcStoreJson.create(),
+                JdbcStoreTables.of(properties), Duration.ofDays(retentionDays));
     }
 
     @Bean

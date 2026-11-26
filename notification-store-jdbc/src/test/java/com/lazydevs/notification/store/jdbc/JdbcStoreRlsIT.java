@@ -3,6 +3,7 @@ package com.lazydevs.notification.store.jdbc;
 import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.delivery.DeliveryStatus;
 import com.lazydevs.notification.api.idempotency.IdempotencyKey;
+import com.lazydevs.notification.api.model.NotificationAudit;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.zaxxer.hikari.HikariDataSource;
 import lazydevs.persistence.connection.multitenant.TenantContext;
@@ -57,7 +58,8 @@ class JdbcStoreRlsIT {
 
         admin.sql("CREATE ROLE " + APP_ROLE + " LOGIN PASSWORD '" + APP_PASSWORD + "'"
                 + " NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE").update();
-        for (String table : List.of(TABLES.idempotency(), TABLES.deadLetter(), TABLES.deliveryEvent())) {
+        for (String table : List.of(TABLES.idempotency(), TABLES.deadLetter(), TABLES.deliveryEvent(),
+                TABLES.audit())) {
             admin.sql("GRANT SELECT, INSERT, UPDATE, DELETE ON " + table + " TO " + APP_ROLE).update();
             admin.sql("ALTER TABLE " + table + " ENABLE ROW LEVEL SECURITY").update();
             admin.sql("CREATE POLICY tenant_isolation ON " + table
@@ -195,6 +197,30 @@ class JdbcStoreRlsIT {
         }
     }
 
+    @Test
+    void auditStoreOnlySeesItsTenant() {
+        NotificationAudit acmeRow = audit("acme", "a-1");
+        acme.audit.insert(acmeRow);
+        globex.audit.insert(audit("globex", "g-1"));
+
+        assertThat(acme.audit.find("acme", "a-1")).isPresent();
+        assertThat(acme.audit.find("globex", "g-1")).isEmpty();
+        assertThat(acme.audit.recordOutcome(NotificationResponse.success(
+                PostgresTestSupport.request("globex", "g-1"), "smtp", "m-1"))).isFalse();
+        assertThatThrownBy(() -> acme.audit.insert(audit("globex", "a-2")))
+                .isInstanceOf(DataAccessException.class);
+        assertThat(countAll(TABLES.audit())).isEqualTo(2);
+    }
+
+    private static NotificationAudit audit(String tenant, String requestId) {
+        return NotificationAudit.builder()
+                .tenantId(tenant)
+                .requestId(requestId)
+                .status(com.lazydevs.notification.api.NotificationStatus.PROCESSING)
+                .receivedAt(java.time.Instant.now())
+                .build();
+    }
+
     private static long countAll(String table) {
         return admin.sql("SELECT COUNT(*) FROM " + table).query(Long.class).single();
     }
@@ -205,6 +231,7 @@ class JdbcStoreRlsIT {
         final JdbcIdempotencyStore idempotency;
         final JdbcDeadLetterStore deadLetters;
         final JdbcDeliveryEventStore deliveryEvents;
+        final JdbcNotificationAuditStore audit;
 
         Stores(JdbcClient jdbc) {
             this.jdbc = jdbc;
@@ -212,6 +239,7 @@ class JdbcStoreRlsIT {
             this.deadLetters = new JdbcDeadLetterStore(jdbc, PostgresTestSupport.JSON, TABLES, Duration.ofDays(1), 100);
             this.deliveryEvents = new JdbcDeliveryEventStore(jdbc, PostgresTestSupport.JSON, TABLES,
                     Duration.ofDays(1), 100);
+            this.audit = new JdbcNotificationAuditStore(jdbc, PostgresTestSupport.JSON, TABLES, Duration.ofDays(1));
         }
     }
 }

@@ -1,15 +1,21 @@
 package com.lazydevs.notification.channel.email.acs;
 
+import com.azure.core.exception.ClientAuthenticationException;
 import com.azure.core.exception.HttpResponseException;
 import com.azure.core.http.HttpHeaderName;
 import com.azure.core.http.HttpHeaders;
 import com.azure.core.http.HttpResponse;
+import com.azure.identity.CredentialUnavailableException;
 import com.lazydevs.notification.api.model.FailureType;
 import org.junit.jupiter.api.Test;
 import reactor.core.Exceptions;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.time.Instant;
@@ -82,26 +88,55 @@ class AcsFailureClassifierTest {
     }
 
     @Test
-    void unauthorized401_andForbidden403_arePermanent_withCredentialHint() {
-        assertThat(AcsEmailProvider.classifyAcs(httpError(401))).isEqualTo(FailureType.PERMANENT);
-        assertThat(AcsEmailProvider.classifyAcs(httpError(403))).isEqualTo(FailureType.PERMANENT);
+    void unauthorized401_andForbidden403_areTransient_withCredentialHint() {
+        assertThat(AcsEmailProvider.classifyAcs(httpError(401))).isEqualTo(FailureType.TRANSIENT);
+        assertThat(AcsEmailProvider.classifyAcs(httpError(403))).isEqualTo(FailureType.TRANSIENT);
         assertThat(AcsEmailProvider.describe(httpError(401))).contains("check the ACS credentials");
         assertThat(AcsEmailProvider.describe(httpError(400))).doesNotContain("credentials");
     }
 
     @Test
-    void timeoutException_isTransient_alsoWhenWrappedByReactor() {
-        assertThat(AcsEmailProvider.classifyAcs(new TimeoutException("slow")))
+    void credentialFailures_areTransient_evenWithoutAResponse() {
+        assertThat(AcsEmailProvider.classifyAcs(new ClientAuthenticationException("no token", null)))
                 .isEqualTo(FailureType.TRANSIENT);
-        assertThat(AcsEmailProvider.classifyAcs(Exceptions.propagate(new TimeoutException("slow"))))
+        assertThat(AcsEmailProvider.classifyAcs(new CredentialUnavailableException("no identity")))
+                .isEqualTo(FailureType.TRANSIENT);
+        assertThat(AcsEmailProvider.classifyAcs(
+                new IllegalStateException(new CredentialUnavailableException("wrapped"))))
                 .isEqualTo(FailureType.TRANSIENT);
     }
 
     @Test
-    void httpTimeoutAndIoExceptions_areTransient() {
+    void permanent4xx_isPermanent() {
+        assertThat(AcsEmailProvider.classifyAcs(httpError(404))).isEqualTo(FailureType.PERMANENT);
+        assertThat(AcsEmailProvider.classifyAcs(httpError(422))).isEqualTo(FailureType.PERMANENT);
+    }
+
+    @Test
+    void timeoutException_isAmbiguous_alsoWhenWrappedByReactor() {
+        assertThat(AcsEmailProvider.classifyAcs(new TimeoutException("slow")))
+                .isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(AcsEmailProvider.classifyAcs(Exceptions.propagate(new TimeoutException("slow"))))
+                .isEqualTo(FailureType.AMBIGUOUS);
+    }
+
+    @Test
+    void readTimeoutsAndResets_areAmbiguous() {
         assertThat(AcsEmailProvider.classifyAcs(new HttpTimeoutException("request timed out")))
+                .isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(AcsEmailProvider.classifyAcs(new UncheckedIOException(new IOException("Connection reset"))))
+                .isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(AcsEmailProvider.classifyAcs(new UncheckedIOException(new SocketTimeoutException("Read timed out"))))
+                .isEqualTo(FailureType.AMBIGUOUS);
+    }
+
+    @Test
+    void connectFailures_areTransient() {
+        assertThat(AcsEmailProvider.classifyAcs(new UncheckedIOException(new ConnectException("Connection refused"))))
                 .isEqualTo(FailureType.TRANSIENT);
-        assertThat(AcsEmailProvider.classifyAcs(new UncheckedIOException(new IOException("reset"))))
+        assertThat(AcsEmailProvider.classifyAcs(new UncheckedIOException(new UnknownHostException("acs.invalid"))))
+                .isEqualTo(FailureType.TRANSIENT);
+        assertThat(AcsEmailProvider.classifyAcs(new HttpConnectTimeoutException("connect timed out")))
                 .isEqualTo(FailureType.TRANSIENT);
     }
 

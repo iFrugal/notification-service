@@ -148,11 +148,16 @@ The `SendResult` and the `FAILED` response still carry the operation id, so the 
 | Error | Classification |
 |-------|----------------|
 | HTTP 429, 408, 5xx | `TRANSIENT` |
-| HTTP 401, 403 | `PERMANENT`, and the error message suggests checking the credentials |
+| HTTP 401, 403, or a credential failure (`ClientAuthenticationException`, `CredentialUnavailableException`) anywhere in the cause chain | `TRANSIENT` (since 1.3.0; `PERMANENT` before): a configuration problem, the message never reached a mailbox; the error message suggests checking the credentials |
 | Other HTTP 4xx | `PERMANENT` |
-| Timeouts and I/O errors | `TRANSIENT` |
+| Connection failures before anything was sent (refused, unknown host, connect timeout, TLS handshake) | `TRANSIENT` |
+| Read timeouts, connection resets and other I/O errors, and `TimeoutException`, after the send request may have reached ACS | `AMBIGUOUS` (since 1.3.0; `TRANSIENT` before) |
 | Anything else | `UNKNOWN` (the retry predicate decides) |
 | Request that cannot become an ACS message (no body, URL-only attachment) | `PERMANENT`, and ACS is not called |
+
+The default `RetryPredicate` does not retry `AMBIGUOUS`.
+ACS recognises a resend with the same `Operation-Id`, which the provider derives from the request, so a deployment that trusts that de-duplication can retry `AMBIGUOUS` with its own `RetryPredicate` bean.
+Under `notification.idempotency.failure-policy=RELEASE_TRANSIENT` an `AMBIGUOUS` failure keeps its idempotency key and is replayed (DD-31, DD-32).
 
 The Azure SDK's built-in retry policy retries 408, 429 and 5xx three times by default.
 The provider sets the policy to `sdk-retries` (default 0) so that retries are not multiplied across two layers.

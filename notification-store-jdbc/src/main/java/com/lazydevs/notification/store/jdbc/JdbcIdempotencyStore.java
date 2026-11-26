@@ -45,7 +45,8 @@ import static com.lazydevs.notification.store.jdbc.JdbcStoreSupport.nowPlusMilli
 public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStore {
 
     private static final String COLUMNS =
-            "tenant_id, caller_id, idem_key, notification_id, status, response, created_at, recorded_at, expires_at";
+            "tenant_id, caller_id, idem_key, notification_id, status, response, fingerprint,"
+                    + " created_at, recorded_at, expires_at";
 
     private final JdbcClient jdbc;
     private final ObjectMapper json;
@@ -56,6 +57,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
     private final String markInProgressSql;
     private final String markCompleteSql;
     private final String releaseSql;
+    private final String settleSql;
     private final String purgeSql;
 
     public JdbcIdempotencyStore(JdbcClient jdbc, ObjectMapper json, JdbcStoreTables tables,
@@ -67,28 +69,30 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
         String t = tables.idempotency();
         String keyMatch = "tenant_key = COALESCE(:tenant, '') AND caller_key = COALESCE(:caller, '') AND idem_key = :key";
 
-        this.findSql = "SELECT notification_id, status, response, recorded_at FROM " + t
+        this.findSql = "SELECT notification_id, status, response, fingerprint, recorded_at FROM " + t
                 + " WHERE " + keyMatch + " AND expires_at > now()";
 
         this.markInProgressSql = "INSERT INTO " + t + " AS t (" + COLUMNS + ")"
-                + " VALUES (:tenant, :caller, :key, :notificationId, 'IN_PROGRESS', NULL, now(), now(), "
+                + " VALUES (:tenant, :caller, :key, :notificationId, 'IN_PROGRESS', NULL, :fingerprint, now(), now(), "
                 + nowPlusMillis("ttl") + ")"
                 + " ON CONFLICT (tenant_key, caller_key, idem_key) DO UPDATE SET"
                 + " tenant_id = EXCLUDED.tenant_id, caller_id = EXCLUDED.caller_id,"
                 + " notification_id = EXCLUDED.notification_id, status = EXCLUDED.status, response = NULL,"
+                + " fingerprint = EXCLUDED.fingerprint,"
                 + " created_at = EXCLUDED.created_at, recorded_at = EXCLUDED.recorded_at,"
                 + " expires_at = EXCLUDED.expires_at"
                 + " WHERE t.expires_at <= now()";
 
         // Upsert so a completion whose IN_PROGRESS row was already purged is
         // still cached (same as the Redis store's unconditional SET). The
-        // original notification id is kept unless the old row had expired.
+        // original notification id and fingerprint are kept unless the old row had expired.
         this.markCompleteSql = "INSERT INTO " + t + " AS t (" + COLUMNS + ")"
-                + " VALUES (:tenant, :caller, :key, :notificationId, 'COMPLETE', :response, now(), now(), "
+                + " VALUES (:tenant, :caller, :key, :notificationId, 'COMPLETE', :response, NULL, now(), now(), "
                 + nowPlusMillis("ttl") + ")"
                 + " ON CONFLICT (tenant_key, caller_key, idem_key) DO UPDATE SET"
                 + " notification_id = CASE WHEN t.expires_at <= now()"
                 + " THEN EXCLUDED.notification_id ELSE t.notification_id END,"
+                + " fingerprint = CASE WHEN t.expires_at <= now() THEN NULL ELSE t.fingerprint END,"
                 + " created_at = CASE WHEN t.expires_at <= now() THEN EXCLUDED.created_at ELSE t.created_at END,"
                 + " status = EXCLUDED.status, response = EXCLUDED.response,"
                 + " recorded_at = EXCLUDED.recorded_at, expires_at = EXCLUDED.expires_at";
@@ -98,6 +102,13 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
         // (IN_PROGRESS) row or another caller's row is left alone.
         this.releaseSql = "DELETE FROM " + t + " WHERE " + keyMatch
                 + " AND notification_id = :notificationId AND status = 'COMPLETE'";
+
+        // Compare-and-set in one statement: only a live IN_PROGRESS row that
+        // still belongs to the given notification id is settled (DD-32).
+        this.settleSql = "UPDATE " + t + " SET status = 'COMPLETE', response = :response,"
+                + " recorded_at = now(), expires_at = " + nowPlusMillis("ttl")
+                + " WHERE " + keyMatch + " AND notification_id = :notificationId AND status = 'IN_PROGRESS'"
+                + " AND expires_at > now()";
 
         this.purgeSql = "DELETE FROM " + t + " WHERE (tenant_key, caller_key, idem_key) IN ("
                 + "SELECT tenant_key, caller_key, idem_key FROM " + t
@@ -116,8 +127,14 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
 
     @Override
     public boolean markInProgress(IdempotencyKey key, String notificationId) {
+        return markInProgress(key, notificationId, null);
+    }
+
+    @Override
+    public boolean markInProgress(IdempotencyKey key, String notificationId, String fingerprint) {
         int rows = keyParams(jdbc.sql(markInProgressSql), key)
                 .param("notificationId", Objects.requireNonNull(notificationId, "notificationId"), Types.VARCHAR)
+                .param("fingerprint", fingerprint, Types.VARCHAR)
                 .param("ttl", ttlMillis)
                 .update();
         return rows == 1;
@@ -125,18 +142,33 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
 
     @Override
     public void markComplete(IdempotencyKey key, NotificationResponse response) {
-        String body;
+        keyParams(jdbc.sql(markCompleteSql), key)
+                .param("notificationId", Objects.requireNonNullElse(response.requestId(), ""), Types.VARCHAR)
+                .param("response", storedJson(response), Types.VARCHAR)
+                .param("ttl", ttlMillis)
+                .update();
+    }
+
+    @Override
+    public boolean settleInProgress(IdempotencyKey key, String notificationId, NotificationResponse response) {
+        if (notificationId == null) {
+            return false;
+        }
+        int rows = keyParams(jdbc.sql(settleSql), key)
+                .param("notificationId", notificationId, Types.VARCHAR)
+                .param("response", storedJson(response), Types.VARCHAR)
+                .param("ttl", ttlMillis)
+                .update();
+        return rows == 1;
+    }
+
+    private String storedJson(NotificationResponse response) {
         try {
-            body = json.writeValueAsString(IdempotencyStore.storedForm(response));
+            return json.writeValueAsString(IdempotencyStore.storedForm(response));
         } catch (JsonProcessingException e) {
             // A programming error, not a runtime condition: same as the Redis store.
             throw new IllegalStateException("Failed to serialise NotificationResponse", e);
         }
-        keyParams(jdbc.sql(markCompleteSql), key)
-                .param("notificationId", Objects.requireNonNullElse(response.requestId(), ""), Types.VARCHAR)
-                .param("response", body, Types.VARCHAR)
-                .param("ttl", ttlMillis)
-                .update();
     }
 
     @Override
@@ -190,6 +222,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
                 rs.getString("notification_id"),
                 IdempotencyStatus.valueOf(rs.getString("status")),
                 response,
-                JdbcStoreSupport.instant(rs, "recorded_at"));
+                JdbcStoreSupport.instant(rs, "recorded_at"),
+                rs.getString("fingerprint"));
     }
 }

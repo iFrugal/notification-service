@@ -99,14 +99,14 @@ class DefaultNotificationServiceIdempotencyTest {
     void send_firstAttempt_writesInProgressThenComplete() {
         NotificationRequest req = baseRequest("idem-1");
         when(idempotencyStore.findExisting(any())).thenReturn(Optional.empty());
-        when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
+        when(idempotencyStore.markInProgress(any(), anyString(), anyString())).thenReturn(true);
         stubProviderHappyPath();
 
         NotificationResponse response = service.send(req);
 
         assertThat(response.status()).isEqualTo(NotificationStatus.SENT);
         ArgumentCaptor<IdempotencyKey> keyCaptor = ArgumentCaptor.forClass(IdempotencyKey.class);
-        verify(idempotencyStore).markInProgress(keyCaptor.capture(), eq(req.getRequestId()));
+        verify(idempotencyStore).markInProgress(keyCaptor.capture(), eq(req.getRequestId()), anyString());
         verify(idempotencyStore).markComplete(eq(keyCaptor.getValue()), any(NotificationResponse.class));
         assertThat(keyCaptor.getValue().tenantId()).isEqualTo("acme");
         assertThat(keyCaptor.getValue().idempotencyKey()).isEqualTo("idem-1");
@@ -124,13 +124,13 @@ class DefaultNotificationServiceIdempotencyTest {
         NotificationRequest req = baseRequest("idem-with-caller");
         req.setCallerId("billing-svc");
         when(idempotencyStore.findExisting(any())).thenReturn(Optional.empty());
-        when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
+        when(idempotencyStore.markInProgress(any(), anyString(), anyString())).thenReturn(true);
         stubProviderHappyPath();
 
         service.send(req);
 
         ArgumentCaptor<IdempotencyKey> keyCaptor = ArgumentCaptor.forClass(IdempotencyKey.class);
-        verify(idempotencyStore).markInProgress(keyCaptor.capture(), anyString());
+        verify(idempotencyStore).markInProgress(keyCaptor.capture(), anyString(), anyString());
         assertThat(keyCaptor.getValue().tenantId()).isEqualTo("acme");
         assertThat(keyCaptor.getValue().callerId()).isEqualTo("billing-svc");
         assertThat(keyCaptor.getValue().idempotencyKey()).isEqualTo("idem-with-caller");
@@ -160,7 +160,7 @@ class DefaultNotificationServiceIdempotencyTest {
         verify(auditService, never()).recordReceived(any());
         verify(auditService).recordDuplicateHit(eq(req), eq(cachedRecord));
         // markInProgress / markComplete not called — we short-circuited.
-        verify(idempotencyStore, never()).markInProgress(any(), anyString());
+        verify(idempotencyStore, never()).markInProgress(any(), anyString(), anyString());
         verify(idempotencyStore, never()).markComplete(any(), any());
     }
 
@@ -176,7 +176,7 @@ class DefaultNotificationServiceIdempotencyTest {
                 .hasFieldOrPropertyWithValue("inProgressNotificationId", "winner-req-id");
 
         verifyNoInteractions(providerRegistry, templateEngine);
-        verify(idempotencyStore, never()).markInProgress(any(), anyString());
+        verify(idempotencyStore, never()).markInProgress(any(), anyString(), anyString());
     }
 
     @Test
@@ -254,7 +254,7 @@ class DefaultNotificationServiceIdempotencyTest {
         // A third-party store that does not override release() gets the
         // 1.1.x behaviour: the FAILED response is recorded with markComplete.
         when(idempotencyStore.findExisting(any())).thenReturn(Optional.empty());
-        when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
+        when(idempotencyStore.markInProgress(any(), anyString(), anyString())).thenReturn(true);
         stubProvider();
         when(provider.send(any(), any())).thenReturn(SendResult.failure("SMTP_421", "try again later"));
 
@@ -275,7 +275,7 @@ class DefaultNotificationServiceIdempotencyTest {
         when(idempotencyStore.findExisting(any()))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(winner));
-        when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(false);
+        when(idempotencyStore.markInProgress(any(), anyString(), anyString())).thenReturn(false);
 
         assertThatThrownBy(() -> service.send(req))
                 .isInstanceOf(IdempotencyInProgressException.class)
@@ -288,7 +288,7 @@ class DefaultNotificationServiceIdempotencyTest {
     void send_dispatchException_stillCallsMarkComplete() {
         NotificationRequest req = baseRequest("idem-explode");
         when(idempotencyStore.findExisting(any())).thenReturn(Optional.empty());
-        when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
+        when(idempotencyStore.markInProgress(any(), anyString(), anyString())).thenReturn(true);
         // Simulate provider lookup throwing — the catch block converts to FAILED.
         when(templateEngine.render(any())).thenThrow(new RuntimeException("template engine boom"));
 

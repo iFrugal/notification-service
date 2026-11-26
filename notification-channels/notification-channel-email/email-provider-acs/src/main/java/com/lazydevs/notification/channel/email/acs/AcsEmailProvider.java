@@ -4,6 +4,7 @@ import com.azure.communication.email.models.EmailAddress;
 import com.azure.communication.email.models.EmailAttachment;
 import com.azure.communication.email.models.EmailMessage;
 import com.azure.core.credential.TokenCredential;
+import com.azure.core.exception.ClientAuthenticationException;
 import com.azure.core.exception.HttpResponseException;
 import com.azure.core.http.HttpHeaderName;
 import com.azure.core.http.HttpHeaders;
@@ -441,16 +442,26 @@ public class AcsEmailProvider implements EmailProvider {
     }
 
     /**
-     * Map an ACS SDK exception to a {@link FailureType} for retry decisions (DD-13).
+     * Map an ACS SDK exception to a {@link FailureType} for retry and
+     * idempotency decisions (DD-13, DD-31).
      *
      * <ul>
-     *   <li>{@link HttpResponseException} - the HTTP status decides via
+     *   <li>A credential failure ({@link ClientAuthenticationException} anywhere
+     *       in the cause chain, including azure-identity's
+     *       {@code CredentialUnavailableException}) or an HTTP 401/403 -
+     *       {@link FailureType#TRANSIENT}: a configuration problem, the message
+     *       never reached a mailbox, so it is safe to send again once fixed.</li>
+     *   <li>Any other {@link HttpResponseException} - the HTTP status decides via
      *       {@link FailureTypes#fromHttpStatus}: 408, 429 (throttling) and 5xx are
-     *       {@link FailureType#TRANSIENT}; other 4xx, including 401/403 credential
-     *       problems, are {@link FailureType#PERMANENT}.</li>
-     *   <li>{@link TimeoutException} or any {@code IOException} (including
-     *       {@code HttpTimeoutException}) in the cause chain -
-     *       {@link FailureType#TRANSIENT}.</li>
+     *       {@link FailureType#TRANSIENT} (ACS answered and did not accept the
+     *       message); other 4xx are {@link FailureType#PERMANENT}.</li>
+     *   <li>A failure to connect ({@code ConnectException}, unknown host, connect
+     *       timeout, TLS handshake) - {@link FailureType#TRANSIENT}: nothing was
+     *       sent.</li>
+     *   <li>A {@link TimeoutException}, or any other {@code IOException} such as a
+     *       read timeout or a connection reset - {@link FailureType#AMBIGUOUS}: the
+     *       request may have reached ACS and been accepted before the answer was
+     *       lost.</li>
      *   <li>Anything else - {@link FailureType#UNKNOWN}, defer to the retry predicate.</li>
      * </ul>
      *
@@ -458,18 +469,36 @@ public class AcsEmailProvider implements EmailProvider {
      * so the retry executor can wait at least that long.
      */
     static FailureType classifyAcs(Throwable t) {
+        if (isCredentialFailure(t)) {
+            return FailureType.TRANSIENT;
+        }
         if (t instanceof HttpResponseException hre && hre.getResponse() != null) {
-            return FailureTypes.fromHttpStatus(hre.getResponse().getStatusCode());
+            int status = hre.getResponse().getStatusCode();
+            return isAuthStatus(status) ? FailureType.TRANSIENT : FailureTypes.fromHttpStatus(status);
+        }
+        FailureType io = FailureTypes.fromExceptionAfterSubmit(t);
+        if (io != FailureType.UNKNOWN) {
+            return io;
         }
         for (Throwable cur = t; cur != null; cur = cur.getCause()) {
             if (cur instanceof TimeoutException) {
-                return FailureType.TRANSIENT;
+                return FailureType.AMBIGUOUS;
             }
         }
-        if (FailureTypes.fromException(t) == FailureType.TRANSIENT) {
-            return FailureType.TRANSIENT;
-        }
         return FailureType.UNKNOWN;
+    }
+
+    private static boolean isCredentialFailure(Throwable t) {
+        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
+            if (cur instanceof ClientAuthenticationException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isAuthStatus(int status) {
+        return status == 401 || status == 403;
     }
 
     /**
@@ -497,7 +526,7 @@ public class AcsEmailProvider implements EmailProvider {
         if (t instanceof HttpResponseException hre) {
             HttpResponse response = hre.getResponse();
             int status = response == null ? 0 : response.getStatusCode();
-            if (status == 401 || status == 403) {
+            if (isAuthStatus(status)) {
                 return message + " (HTTP " + status + ": check the ACS credentials - the connection string"
                         + " access key, or the role assignment of the TokenCredential identity on the"
                         + " Communication Services resource)";

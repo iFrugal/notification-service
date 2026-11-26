@@ -62,7 +62,9 @@ public class NotificationController {
                                     description = "Set to `true` for cache replays only.",
                                     schema = @Schema(type = "string"))),
                     @ApiResponse(responseCode = "409",
-                            description = "Idempotency conflict — concurrent in-flight send.",
+                            description = "Idempotency conflict: a concurrent in-flight send (`IN_PROGRESS`),"
+                                    + " or, with `reject-key-reuse`, the key was used for a different"
+                                    + " request (`KEY_REUSED`).",
                             content = @Content(schema = @Schema(example =
                                     "{\"notificationId\":\"...\",\"status\":\"IN_PROGRESS\"}"))),
                     @ApiResponse(responseCode = "429",

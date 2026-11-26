@@ -414,7 +414,7 @@ class JdbcIdempotencyStoreIT {
     }
 
     @Test
-    void markCompleteOfAFailedResponseStoresNoErrorText() {
+    void markCompleteOfAFailedResponseStoresOnlyScrubbedErrorText() {
         IdempotencyKey key = new IdempotencyKey("acme", "billing", "k-failed-text");
         store.markInProgress(key, "req-1");
 
@@ -423,9 +423,96 @@ class JdbcIdempotencyStoreIT {
 
         assertThat(rawResponse("k-failed-text"))
                 .doesNotContain("john.doe")
-                .contains("\"errorMessage\":null")
+                .contains("\"errorMessage\":\"mailbox [email] unavailable\"")
                 .contains("SMTP_550");
-        assertThat(store.findExisting(key).orElseThrow().response().errorMessage()).isNull();
+        assertThat(store.findExisting(key).orElseThrow().response().errorMessage())
+                .isEqualTo("mailbox [email] unavailable");
+    }
+
+    @Test
+    void fingerprintIsStoredOnClaimAndKeptByMarkComplete() {
+        IdempotencyKey key = new IdempotencyKey("acme", "billing", "k-fp");
+
+        assertThat(store.markInProgress(key, "req-1", "fp-1")).isTrue();
+        assertThat(store.findExisting(key).orElseThrow().fingerprint()).isEqualTo("fp-1");
+        store.markComplete(key, sentResponse("acme", "req-1"));
+
+        IdempotencyRecord rec = store.findExisting(key).orElseThrow();
+        assertThat(rec.status()).isEqualTo(IdempotencyStatus.COMPLETE);
+        assertThat(rec.fingerprint()).isEqualTo("fp-1");
+    }
+
+    @Test
+    void takingOverAnExpiredRowReplacesTheFingerprint() {
+        IdempotencyKey key = new IdempotencyKey("acme", "billing", "k-fp-expired");
+        store.markInProgress(key, "req-old", "fp-old");
+        PostgresTestSupport.expire(jdbc, TABLES.idempotency(), "idem_key = 'k-fp-expired'");
+
+        assertThat(store.markInProgress(key, "req-new", "fp-new")).isTrue();
+        assertThat(store.findExisting(key).orElseThrow().fingerprint()).isEqualTo("fp-new");
+        PostgresTestSupport.expire(jdbc, TABLES.idempotency(), "idem_key = 'k-fp-expired'");
+        store.markComplete(key, sentResponse("acme", "req-newer"));
+        assertThat(store.findExisting(key).orElseThrow().fingerprint()).isNull();
+    }
+
+    @Test
+    void rowWithoutAFingerprint_readsAsNull() {
+        insertCompleteRow("k-no-fp", "req-legacy", "{\"requestId\":\"req-legacy\",\"status\":\"SENT\"}");
+
+        assertThat(store.findExisting(new IdempotencyKey("acme", "billing", "k-no-fp")).orElseThrow().fingerprint())
+                .isNull();
+    }
+
+    @Test
+    void settleInProgressIsACompareAndSetOnTheInProgressOwner() {
+        IdempotencyKey key = new IdempotencyKey("acme", "billing", "k-settle");
+        store.markInProgress(key, "req-1", "fp-1");
+        NotificationResponse timedOut = failedResponse("acme", "req-1")
+                .withFailureType(FailureType.AMBIGUOUS);
+
+        assertThat(store.settleInProgress(key, "someone-else", timedOut)).isFalse();
+        assertThat(store.settleInProgress(key, null, timedOut)).isFalse();
+        assertThat(store.settleInProgress(key, "req-1", timedOut)).isTrue();
+        assertThat(store.settleInProgress(key, "req-1", timedOut)).isFalse();
+
+        IdempotencyRecord rec = store.findExisting(key).orElseThrow();
+        assertThat(rec.status()).isEqualTo(IdempotencyStatus.COMPLETE);
+        assertThat(rec.notificationId()).isEqualTo("req-1");
+        assertThat(rec.fingerprint()).isEqualTo("fp-1");
+        assertThat(rec.response().failureType()).isEqualTo(FailureType.AMBIGUOUS);
+    }
+
+    @Test
+    void settleInProgressIgnoresAnExpiredClaim() {
+        IdempotencyKey key = new IdempotencyKey("acme", "billing", "k-settle-expired");
+        store.markInProgress(key, "req-1", "fp-1");
+        PostgresTestSupport.expire(jdbc, TABLES.idempotency(), "idem_key = 'k-settle-expired'");
+
+        assertThat(store.settleInProgress(key, "req-1", failedResponse("acme", "req-1"))).isFalse();
+    }
+
+    @Test
+    void racingSettlersGetExactlyOneWinner() throws Exception {
+        IdempotencyKey key = new IdempotencyKey("acme", "billing", "k-settle-race");
+        store.markInProgress(key, "req-1", "fp-1");
+        int threads = 16;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        java.util.List<java.util.concurrent.Future<Boolean>> results = new java.util.ArrayList<>();
+        for (int i = 0; i < threads; i++) {
+            results.add(pool.submit(() -> {
+                start.await();
+                return store.settleInProgress(key, "req-1", failedResponse("acme", "req-1"));
+            }));
+        }
+        start.countDown();
+        int winners = 0;
+        for (java.util.concurrent.Future<Boolean> result : results) {
+            winners += Boolean.TRUE.equals(result.get()) ? 1 : 0;
+        }
+        pool.shutdown();
+
+        assertThat(winners).isEqualTo(1);
     }
 
     @Test

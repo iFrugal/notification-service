@@ -1,6 +1,7 @@
 package com.lazydevs.notification.rest.controller;
 
 import com.lazydevs.notification.api.exception.IdempotencyInProgressException;
+import com.lazydevs.notification.api.exception.IdempotencyKeyReusedException;
 import com.lazydevs.notification.api.exception.RateLimitExceededException;
 import com.lazydevs.notification.api.exception.TemplateRenderException;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
@@ -61,6 +62,31 @@ public class GlobalExceptionHandler extends RESTExceptionHandler {
         body.put("status", IdempotencyStatus.IN_PROGRESS.name());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
+
+    /**
+     * Render an idempotency key reused for a different request (DD-32), in
+     * the same shape as the in-progress conflict:
+     * <pre>
+     * HTTP/1.1 409 Conflict
+     * Content-Type: application/json
+     *
+     * { "notificationId": "...", "status": "KEY_REUSED", "error": "IDEMPOTENCY_KEY_REUSED" }
+     * </pre>
+     * {@code notificationId} is the request id that first used the key.
+     */
+    @ExceptionHandler(IdempotencyKeyReusedException.class)
+    public ResponseEntity<Map<String, Object>> handleIdempotencyKeyReused(IdempotencyKeyReusedException e) {
+        log.debug("Idempotency key reused for a different request; first notificationId={}",
+                e.getExistingNotificationId());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("notificationId", e.getExistingNotificationId());
+        body.put("status", KEY_REUSED);
+        body.put("error", IdempotencyKeyReusedException.ERROR_CODE);
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    /** {@code status} of the DD-32 key-reuse conflict body. */
+    static final String KEY_REUSED = "KEY_REUSED";
 
     /**
      * Render a rate-limit denial per DD-12:

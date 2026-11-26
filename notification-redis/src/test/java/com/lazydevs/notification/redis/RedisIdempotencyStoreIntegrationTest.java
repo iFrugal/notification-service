@@ -288,7 +288,7 @@ class RedisIdempotencyStoreIntegrationTest extends AbstractRedisIntegrationTest 
     }
 
     @Test
-    void markComplete_ofAFailedResponse_storesNoErrorText() {
+    void markComplete_ofAFailedResponse_storesOnlyScrubbedErrorText() {
         IdempotencyKey k = key("acme", "k-failed-text");
         store.markInProgress(k, "req-1");
 
@@ -300,11 +300,60 @@ class RedisIdempotencyStoreIntegrationTest extends AbstractRedisIntegrationTest 
 
         assertThat(redis.opsForValue().get(store.redisKey(k)))
                 .doesNotContain("john.doe")
-                .contains("\"errorMessage\":null")
+                .contains("\"errorMessage\":\"mailbox [email] unavailable\"")
                 .contains("SMTP_550");
         NotificationResponse stored = store.findExisting(k).orElseThrow().response();
-        assertThat(stored.errorMessage()).isNull();
+        assertThat(stored.errorMessage()).isEqualTo("mailbox [email] unavailable");
         assertThat(stored.errorCode()).isEqualTo("SMTP_550");
+    }
+
+    @Test
+    void fingerprint_isStoredOnClaim_andKeptByMarkComplete() {
+        IdempotencyKey k = key("acme", "k-fp");
+
+        assertThat(store.markInProgress(k, "req-1", "fp-1")).isTrue();
+        assertThat(store.findExisting(k).orElseThrow().fingerprint()).isEqualTo("fp-1");
+        store.markComplete(k, sentResponse("req-1"));
+
+        IdempotencyRecord rec = store.findExisting(k).orElseThrow();
+        assertThat(rec.status()).isEqualTo(IdempotencyStatus.COMPLETE);
+        assertThat(rec.fingerprint()).isEqualTo("fp-1");
+    }
+
+    @Test
+    void settleInProgress_isACompareAndSetOnTheInProgressOwner() {
+        IdempotencyKey k = key("acme", "k-settle");
+        store.markInProgress(k, "req-1", "fp-1");
+        NotificationResponse timedOut = new NotificationResponse(
+                "req-1", null, "acme", null, Channel.EMAIL, null, NotificationStatus.FAILED, null,
+                "IN_PROGRESS_TIMEOUT", "timed out", Instant.now(), Instant.now(), null, null,
+                FailureType.AMBIGUOUS, null);
+
+        assertThat(store.settleInProgress(k, "someone-else", timedOut)).isFalse();
+        assertThat(store.settleInProgress(k, null, timedOut)).isFalse();
+        assertThat(store.settleInProgress(k, "req-1", timedOut)).isTrue();
+        assertThat(store.settleInProgress(k, "req-1", timedOut)).isFalse();
+        assertThat(store.settleInProgress(key("acme", "absent"), "req-1", timedOut)).isFalse();
+
+        IdempotencyRecord rec = store.findExisting(k).orElseThrow();
+        assertThat(rec.status()).isEqualTo(IdempotencyStatus.COMPLETE);
+        assertThat(rec.fingerprint()).isEqualTo("fp-1");
+        assertThat(rec.response().failureType()).isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(rec.response().errorCode()).isEqualTo("IN_PROGRESS_TIMEOUT");
+        assertThat(redis.getExpire(store.redisKey(k))).isPositive();
+    }
+
+    @Test
+    void settleScript_leavesACompletedRecordAlone() {
+        IdempotencyKey k = key("acme", "k-settle-raced");
+        store.markInProgress(k, "req-1", "fp-1");
+        store.markComplete(k, sentResponse("req-1"));
+
+        Long swapped = redis.execute(RedisIdempotencyStore.SETTLE_SCRIPT, java.util.List.of(store.redisKey(k)),
+                "req-1", "{}", "60");
+
+        assertThat(swapped).isZero();
+        assertThat(store.findExisting(k).orElseThrow().response().status()).isEqualTo(NotificationStatus.SENT);
     }
 
     @Test

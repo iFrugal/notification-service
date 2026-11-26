@@ -2,6 +2,7 @@ package com.lazydevs.notification.api.idempotency;
 
 import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.model.NotificationResponse;
+import com.lazydevs.notification.api.util.MessageScrubber;
 
 import java.util.Optional;
 
@@ -46,6 +47,53 @@ public interface IdempotencyStore {
      *         existed.
      */
     boolean markInProgress(IdempotencyKey key, String notificationId);
+
+    /**
+     * {@link #markInProgress(IdempotencyKey, String)} that also stores the
+     * request fingerprint (DD-32) on the record, so a later request under the
+     * same key can be compared with it. Every later record for the key
+     * ({@link #markComplete}, {@link #settleInProgress}) keeps the
+     * fingerprint.
+     *
+     * <p>The default ignores the fingerprint and delegates to
+     * {@link #markInProgress(IdempotencyKey, String)}, so a store that does
+     * not override it reports {@code null} fingerprints, which the service
+     * treats as unknown and never compares.
+     *
+     * @param fingerprint SHA-256 hex fingerprint, may be {@code null}
+     * @return as {@link #markInProgress(IdempotencyKey, String)}
+     * @since 1.3.0
+     */
+    default boolean markInProgress(IdempotencyKey key, String notificationId, String fingerprint) {
+        return markInProgress(key, notificationId);
+    }
+
+    /**
+     * Settle an {@link IdempotencyStatus#IN_PROGRESS IN_PROGRESS} record that
+     * has been in flight for too long (DD-32,
+     * {@code notification.idempotency.in-progress-timeout}): it becomes
+     * {@link IdempotencyStatus#COMPLETE COMPLETE} with {@code response}, in
+     * its {@linkplain #storedForm(NotificationResponse) stored form}, and
+     * keeps its notification id and fingerprint.
+     *
+     * <p>Implementations MUST make this a compare-and-set: the record changes
+     * only if it is still {@code IN_PROGRESS} and still belongs to
+     * {@code notificationId}. Of any number of concurrent callers at most one
+     * gets {@code true}; a record that completed or was re-claimed in the
+     * meantime is left alone.
+     *
+     * <p>The default returns {@code false} and changes nothing: the service
+     * then keeps answering the key with a conflict, as in 1.2.0.
+     *
+     * @param key            the composite scope
+     * @param notificationId the notification id the in-progress record must belong to
+     * @param response       the terminal response to record
+     * @return {@code true} if this call settled the record
+     * @since 1.3.0
+     */
+    default boolean settleInProgress(IdempotencyKey key, String notificationId, NotificationResponse response) {
+        return false;
+    }
 
     /**
      * Record the terminal {@link NotificationResponse} against {@code key}.
@@ -96,36 +144,39 @@ public interface IdempotencyStore {
      * The form of {@code response} a store persists in
      * {@link #markComplete(IdempotencyKey, NotificationResponse)}.
      *
-     * <p>A {@code FAILED} or {@code REJECTED} response is never replayed
-     * (DD-10 "FAILED is fresh"), so its {@code errorMessage}, which is free
-     * text from a provider and can carry recipient data, is dropped from the
-     * stored copy. Every other response is returned unchanged.
+     * <p>The {@code errorMessage} of a {@code FAILED} or {@code REJECTED}
+     * response is free text from a provider and can carry recipient data, so
+     * the stored copy never holds it raw: it passes through
+     * {@link MessageScrubber#placeholders()}, which replaces email addresses
+     * and phone numbers with placeholders (1.2.0 dropped the message; since
+     * 1.3.0 a scrubbed message is kept, so a replayed failure can say what
+     * went wrong). Every other response is returned unchanged.
      *
      * @param response the terminal response, may be {@code null}
      * @return the response to persist
      * @since 1.1.2
      */
     static NotificationResponse storedForm(NotificationResponse response) {
+        return storedForm(response, MessageScrubber.placeholders());
+    }
+
+    /**
+     * {@link #storedForm(NotificationResponse)} with a given scrubber. A
+     * scrubber that returns {@code null} restores the 1.2.0 behaviour of
+     * dropping the message.
+     *
+     * @param response the terminal response, may be {@code null}
+     * @param scrubber the scrubber for the error message
+     * @return the response to persist
+     * @since 1.3.0
+     */
+    static NotificationResponse storedForm(NotificationResponse response, MessageScrubber scrubber) {
         if (response == null || response.errorMessage() == null
                 || (response.status() != NotificationStatus.FAILED
                         && response.status() != NotificationStatus.REJECTED)) {
             return response;
         }
-        return new NotificationResponse(
-                response.requestId(),
-                response.correlationId(),
-                response.tenantId(),
-                response.callerId(),
-                response.channel(),
-                response.provider(),
-                response.status(),
-                response.providerMessageId(),
-                response.errorCode(),
-                null,
-                response.receivedAt(),
-                response.processedAt(),
-                response.sentAt(),
-                response.idempotentReplay());
+        return response.withErrorMessage(scrubber.scrub(response.errorMessage()));
     }
 
     /**

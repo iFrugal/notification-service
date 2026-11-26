@@ -22,8 +22,13 @@
     {
       "name": "notification.idempotency.retry-after-failure",
       "type": "java.lang.Boolean",
-      "description": "Whether a request may retry under the same idempotency key after the previous attempt ended FAILED or REJECTED. When false, the failed record is kept and the retry gets HTTP 409 until the TTL elapses.",
-      "defaultValue": true
+      "description": "Whether a request may retry under the same idempotency key after the previous attempt ended FAILED or REJECTED. When false, the failed record is kept and the retry gets HTTP 409 until the TTL elapses. Alias of failure-policy (true = RELEASE_ALL, false = KEEP); an explicit failure-policy wins.",
+      "defaultValue": true,
+      "deprecation": {
+        "level": "warning",
+        "reason": "Replaced by notification.idempotency.failure-policy, which also offers RELEASE_TRANSIENT.",
+        "replacement": "notification.idempotency.failure-policy"
+      }
     },
     {
       "name": "notification.retry.max-retry-after",

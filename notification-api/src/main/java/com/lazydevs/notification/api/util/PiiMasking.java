@@ -46,7 +46,7 @@ public final class PiiMasking {
      * in both parts (RFC 6531 addresses); the domain needs no dot so
      * {@code user@localhost} is masked too.
      */
-    private static final Pattern EMAIL = Pattern.compile(
+    static final Pattern EMAIL = Pattern.compile(
             "[\\p{L}\\p{M}\\p{N}._%+-]+@[\\p{L}\\p{M}\\p{N}-]+(?:\\.[\\p{L}\\p{M}\\p{N}-]+)*");
 
     /**
@@ -54,7 +54,7 @@ public final class PiiMasking {
      * word character or a dash, so identifiers such as UUID groups and Twilio
      * SIDs are left alone.
      */
-    private static final Pattern PHONE = Pattern.compile("(?<![\\w+-])\\+?\\d{7,}(?![\\w-])");
+    static final Pattern PHONE = Pattern.compile("(?<![\\w+-])\\+?\\d{7,}(?![\\w-])");
 
     private PiiMasking() {
     }

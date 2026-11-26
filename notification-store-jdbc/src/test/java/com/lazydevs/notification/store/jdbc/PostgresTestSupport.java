@@ -61,7 +61,8 @@ final class PostgresTestSupport {
     }
 
     static void truncate(JdbcClient jdbc, JdbcStoreTables tables) {
-        jdbc.sql("TRUNCATE " + tables.idempotency() + ", " + tables.deadLetter() + ", " + tables.deliveryEvent())
+        jdbc.sql("TRUNCATE " + tables.idempotency() + ", " + tables.deadLetter() + ", " + tables.deliveryEvent()
+                        + ", " + tables.audit())
                 .update();
     }
 

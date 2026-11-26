@@ -122,7 +122,7 @@ class DefaultNotificationServiceTemplateValidationTest {
         RenderedContent content = new RenderedContent("Hi", "Body", null, "WELCOME");
         when(templateEngine.renderAndValidate(any())).thenReturn(content);
         when(idempotencyStore.findExisting(any())).thenReturn(Optional.empty());
-        when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
+        when(idempotencyStore.markInProgress(any(), anyString(), anyString())).thenReturn(true);
         when(rateLimiter.tryConsume(any())).thenReturn(RateLimiter.Decision.allow());
         when(providerRegistry.getProvider(anyString(), any(Channel.class), any())).thenReturn(provider);
         when(provider.send(any(), same(content))).thenReturn(SendResult.success("msg-1"));
@@ -140,7 +140,7 @@ class DefaultNotificationServiceTemplateValidationTest {
     void flagOff_rendersAtDispatchAndStoresTheFailureAsIn12() {
         properties.getTemplate().setValidateBeforeDispatch(false);
         when(idempotencyStore.findExisting(any())).thenReturn(Optional.empty());
-        when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
+        when(idempotencyStore.markInProgress(any(), anyString(), anyString())).thenReturn(true);
         when(rateLimiter.tryConsume(any())).thenReturn(RateLimiter.Decision.allow());
         when(templateEngine.render(any())).thenThrow(modelInvalid());
 
@@ -157,7 +157,7 @@ class DefaultNotificationServiceTemplateValidationTest {
     @Test
     void requestWithoutChannel_isLeftToTheDispatchPath() {
         when(idempotencyStore.findExisting(any())).thenReturn(Optional.empty());
-        when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
+        when(idempotencyStore.markInProgress(any(), anyString(), anyString())).thenReturn(true);
         when(rateLimiter.tryConsume(any())).thenReturn(RateLimiter.Decision.allow());
         when(templateEngine.render(any())).thenThrow(new IllegalStateException("no channel"));
 
