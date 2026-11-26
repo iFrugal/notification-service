@@ -6,8 +6,14 @@ import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.delivery.DeliveryEvent;
 import com.lazydevs.notification.api.delivery.DeliveryEventListener;
 import com.lazydevs.notification.api.delivery.DeliveryStatus;
+import com.lazydevs.notification.api.exception.TemplateNotFoundException;
+import com.lazydevs.notification.api.exception.TemplateValidationException;
+import com.lazydevs.notification.api.guard.RecipientGuard;
+import com.lazydevs.notification.api.idempotency.IdempotencyReleasePolicy;
+import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
+import com.lazydevs.notification.api.model.NotificationView;
 import com.lazydevs.notification.api.model.WhatsAppRecipient;
 import com.lazydevs.notification.api.webhook.WebhookRequest;
 import com.lazydevs.notification.api.webhook.WebhookResponse;
@@ -15,6 +21,8 @@ import com.lazydevs.notification.channel.whatsapp.WhatsAppChannelAutoConfigurati
 import com.lazydevs.notification.channel.whatsapp.meta.MetaStubServer.StubResponse;
 import com.lazydevs.notification.core.config.NotificationCoreAutoConfiguration;
 import com.lazydevs.notification.core.config.NotificationCoreDefaultsAutoConfiguration;
+import com.lazydevs.notification.core.config.NotificationProperties;
+import com.lazydevs.notification.core.idempotency.FailurePolicyReleasePolicy;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.webhook.WebhookDispatcher;
 import org.junit.jupiter.api.AfterEach;
@@ -27,12 +35,14 @@ import org.springframework.context.annotation.Configuration;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The whole path, as an application sees it: {@code NotificationService.send}
@@ -209,6 +219,172 @@ class MetaWhatsAppEndToEndTest {
                 assertThat(event.attributes()).containsEntry("biz_opaque_callback_data", "req-e2e-1");
             });
         });
+    }
+
+    // ---- 1.3.0 send pipeline (DD-27, DD-31, DD-32, DD-33, DD-34) with the WhatsApp channel ----
+
+    private static NotificationRequest keyed(NotificationRequest request, String idempotencyKey) {
+        return request.toBuilder().idempotencyKey(idempotencyKey).build();
+    }
+
+    @Test
+    void validateBeforeDispatch_badTemplateValue_isThrownBeforeTheClaim_andNothingIsStored() {
+        runner().withPropertyValues("notification.template.validate-before-dispatch=true",
+                        "notification.idempotency.enabled=true", "notification.audit.enabled=true")
+                .run(context -> {
+                    NotificationService service = context.getBean(NotificationService.class);
+                    NotificationRequest bad = keyed(order(), "key-1");
+                    bad.getTemplateData().put("customerName", "Jane\nDoe");
+
+                    assertThatThrownBy(() -> service.send(bad))
+                            .isInstanceOf(TemplateValidationException.class)
+                            .hasMessageContaining("customerName")
+                            .hasMessageNotContaining("Jane");
+                    assertThat(stub.requests()).isEmpty();
+                    assertThat(service.find("default", "req-e2e-1")).isEmpty();
+
+                    // The key was never claimed, so the corrected request under it is sent.
+                    NotificationResponse fixed = service.send(keyed(order(), "key-1"));
+                    assertThat(fixed.status()).isEqualTo(NotificationStatus.SENT);
+                    assertThat(fixed.idempotentReplay()).isNotEqualTo(Boolean.TRUE);
+                    assertThat(stub.requests()).hasSize(1);
+                });
+    }
+
+    @Test
+    void validateBeforeDispatch_unboundTemplateWithoutFtl_isTemplateNotFound_beforeTheClaim() {
+        runner().withPropertyValues("notification.template.validate-before-dispatch=true",
+                        "notification.idempotency.enabled=true", "notification.audit.enabled=true")
+                .run(context -> {
+                    NotificationService service = context.getBean(NotificationService.class);
+                    NotificationRequest unbound = keyed(order(), "key-2").toBuilder()
+                            .notificationType("no-such-template").build();
+
+                    assertThatThrownBy(() -> service.send(unbound)).isInstanceOf(TemplateNotFoundException.class);
+                    assertThat(stub.requests()).isEmpty();
+                    assertThat(service.find("default", "req-e2e-1")).isEmpty();
+                });
+    }
+
+    @Test
+    void retryAfterHints_reachTheResponse() {
+        stub.enqueue(
+                StubResponse.of(429, MetaStubServer.graphError(130429, "Rate limit hit")).withHeader("Retry-After", "3"),
+                StubResponse.of(400, MetaStubServer.graphError(131056, "Pair rate limit hit")));
+        runner().run(context -> {
+            NotificationResponse throttled = send(context);
+            NotificationResponse pairLimited = send(context);
+
+            assertThat(throttled.errorCode()).isEqualTo(MetaErrorCodes.THROTTLED);
+            assertThat(throttled.failureType()).isEqualTo(FailureType.TRANSIENT);
+            assertThat(throttled.retryAfter()).isEqualTo(Duration.ofSeconds(3));
+            assertThat(pairLimited.errorCode()).isEqualTo(MetaErrorCodes.PAIR_RATE_LIMITED);
+            assertThat(pairLimited.retryAfter()).isEqualTo(Duration.ofSeconds(6));
+        });
+    }
+
+    @Test
+    void recipientGuard_redirectsAWhatsAppNumber_beforeMetaIsCalled() {
+        runner().withPropertyValues("notification.recipient-guard.enabled=true",
+                        "notification.recipient-guard.channels.whatsapp.allowed[0]=+1 555 0100 999",
+                        "notification.recipient-guard.channels.whatsapp.redirect-to=+15550100999")
+                .run(context -> {
+                    NotificationResponse response = send(context);
+
+                    assertThat(response.status()).isEqualTo(NotificationStatus.SENT);
+                    assertThat(stub.requests()).singleElement()
+                            .satisfies(sent -> assertThat(sent.body().path("to").asText()).isEqualTo("15550100999"));
+                });
+    }
+
+    @Test
+    void recipientGuard_withoutRedirect_blocksANumberThatIsNotAllowed() {
+        runner().withPropertyValues("notification.recipient-guard.enabled=true",
+                        "notification.recipient-guard.channels.whatsapp.allowed[0]=+15550100999")
+                .run(context -> {
+                    NotificationResponse response = send(context);
+
+                    assertThat(response.status()).isEqualTo(NotificationStatus.FAILED);
+                    assertThat(response.errorCode()).isEqualTo(RecipientGuard.BLOCKED_ERROR_CODE);
+                    assertThat(stub.requests()).isEmpty();
+                });
+    }
+
+    @Test
+    void credentialRejected_isPermanent_soReleaseTransientKeepsTheKey() {
+        runner().withPropertyValues(PREFIX + "providers.meta.properties.access-token=expired-token",
+                        "notification.idempotency.enabled=true",
+                        "notification.idempotency.failure-policy=RELEASE_TRANSIENT")
+                .run(context -> {
+                    NotificationService service = context.getBean(NotificationService.class);
+
+                    assertThat(service.send(keyed(order(), "key-3")).errorCode())
+                            .isEqualTo(MetaErrorCodes.CREDENTIAL_REJECTED);
+                    NotificationResponse again = service.send(keyed(order(), "key-3"));
+
+                    assertThat(again.idempotentReplay()).isTrue();
+                    assertThat(again.errorCode()).isEqualTo(MetaErrorCodes.CREDENTIAL_REJECTED);
+                    assertThat(stub.requests()).hasSize(1);
+                });
+    }
+
+    @Test
+    void credentialRejected_isReleasedByTheDeploymentsOwnReleasePolicy() {
+        runner().withUserConfiguration(CredentialReleaseConfig.class)
+                .withPropertyValues(PREFIX + "providers.meta.properties.access-token=expired-token",
+                        "notification.idempotency.enabled=true",
+                        "notification.idempotency.failure-policy=RELEASE_TRANSIENT")
+                .run(context -> {
+                    NotificationService service = context.getBean(NotificationService.class);
+
+                    assertThat(service.send(keyed(order(), "key-4")).errorCode())
+                            .isEqualTo(MetaErrorCodes.CREDENTIAL_REJECTED);
+                    NotificationResponse again = service.send(keyed(order(), "key-4"));
+
+                    assertThat(again.idempotentReplay()).isNotEqualTo(Boolean.TRUE);
+                    assertThat(stub.requests()).hasSize(2);
+                });
+    }
+
+    @Test
+    void statusView_readBeforeDelivered_showsReadAndTheDeliveryTime() {
+        runner().withPropertyValues("notification.audit.enabled=true", "notification.delivery-events.enabled=true")
+                .run(context -> {
+                    assertThat(send(context).status()).isEqualTo(NotificationStatus.SENT);
+                    WebhookDispatcher dispatcher = context.getBean(WebhookDispatcher.class);
+
+                    assertThat(dispatcher.dispatch("meta", status("sent", 1767225600)).status()).isEqualTo(200);
+                    assertThat(dispatcher.dispatch("meta", status("read", 1767225602)).status()).isEqualTo(200);
+                    assertThat(dispatcher.dispatch("meta", status("delivered", 1767225601)).status()).isEqualTo(200);
+
+                    NotificationView view = context.getBean(NotificationService.class)
+                            .find("default", "req-e2e-1").orElseThrow();
+                    assertThat(view.deliveryStatus()).isEqualTo("READ");
+                    assertThat(view.deliveryStatusAt()).isEqualTo(Instant.ofEpochSecond(1767225602));
+                    assertThat(view.deliveredAt()).isEqualTo(Instant.ofEpochSecond(1767225601));
+                });
+    }
+
+    private static WebhookRequest status(String status, long epochSecond) throws Exception {
+        String body = "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"changes\":[{\"value\":{"
+                + "\"metadata\":{\"phone_number_id\":\"" + MetaStubServer.PHONE_NUMBER_ID + "\"},"
+                + "\"statuses\":[{\"id\":\"wamid.STUB1\",\"status\":\"" + status + "\",\"timestamp\":\""
+                + epochSecond + "\",\"recipient_id\":\"15550100001\"}]}}]}]}";
+        return new WebhookRequest("POST", "",
+                Map.of(MetaWebhookHandler.SIGNATURE_HEADER, List.of(MetaWebhookHandlerTest.sign(body, SECRET))),
+                Map.of(), body.getBytes(StandardCharsets.UTF_8), null);
+    }
+
+    /** The release policy of the module README: also release the key after a rejected access token. */
+    @Configuration(proxyBeanMethods = false)
+    static class CredentialReleaseConfig {
+        @Bean
+        IdempotencyReleasePolicy releasePolicy(NotificationProperties properties) {
+            IdempotencyReleasePolicy configured = new FailurePolicyReleasePolicy(properties);
+            return (request, failed) -> configured.releases(request, failed)
+                    || (failed.channel() == Channel.WHATSAPP
+                        && MetaErrorCodes.CREDENTIAL_REJECTED.equals(failed.errorCode()));
+        }
     }
 
     @Configuration(proxyBeanMethods = false)
