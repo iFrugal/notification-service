@@ -81,12 +81,15 @@ public class GlobalExceptionHandler extends RESTExceptionHandler {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("notificationId", e.getExistingNotificationId());
         body.put("status", KEY_REUSED);
-        body.put("error", IdempotencyKeyReusedException.ERROR_CODE);
+        body.put(ERROR, IdempotencyKeyReusedException.ERROR_CODE);
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
     /** {@code status} of the DD-32 key-reuse conflict body. */
     static final String KEY_REUSED = "KEY_REUSED";
+
+    /** Key of the error code in every error body. */
+    private static final String ERROR = "error";
 
     /**
      * Render a rate-limit denial per DD-12:
@@ -108,7 +111,7 @@ public class GlobalExceptionHandler extends RESTExceptionHandler {
         long retryAfterSeconds = e.getRetryAfterSeconds();
         log.warn("Rate limit exceeded: {}", e.getMessage());
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("error", "RATE_LIMIT_EXCEEDED");
+        body.put(ERROR, "RATE_LIMIT_EXCEEDED");
         body.put("retryAfterSeconds", retryAfterSeconds);
         body.put("message", e.getMessage());
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
@@ -137,7 +140,7 @@ public class GlobalExceptionHandler extends RESTExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleTemplateRender(TemplateRenderException e) {
         log.warn("Template render failed: {}", sanitize(e.getMessage()));
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("error", e.getErrorCode());
+        body.put(ERROR, e.getErrorCode());
         body.put("reason", e.getReason().name());
         body.put("templateId", e.getTemplateId());
         body.put("path", e.getVariablePath());

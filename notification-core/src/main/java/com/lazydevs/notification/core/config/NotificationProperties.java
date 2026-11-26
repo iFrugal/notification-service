@@ -9,6 +9,8 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
@@ -258,6 +260,8 @@ public class NotificationProperties {
      * Idempotency-key handling. See {@code docs/design-decisions/10-idempotency.md}.
      */
     @Data
+    @EqualsAndHashCode(doNotUseGetters = true) // the generated methods must not call the deprecated getters
+    @ToString(doNotUseGetters = true)
     public static class IdempotencyProperties {
         /** Master switch — false disables dedup entirely (the request field is silently ignored). */
         private boolean enabled = true;
@@ -284,6 +288,7 @@ public class NotificationProperties {
          * @deprecated since 1.3.0, use {@code notification.idempotency.failure-policy}
          */
         @Deprecated(since = "1.3.0")
+        @SuppressWarnings("java:S1133") // kept for source compatibility until the next major version
         private Boolean retryAfterFailure;
 
         /**
@@ -341,6 +346,7 @@ public class NotificationProperties {
          * @deprecated since 1.3.0, use {@link #resolvedFailurePolicy()}
          */
         @Deprecated(since = "1.3.0")
+        @SuppressWarnings("java:S1133") // kept for source compatibility until the next major version
         public boolean isRetryAfterFailure() {
             return !Boolean.FALSE.equals(retryAfterFailure);
         }
@@ -371,7 +377,7 @@ public class NotificationProperties {
             if (failurePolicy == null || retryAfterFailure == null) {
                 return false;
             }
-            IdempotencyFailurePolicy alias = retryAfterFailure
+            IdempotencyFailurePolicy alias = Boolean.TRUE.equals(retryAfterFailure)
                     ? IdempotencyFailurePolicy.RELEASE_ALL
                     : IdempotencyFailurePolicy.KEEP;
             return alias != failurePolicy;

@@ -10,6 +10,7 @@ import static java.net.HttpURLConnection.HTTP_NOT_FOUND;
  * {@link TemplateRenderException}; its error code ({@code TEMPLATE_NOT_FOUND}), status
  * code and constructors are unchanged.
  */
+@SuppressWarnings("java:S110") // depth comes from the NotificationException tree shipped in 1.2.0
 public class TemplateNotFoundException extends TemplateRenderException {
 
     public TemplateNotFoundException(String message) {

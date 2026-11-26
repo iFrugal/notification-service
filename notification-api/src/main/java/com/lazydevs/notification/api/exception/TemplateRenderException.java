@@ -16,6 +16,7 @@ package com.lazydevs.notification.api.exception;
  *
  * @since 1.3.0
  */
+@SuppressWarnings("java:S110") // depth comes from the NotificationException tree shipped in 1.2.0
 public class TemplateRenderException extends NotificationException {
 
     /** HTTP 422 Unprocessable Content; not present in {@link java.net.HttpURLConnection}. */

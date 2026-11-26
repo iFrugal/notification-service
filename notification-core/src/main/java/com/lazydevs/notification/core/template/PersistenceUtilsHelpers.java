@@ -27,9 +27,12 @@ import java.util.UUID;
  */
 final class PersistenceUtilsHelpers {
 
+    private static final String DESERIALIZE_TO_MAP = "serde_deserializeToMap";
+    private static final String SERIALIZE = "serde_serialize";
+    private static final String STRING_INPUT = "String input";
+
     /** Names of the helpers that need {@code legacy-helpers=true}. */
-    static final List<String> LEGACY_HELPER_NAMES =
-            List.of("eval", "file", "js", "serde_deserializeToMap", "serde_serialize");
+    static final List<String> LEGACY_HELPER_NAMES = List.of("eval", "file", "js", DESERIALIZE_TO_MAP, SERIALIZE);
 
     private PersistenceUtilsHelpers() {
     }
@@ -44,8 +47,8 @@ final class PersistenceUtilsHelpers {
             model.put("eval", new Eval());
             model.put("file", new FileAsString());
             model.put("js", new JavaScript());
-            model.put("serde_deserializeToMap", new DeserializeToMap());
-            model.put("serde_serialize", new Serialize());
+            model.put(DESERIALIZE_TO_MAP, new DeserializeToMap());
+            model.put(SERIALIZE, new Serialize());
         }
     }
 
@@ -71,7 +74,7 @@ final class PersistenceUtilsHelpers {
     private static final class Trim implements TemplateMethodModelEx {
         @Override
         public Object exec(List arguments) throws TemplateModelException {
-            requireArguments(arguments, "Trim", "String input");
+            requireArguments(arguments, "Trim", STRING_INPUT);
             return scalar(arguments.get(0)).trim();
         }
     }
@@ -80,7 +83,7 @@ final class PersistenceUtilsHelpers {
     private static final class Eval implements TemplateMethodModelEx {
         @Override
         public Object exec(List arguments) throws TemplateModelException {
-            requireArguments(arguments, "eval", "String input");
+            requireArguments(arguments, "eval", STRING_INPUT);
             return TemplateEngine.getInstance().generate(scalar(arguments.get(0)), new HashMap<>());
         }
     }
@@ -89,7 +92,7 @@ final class PersistenceUtilsHelpers {
     private static final class FileAsString implements TemplateMethodModelEx {
         @Override
         public Object exec(List arguments) {
-            requireArguments(arguments, "file", "String input");
+            requireArguments(arguments, "file", STRING_INPUT);
             String filePath = null;
             try {
                 filePath = scalar(arguments.get(0));
@@ -122,7 +125,7 @@ final class PersistenceUtilsHelpers {
     private static final class DeserializeToMap implements TemplateMethodModelEx {
         @Override
         public Object exec(List arguments) {
-            requireArguments(arguments, "serde_deserializeToMap", "String input");
+            requireArguments(arguments, DESERIALIZE_TO_MAP, STRING_INPUT);
             return SerDe.JSON.deserializeToMap(String.valueOf(arguments.get(0)));
         }
     }
@@ -131,7 +134,7 @@ final class PersistenceUtilsHelpers {
     private static final class Serialize implements TemplateMethodModelEx {
         @Override
         public Object exec(List arguments) {
-            requireArguments(arguments, "serde_serialize", "Object");
+            requireArguments(arguments, SERIALIZE, "Object");
             Object value = arguments.get(0);
             if (value instanceof WrapperTemplateModel wrapper) {
                 value = wrapper.getWrappedObject();

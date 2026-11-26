@@ -166,13 +166,15 @@ final class VariablePathRecorder implements TemplateExceptionHandler {
     /** {@code [n]} with one to {@link #MAX_INDEX_DIGITS} ASCII digits, starting after the {@code [}. */
     private static int indexStep(String text, int start, List<Object> steps) {
         int end = start;
+        int index = 0;
         while (end < text.length() && end - start < MAX_INDEX_DIGITS && isAsciiDigit(text.charAt(end))) {
+            index = index * 10 + (text.charAt(end) - '0');
             end++;
         }
         if (end == start || end >= text.length() || text.charAt(end) != ']') {
             return NO_STEP;
         }
-        steps.add(Integer.valueOf(text.substring(start, end)));
+        steps.add(index);
         return end + 1;
     }
 

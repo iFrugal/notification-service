@@ -80,7 +80,8 @@ public final class RequestFingerprint {
         doc.put("recipient", recipient(request));
         doc.put("templateData", request.getTemplateData());
         doc.put("provider", request.getProvider());
-        doc.put("attachments", attachments(request.getAttachments()));
+        // null and an empty list are different requests, so null stays null
+        doc.put("attachments", request.getAttachments() == null ? null : attachments(request.getAttachments()));
         return doc;
     }
 
@@ -95,9 +96,6 @@ public final class RequestFingerprint {
     }
 
     private static List<Object> attachments(List<NotificationRequest.Attachment> attachments) {
-        if (attachments == null) {
-            return null;
-        }
         List<Object> out = new ArrayList<>(attachments.size());
         for (NotificationRequest.Attachment attachment : attachments) {
             out.add(attachment == null ? null : attachment(attachment));

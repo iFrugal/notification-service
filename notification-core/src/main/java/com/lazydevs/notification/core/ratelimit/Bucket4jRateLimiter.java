@@ -103,8 +103,8 @@ public class Bucket4jRateLimiter implements RateLimiter {
         if (probe.isConsumed()) {
             return Decision.allow();
         }
-        // nanosToWaitForRefill is "time until at least 1 token is available";
-        // with several bands it is the time until every band has one (DD-30).
+        // The probe's wait is the time until at least one token is available,
+        // and with several bands the time until every band has one (DD-30).
         Duration retryAfter = Duration.ofNanos(probe.getNanosToWaitForRefill());
         // Don't log the user-controlled key components here — taint-tracking
         // tools can't statically prove our control-char scrub is sufficient,

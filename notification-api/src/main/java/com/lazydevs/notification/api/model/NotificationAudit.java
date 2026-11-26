@@ -234,7 +234,7 @@ public class NotificationAudit {
      * @deprecated since 1.3.0, use {@link #builder()}
      */
     @Deprecated(since = "1.3.0")
-    @SuppressWarnings("java:S107") // mirrors the 1.2.0 field list
+    @SuppressWarnings({"java:S107", "java:S1133"}) // mirrors the 1.2.0 field list; kept until the next major version
     public NotificationAudit(String id, String requestId, String correlationId, String tenantId, String callerId,
                              String replayOf, String notificationType, Channel channel, String provider,
                              String recipientSummary, NotificationStatus status, String providerMessageId,
