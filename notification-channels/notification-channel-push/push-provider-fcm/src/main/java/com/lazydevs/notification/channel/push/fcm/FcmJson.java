@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.lazydevs.notification.api.push.PushTokens;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -22,12 +23,6 @@ import java.util.Optional;
 final class FcmJson {
 
     static final ObjectMapper MAPPER = new ObjectMapper();
-
-    /** Prefix of every target hash, so a reader knows how it was made. */
-    static final String HASH_PREFIX = "sha256:";
-
-    /** Hex characters of the SHA-256 digest kept in a target hash (64 bits). */
-    private static final int TARGET_HASH_HEX_LENGTH = 16;
 
     private FcmJson() {
     }
@@ -97,11 +92,11 @@ final class FcmJson {
 
     /**
      * The only form in which a device token or installation id appears in logs,
-     * results and events: {@code sha256:} and the first 16 hex characters of its
-     * SHA-256. Stable across JVMs, so an application can hash its stored tokens
-     * the same way to find the one to delete.
+     * results and events: {@link PushTokens#hash(String)}, {@code sha256:} and the
+     * first 16 hex characters of its SHA-256. Stable across JVMs, so an application
+     * can hash its stored tokens the same way to find the one to delete.
      */
     static String targetHash(String target) {
-        return HASH_PREFIX + sha256Hex(target).substring(0, TARGET_HASH_HEX_LENGTH);
+        return PushTokens.hash(target);
     }
 }
