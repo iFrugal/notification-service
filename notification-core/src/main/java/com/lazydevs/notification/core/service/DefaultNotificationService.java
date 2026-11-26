@@ -211,7 +211,8 @@ public class DefaultNotificationService implements NotificationService {
                         provider.getProviderName(),
                         result.messageId(),
                         receivedAt,
-                        result.timestamp());
+                        result.timestamp())
+                        .withProviderMetadata(result.providerMetadata());
 
                 log.info("Notification sent: requestId={}, provider={}, messageId={}",
                         request.getRequestId(), provider.getProviderName(), result.messageId());
@@ -226,7 +227,9 @@ public class DefaultNotificationService implements NotificationService {
                         result.messageId(),
                         result.errorCode(),
                         PiiMasking.redact(result.errorMessage()),
-                        receivedAt);
+                        receivedAt)
+                        .withFailureType(failureTypeOf(result))
+                        .withProviderMetadata(result.providerMetadata());
 
                 if (result.failureType() == FailureType.AMBIGUOUS && attempts == 1) {
                     // The provider may have accepted the message, so it is not
@@ -244,8 +247,7 @@ public class DefaultNotificationService implements NotificationService {
                 // attempts taken — both "permanent failure on first try" and
                 // "retries exhausted" land here. The entry's failureType +
                 // attempts let operators distinguish them.
-                recordDeadLetter(request, response, attempts,
-                        result.failureType() != null ? result.failureType() : FailureType.UNKNOWN);
+                recordDeadLetter(request, response, attempts, response.failureType());
             }
 
             // Update audit
@@ -264,7 +266,8 @@ public class DefaultNotificationService implements NotificationService {
                     null,
                     e.getErrorCode(),
                     PiiMasking.redact(e.getMessage()),
-                    receivedAt);
+                    receivedAt)
+                    .withFailureType(FailureType.PERMANENT);
 
             auditService.updateStatus(request.getRequestId(), response.status(),
                     null, response.errorCode(), response.errorMessage());
@@ -284,7 +287,8 @@ public class DefaultNotificationService implements NotificationService {
                     null,
                     "INTERNAL_ERROR",
                     PiiMasking.redact(e.getMessage()),
-                    receivedAt);
+                    receivedAt)
+                    .withFailureType(FailureType.UNKNOWN);
 
             auditService.updateStatus(request.getRequestId(), response.status(),
                     null, response.errorCode(), response.errorMessage());
@@ -303,7 +307,8 @@ public class DefaultNotificationService implements NotificationService {
             if (idemKey != null) {
                 NotificationResponse toRecord = response != null ? response
                         : NotificationResponse.failed(request, null,
-                                "INTERNAL_ERROR", "Dispatch terminated without a response", receivedAt);
+                                "INTERNAL_ERROR", "Dispatch terminated without a response", receivedAt)
+                                .withFailureType(FailureType.UNKNOWN);
                 closeIdempotencyRecord(idemKey, request.getRequestId(), toRecord);
             }
         }
@@ -340,6 +345,11 @@ public class DefaultNotificationService implements NotificationService {
             log.warn("Idempotency release failed for notificationId={}: {}",
                     sanitizeForLog(notificationId), e.toString());
         }
+    }
+
+    /** The provider's classification of a failed result; {@link FailureType#UNKNOWN} when it gave none. */
+    private static FailureType failureTypeOf(SendResult result) {
+        return result.failureType() != null ? result.failureType() : FailureType.UNKNOWN;
     }
 
     /**

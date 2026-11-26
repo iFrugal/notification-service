@@ -125,7 +125,9 @@ public interface IdempotencyStore {
                 response.receivedAt(),
                 response.processedAt(),
                 response.sentAt(),
-                response.idempotentReplay());
+                response.idempotentReplay(),
+                response.failureType(),
+                response.providerMetadata());
     }
 
     /**

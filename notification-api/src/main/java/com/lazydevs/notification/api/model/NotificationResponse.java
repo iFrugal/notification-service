@@ -1,10 +1,15 @@
 package com.lazydevs.notification.api.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.NotificationStatus;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Response for a notification request.
@@ -32,6 +37,19 @@ import java.time.Instant;
  *                          is never serialised to the JSON response body —
  *                          the controller surfaces it instead via the
  *                          {@code X-Idempotent-Replay} HTTP header per DD-10.
+ * @param failureType       classification of a failure (DD-13): whether a
+ *                          retry is safe ({@link FailureType#TRANSIENT}),
+ *                          pointless ({@link FailureType#PERMANENT}) or may
+ *                          duplicate a message that was already accepted
+ *                          ({@link FailureType#AMBIGUOUS}). {@code null} on
+ *                          success and on responses written by 1.2.0 or
+ *                          earlier; omitted from JSON when {@code null}.
+ *                          Since 1.3.0 (DD-31).
+ * @param providerMetadata  provider-specific details of the send, from
+ *                          {@link SendResult#providerMetadata()}, for example
+ *                          an ACS {@code acsStatus} or a retry hint.
+ *                          {@code null} when the provider gave none; omitted
+ *                          from JSON when {@code null}. Since 1.3.0 (DD-31).
  */
 public record NotificationResponse(
         String requestId,
@@ -47,7 +65,75 @@ public record NotificationResponse(
         Instant receivedAt,
         Instant processedAt,
         Instant sentAt,
-        @JsonIgnore Boolean idempotentReplay) {
+        @JsonIgnore Boolean idempotentReplay,
+        @JsonInclude(JsonInclude.Include.NON_NULL) FailureType failureType,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Map<String, Object> providerMetadata) {
+
+    /**
+     * Canonical constructor. Copies {@code providerMetadata} into an
+     * unmodifiable map so the response stays a value.
+     */
+    @JsonCreator
+    public NotificationResponse {
+        providerMetadata = providerMetadata == null ? null
+                : Collections.unmodifiableMap(new LinkedHashMap<>(providerMetadata));
+    }
+
+    /**
+     * The 1.2.0 constructor, without {@link #failureType()} and
+     * {@link #providerMetadata()} (both {@code null}). Kept so code that
+     * builds responses directly keeps compiling.
+     */
+    @SuppressWarnings("java:S107") // mirrors the record components
+    public NotificationResponse(String requestId, String correlationId, String tenantId, String callerId,
+                                Channel channel, String provider, NotificationStatus status,
+                                String providerMessageId, String errorCode, String errorMessage,
+                                Instant receivedAt, Instant processedAt, Instant sentAt,
+                                Boolean idempotentReplay) {
+        this(requestId, correlationId, tenantId, callerId, channel, provider, status, providerMessageId,
+                errorCode, errorMessage, receivedAt, processedAt, sentAt, idempotentReplay, null, null);
+    }
+
+    /**
+     * A copy of this response with the given failure classification.
+     *
+     * @param type the classification, may be {@code null}
+     * @return the copy; this response is not changed
+     * @since 1.3.0
+     */
+    public NotificationResponse withFailureType(FailureType type) {
+        return new NotificationResponse(requestId, correlationId, tenantId, callerId, channel, provider, status,
+                providerMessageId, errorCode, errorMessage, receivedAt, processedAt, sentAt, idempotentReplay,
+                type, providerMetadata);
+    }
+
+    /**
+     * A copy of this response with the given provider metadata. An empty
+     * map is stored as {@code null}, so it is omitted from JSON.
+     *
+     * @param metadata the provider metadata, may be {@code null}
+     * @return the copy; this response is not changed
+     * @since 1.3.0
+     */
+    public NotificationResponse withProviderMetadata(Map<String, Object> metadata) {
+        return new NotificationResponse(requestId, correlationId, tenantId, callerId, channel, provider, status,
+                providerMessageId, errorCode, errorMessage, receivedAt, processedAt, sentAt, idempotentReplay,
+                failureType, metadata == null || metadata.isEmpty() ? null : metadata);
+    }
+
+    /**
+     * A copy of this response with another error message, for example one
+     * scrubbed before it is persisted.
+     *
+     * @param message the error message, may be {@code null}
+     * @return the copy; this response is not changed
+     * @since 1.3.0
+     */
+    public NotificationResponse withErrorMessage(String message) {
+        return new NotificationResponse(requestId, correlationId, tenantId, callerId, channel, provider, status,
+                providerMessageId, errorCode, message, receivedAt, processedAt, sentAt, idempotentReplay,
+                failureType, providerMetadata);
+    }
 
     // ======================================================================
     //  Minimal factories preserved from the original builder-based API.
@@ -240,6 +326,8 @@ public record NotificationResponse(
                 cached.receivedAt(),
                 cached.processedAt(),
                 cached.sentAt(),
-                Boolean.TRUE);
+                Boolean.TRUE,
+                cached.failureType(),
+                cached.providerMetadata());
     }
 }
