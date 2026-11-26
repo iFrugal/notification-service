@@ -38,7 +38,7 @@ This is the single dependency that brings the service in:
 | What you get | Status | Notes |
 |--------------|--------|-------|
 | Core service (`NotificationService.send(...)`) | 🟢 | Always present |
-| Template engine (FreeMarker) | 🟢 | Tenant-aware lookup; configurable via `notification.template.*` |
+| Template engine (FreeMarker) | 🟢 | Tenant-aware lookup; includes and imports resolve against `notification.template.base-path` (DD-26); configurable via `notification.template.*` |
 | Multi-tenant routing (`X-Tenant-Id`) | 🟢 | DD-03 |
 | Provider registry + lifecycle | 🟢 | DD-05 / DD-06 |
 | In-memory idempotency store (Caffeine) | 🟢 | DD-10; `notification.idempotency.enabled` defaults to `true` |
@@ -104,7 +104,7 @@ deployment doesn't transitively inherit AWS or Twilio SDKs.
 |----------|----------|-------------|----------------------------------------|
 | SMTP | `email-provider-smtp` | Self-hosted SMTP relay or Gmail / SendGrid SMTP | `host`, `port`, `username`, `password`, `starttls` |
 | AWS SES | `email-provider-ses` | AWS-native email | `aws-region`, `aws-access-key`, `aws-secret-key` (or IAM role on EC2) |
-| Azure Communication Services | `email-provider-acs` | Azure-native email (ACS Email) | `sender` plus `connection-string`, or `endpoint` + `credential` (`default` for managed identity via azure-identity, or a `TokenCredential` bean name); optional `reply-to`, `send-mode` (`wait`/`submit`), `wait-timeout`, `sdk-retries`, `user-engagement-tracking-disabled`. See the [module README](../notification-channels/notification-channel-email/email-provider-acs/README.md) |
+| Azure Communication Services | `email-provider-acs` | Azure-native email (ACS Email) | `sender` plus `connection-string`, or `endpoint` + `credential` (`default` for managed identity via azure-identity, or a `TokenCredential` bean name); optional `reply-to`, `send-mode` (`wait`/`submit`), `wait-timeout`, `sdk-retries`, `user-engagement-tracking-disabled`, `timeout-failure-type` (`transient` default, or `ambiguous` since 1.3.0, DD-31). See the [module README](../notification-channels/notification-channel-email/email-provider-acs/README.md) |
 
 ```xml
 <dependency>
@@ -210,7 +210,19 @@ All have an in-memory default; the stateful ones can move to Redis or PostgreSQL
 | **Per-channel retry + rate-limit overrides** | DD-23 | n/a | composes on top of retry / rate-limit when those are enabled | n/a | n/a | n/a |
 | **Webhook ingestion** (Twilio + SES) | DD-16 | 🔵 Off | `notification.webhooks.enabled: true` + per-provider; needs REST | n/a | n/a | n/a |
 | **Delivery event store** | DD-17 | 🔵 Off | `notification.delivery-events.enabled: true` | Caffeine LRU | `RedisDeliveryEventStore` | `JdbcDeliveryEventStore` |
-| **Audit persistence** | DD-07 | 🔵 Off | `notification.audit.enabled: true` | No-op (logs only) | Bring your own via `persistence-api` | Bring your own |
+| **Audit persistence** | DD-07, DD-33 | 🔵 Off | `notification.audit.enabled: true` | `InMemoryNotificationAuditStore` (bounded) | None: supply a `NotificationAuditStore`, or `notification.redis.audit.enabled: false` for memory | `JdbcNotificationAuditStore` (table `<prefix>audit`) |
+| **Legacy template helpers** (`eval`, `file`, `js`, `serde_*`, unrestricted `?new`) | DD-26 | 🟢 On (deprecated; off from 2.0) | `notification.template.legacy-helpers: false` to remove | n/a | n/a | n/a |
+| **Validate before dispatch** (render first, 422 on failure) | DD-27 | 🔵 Off (on from 2.0) | `notification.template.validate-before-dispatch: true` | n/a | n/a | n/a |
+| **Default-tenant provider fallback** | DD-28 | 🔵 Off | `notification.tenant-fallback.enabled: true` | n/a | n/a | n/a |
+| **Lazy provider initialisation** | DD-29 | 🔵 Off | `notification.providers.lazy-init: true` | n/a | n/a | n/a |
+| **Rate-limit bandwidths, shared scope, refunds** | DD-30 | n/a | composes on top of rate-limit when it is enabled | Bucket4j (in `notification-core`) | `RedisRateLimiter` | None: memory or Redis only |
+| **Failure type, provider metadata, retry hint on responses** | DD-31 | 🟢 On | always; `failureType`, `providerMetadata` and `retryAfter` appear in the response when set | n/a | n/a | n/a |
+| **Idempotency key-reuse check** | DD-32 | 🔵 Off | `notification.idempotency.reject-key-reuse: true` | fingerprint in the Caffeine record | fingerprint in the Redis record | `fingerprint` column (optional; required for this check) |
+| **Idempotency failure policy + release policy SPI** | DD-32 | 🟢 `RELEASE_ALL` | `notification.idempotency.failure-policy: RELEASE_TRANSIENT` (or `KEEP`); `IdempotencyReleasePolicy` bean to replace | Caffeine | `RedisIdempotencyStore` | `JdbcIdempotencyStore` |
+| **Idempotency in-progress timeout** | DD-32 | 🔵 Off | `notification.idempotency.in-progress-timeout: PT10M` | compare-and-set | Lua compare-and-set | conditional `UPDATE` |
+| **Scrubbed error message in stored failures** | DD-32 | 🔵 Off | `notification.idempotency.store-scrubbed-error-message: true` | Caffeine | `RedisIdempotencyStore` | `JdbcIdempotencyStore` |
+| **Status view** (`NotificationService.find`) | DD-33 | 🔵 Off | `notification.audit.enabled: true` | `InMemoryNotificationAuditStore` (bounded) | None: supply a store, or `notification.redis.audit.enabled: false` for memory | `JdbcNotificationAuditStore` |
+| **Recipient guard** | DD-34 | 🔵 Off | `notification.recipient-guard.enabled: true` + `channels.<channel>.allowed` | n/a | n/a | n/a |
 
 ### 3a. Idempotency (DD-10)
 
@@ -250,6 +262,108 @@ Send-side: include `idempotencyKey` on `NotificationRequest`. Replay of a
 completed key returns `200` with header `X-Idempotent-Replay: true`.
 Concurrent duplicate returns `409`.
 
+Since 1.3.0 (DD-32):
+
+```yaml
+notification:
+  idempotency:
+    failure-policy: RELEASE_TRANSIENT     # RELEASE_ALL (default) | KEEP | RELEASE_TRANSIENT
+    reject-key-reuse: true                # default false
+    in-progress-timeout: PT10M            # default unset (409 until the TTL)
+    store-scrubbed-error-message: true    # default false
+```
+
+- `RELEASE_TRANSIENT` releases the key only after a `TRANSIENT` failure; `PERMANENT`, `AMBIGUOUS` and `UNKNOWN` failures are replayed (`X-Idempotent-Replay: true`, status `FAILED`, with `failureType`).
+- The release decision is the `IdempotencyReleasePolicy` bean (`com.lazydevs.notification.api.idempotency`); declare your own to replace it.
+  A key settled by the in-progress timeout is never released.
+- `reject-key-reuse` answers a key reused for a different request (different channel, recipient, template, template data, explicit provider or attachments) with `409 {"notificationId": "...", "status": "KEY_REUSED"}`.
+  Correlation id and metadata do not count.
+  On JDBC it needs the `fingerprint` column; without it startup fails with the `ALTER TABLE` statement.
+- `in-progress-timeout` settles a key stuck `IN_PROGRESS` as `FAILED` / `IN_PROGRESS_TIMEOUT` / `AMBIGUOUS` and replays it; it is never released.
+- `store-scrubbed-error-message` keeps the error message of a stored failure, with addresses and numbers replaced by placeholders (`MessageScrubber`); by default the stored copy has none, as in 1.2.0.
+- `retry-after-failure` still works as a deprecated alias (`true` = `RELEASE_ALL`, `false` = `KEEP`); `failure-policy` wins when both are set.
+
+### 3a-1. Recipient guard (DD-34)
+
+```yaml
+notification:
+  recipient-guard:
+    enabled: true
+    channels:
+      email:
+        allowed: ["@example.com", "qa.lead@example.org"]
+        redirect-to: qa-inbox@example.com
+        subject-prefix: "[redirected: {originals}] "   # default; "" disables
+      sms:
+        allowed: ["+15550100"]                         # no redirect-to: drop
+```
+
+Not-allowed recipients are redirected one-for-one (or dropped); nothing left fails the send with `RECIPIENT_BLOCKED` (`PERMANENT`) before the provider.
+Push recipients are not guarded.
+Declare a `RecipientGuard` bean to replace the rules.
+
+### 3a-2. Default-tenant provider fallback (DD-28)
+
+```yaml
+notification:
+  default-tenant: default
+  tenant-fallback:
+    enabled: true                  # default false
+  tenants:
+    default:                       # serves every tenant without its own entry
+      channels:
+        email:
+          providers:
+            smtp:
+              properties:
+                host: smtp.example.com
+```
+
+Only provider resolution falls back.
+Idempotency, rate limits, templates, audit and the dead-letter store keep the request's own tenant id.
+A missing default tenant still fails with `TENANT_NOT_FOUND`.
+
+### 3a-3. Lazy provider initialisation (DD-29)
+
+```yaml
+notification:
+  providers:
+    lazy-init: true                # default false
+```
+
+The application boots even when an enabled provider has no settings yet (also in a native image).
+The first send that needs the provider builds it; concurrent first sends share one build.
+A failed build fails the send with `PROVIDER_NOT_CONFIGURED` as a `TRANSIENT` failure (retry and DLQ apply) and is tried again on the next send.
+`GET /admin/health` lists `NOT_INITIALIZED` (status stays `UP`) and `INIT_FAILED` (status `DEGRADED`) providers.
+
+### 3a-4. Template rendering (DD-26)
+
+```yaml
+notification:
+  template:
+    base-path: classpath:/templates/
+    legacy-helpers: false          # default true in 1.x, deprecated; false from 2.0
+```
+
+`<#include>` and `<#import>` resolve against `base-path` (`classpath:` or `file:`): relative names next to the including template, names starting with `/` from `base-path`.
+Every path segment must pass the template id rule and `..` cannot leave `base-path`.
+`legacy-helpers: false` removes `eval`, `file`, `js`, `serde_deserializeToMap` and `serde_serialize` and limits `?new` with FreeMarker's `SAFER_RESOLVER`; `uuid`, `trim` and the notification helpers stay.
+With `true` the engine logs one WARN at startup.
+FreeMarker no longer logs render errors; they are thrown once as `TemplateRenderException` with a reason and, for model errors, the variable path.
+
+### 3a-5. Validate before dispatch (DD-27)
+
+```yaml
+notification:
+  template:
+    validate-before-dispatch: true   # default false; planned default in 2.0
+```
+
+The template is rendered before the idempotency check, the rate limit and the audit record.
+A request whose template is missing, invalid, does not fit its data, or renders an email with a blank subject or an empty body is refused with `TemplateRenderException`: HTTP 422 over REST (`error`, `reason`, `templateId`, `path`, `message`), one WARN and an offset commit on Kafka.
+Nothing is stored, no rate-limit token is taken and nothing goes to the dead-letter store.
+The rendered content is reused for the send, so the template is rendered once.
+
 ### 3b. Rate limiting (DD-12 + DD-23)
 
 ```yaml
@@ -276,6 +390,29 @@ notification:
 
 REST denial: HTTP `429` + `Retry-After`. Kafka: drop-and-commit (no
 requeue amplification).
+
+Since 1.3.0 (DD-30):
+
+```yaml
+notification:
+  rate-limit:
+    enabled: true
+    refund-unsent: false           # DD-30: refund a failed send whose idempotency key was released
+    by-channel:
+      sms:
+        scope: channel             # one bucket for all tenants and callers
+        bandwidths:                # every band must allow
+          - capacity: 2
+            refill-tokens: 2
+            refill-period: 1m
+          - capacity: 5
+            refill-tokens: 5
+            refill-period: 1h
+```
+
+`bandwidths` and the single-band fields are mutually exclusive on one rule.
+`scope: channel` is applied after rule precedence, so a tenant override still applies to its tenant.
+`refund-unsent` gives the token back to the bucket the send consumed when the idempotency release policy released the key of a failed send, unless the failure is `AMBIGUOUS` or `UNKNOWN`.
 
 ### 3c. Retries + Dead-Letter Queue (DD-13 + DD-15 + DD-19 + DD-23)
 
@@ -500,6 +637,7 @@ No flag needed; Boot's `management.metrics.enable.notification=false` disables.
 | `notification.delivery-events.received.total` | counter | provider, status |
 | `notification.delivery-events.size` | gauge | (none) |
 | `notification.webhook.signature.failed.total` | counter | provider |
+| `notification.template.validation.failed.total` | counter | channel, reason |
 
 Standalone deployments ship with a Prometheus registry — scrape
 `/actuator/prometheus`.
@@ -551,11 +689,23 @@ notification:
     retention-days: 90
 ```
 
-**You wire your own backend.** The default is `NoOpAuditService` (logs
-only). Replace by registering a `NotificationAuditService` bean — see
-DD-07. Admin browse (DD-20) at:
+**Shipped stores since 1.3.0 (DD-33).** With `enabled: true` the records go to the audit store of the store family: a bounded in-memory store (`notification.audit.max-entries`, default 10000) for `memory`, the `<prefix>audit` table for `jdbc`.
+The Redis family has no audit store: supply a `NotificationAuditStore` bean, or set `notification.redis.audit.enabled: false` to keep audit in memory.
+With `enabled: false` (the default) `NoOpAuditService` logs only.
+A `NotificationAuditService` bean of your own replaces all of this (DD-07). Admin browse (DD-20) at:
 - `GET /api/v1/admin/audit/{requestId}`
 - `GET /api/v1/admin/audit/recent?tenantId=acme`
+
+### 7a. Status view (DD-33)
+
+```java
+Optional<NotificationView> view = notificationService.find("acme", requestId);
+Optional<NotificationView> byKey = notificationService.findByIdempotencyKey("acme", "billing", "order-42");
+```
+
+The view is the audit record joined with the latest delivery event: status, failure type, error code, scrubbed error message, provider message id, received/sent/delivered/failed/updated timestamps, recipient count, the caller's metadata, and `deliveryStatus` as text.
+It never contains recipient addresses.
+Both methods return empty while `notification.audit.enabled` is `false`.
 
 ---
 
@@ -731,17 +881,34 @@ spring:
 | `notification.store.type` | `memory` | Store family for every enabled stateful feature: `memory`, `redis` or `jdbc` |
 | `notification.rest.base-path` | `/api/v1` | Path prefix for all REST + admin + webhook surfaces |
 | `notification.kafka.enabled` | `false` | Kafka consumer |
-| `notification.audit.enabled` | `false` | Audit (default impl is no-op even when true; wire your own) |
+| `notification.audit.enabled` | `false` | Audit records in the store family's audit store, the data behind `NotificationService.find` (store shipped since 1.3.0, DD-33) |
+| `notification.audit.retention-days` | `90` | Lifetime of an audit record (in-memory expiry, JDBC `expires_at`) |
+| `notification.audit.max-entries` | `10000` | Bound of the in-memory audit store (since 1.3.0) |
+| `notification.tenant-fallback.enabled` | `false` | A tenant without an entry under `notification.tenants` uses the providers of `notification.default-tenant` (since 1.3.0, DD-28) |
+| `notification.providers.lazy-init` | `false` | Build providers on first use instead of at startup; a failed build fails the send with `PROVIDER_NOT_CONFIGURED` (`TRANSIENT`) (since 1.3.0, DD-29) |
+| `notification.template.legacy-helpers` | `true` | Add the persistence-utils helpers `eval`, `file`, `js`, `serde_*` and leave `?new` unrestricted; deprecated, `false` from 2.0 (since 1.3.0, DD-26) |
+| `notification.template.validate-before-dispatch` | `false` | Render before idempotency, rate limit and audit; refuse a template that cannot render with `TemplateRenderException` / HTTP 422 (since 1.3.0, DD-27) |
+| `notification.recipient-guard.enabled` | `false` | Configuration-driven recipient guard (since 1.3.0, DD-34) |
+| `notification.recipient-guard.channels.<channel>.allowed` | empty | `@domain`, exact address or phone number (digits) |
+| `notification.recipient-guard.channels.<channel>.redirect-to` | unset | Replacement for not-allowed recipients; must itself be allowed; unset drops them |
+| `notification.recipient-guard.channels.email.subject-prefix` | `[redirected: {originals}] ` | Subject prefix when something was redirected; empty disables |
 | `notification.idempotency.enabled` | `true` | Idempotency dedup |
 | `notification.idempotency.ttl` | `24h` | Key retention |
 | `notification.idempotency.max-entries` | `100000` | In-memory bound |
-| `notification.idempotency.retry-after-failure` | `true` | A retry under the same key after a `FAILED`/`REJECTED` attempt dispatches again; `false` answers it with `409` until the TTL elapses (since 1.1.2) |
+| `notification.idempotency.retry-after-failure` | `true` | Deprecated since 1.3.0: alias of `failure-policy` (`true` = `RELEASE_ALL`, `false` = `KEEP`) (since 1.1.2) |
+| `notification.idempotency.failure-policy` | unset (= `RELEASE_ALL`) | `RELEASE_ALL`, `KEEP` or `RELEASE_TRANSIENT`: what happens to a key after a failed send; replaceable with an `IdempotencyReleasePolicy` bean (since 1.3.0, DD-32) |
+| `notification.idempotency.reject-key-reuse` | `false` | `409 KEY_REUSED` for a key reused with a different request fingerprint (since 1.3.0, DD-32) |
+| `notification.idempotency.in-progress-timeout` | unset | Settle a key stuck `IN_PROGRESS` longer than this as `FAILED` / `IN_PROGRESS_TIMEOUT` / `AMBIGUOUS` and replay it (since 1.3.0, DD-32) |
+| `notification.idempotency.store-scrubbed-error-message` | `false` | Keep the scrubbed error message of a stored `FAILED`/`REJECTED` response; `false` stores none, as in 1.2.0 (since 1.3.0, DD-32) |
 | `notification.caller-registry.enabled` | `false` | Validate `X-Service-Id` against known list |
 | `notification.caller-registry.strict` | `false` | Reject unknown callers with `403` |
 | `notification.rate-limit.enabled` | `false` | Token-bucket throttling |
 | `notification.rate-limit.default-rule.*` | — | Global bucket shape |
 | `notification.rate-limit.by-channel.<name>.*` | — | Per-channel default (DD-23) |
 | `notification.rate-limit.overrides[*]` | — | Per `(tenant, caller, channel)` overrides |
+| `notification.rate-limit.<rule>.bandwidths[*]` | empty | Several `{capacity, refill-tokens, refill-period}` bands that must all allow; exclusive with the single-band fields (since 1.3.0, DD-30) |
+| `notification.rate-limit.<rule>.scope` | `tenant-caller` | `tenant-caller`: bucket per `(tenant, caller, channel)`; `channel`: one bucket per channel shared by every request the rule matches (since 1.3.0, DD-30) |
+| `notification.rate-limit.refund-unsent` | `false` | Refund the token of a failed send whose idempotency key the release policy released, unless `AMBIGUOUS` or `UNKNOWN` (since 1.3.0, DD-30, DD-32) |
 | `notification.retry.enabled` | `false` | Synchronous retry on transient failures |
 | `notification.retry.max-attempts` | `3` | Global attempts (incl. first try) |
 | `notification.retry.max-retry-after` | `max-delay` | Longest provider `Retry-After` hint the executor waits for; a longer hint stops the retries and the failure goes to the DLQ (since 1.2.0, DD-25) |
@@ -763,6 +930,7 @@ spring:
 | `notification.redis.dead-letter.max-entries` | `1000` | Redis list cap |
 | `notification.redis.delivery-events.enabled` | unset | Per-feature override of `store.type`: `true` Redis, `false` memory |
 | `notification.redis.delivery-events.max-entries` | `10000` | Redis list cap |
+| `notification.redis.audit.enabled` | unset | `false` keeps audit in memory under `store.type: redis` (since 1.3.0) |
 | `notification.store.jdbc.schema` | none | Schema of the JDBC tables; unset uses the search path |
 | `notification.store.jdbc.table-prefix` | `notification_` | Prefix of every JDBC table, constraint and index |
 | `notification.store.jdbc.datasource-bean-name` | none | DataSource bean for the JDBC stores; unset picks the single or `@Primary` one |
@@ -773,11 +941,13 @@ spring:
 | `notification.store.jdbc.purge.batch-size` | `1000` | Rows deleted per purge statement |
 | `notification.health.dlq-near-full-percent` | `80` | DLQ → `OUT_OF_SERVICE` threshold |
 
+`<rule>` is `default-rule`, `by-channel.<channel>` or `overrides[i]`.
+
 ---
 
 ## See also
 
 - [README](../README.md) — landing page, quick start, REST/Kafka examples
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — system overview, send-path lifecycle, SPI catalogue
-- [`docs/design-decisions/`](./design-decisions/) — the 23 DDs with full rationale
+- [`docs/design-decisions/`](./design-decisions/) - every DD with full rationale
 - [CHANGELOG.md](../CHANGELOG.md) — version history

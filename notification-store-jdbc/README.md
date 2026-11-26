@@ -213,19 +213,22 @@ The stores always serialise with their own module-owned Jackson `ObjectMapper`, 
 It registers `JavaTimeModule`, writes dates as ISO-8601 strings, and ignores unknown properties on read.
 Since 1.1.2 an unknown `FailureType` or `DeliveryStatus` constant, in a JSON payload or in the `failure_type` and `status` columns, reads as `UNKNOWN`.
 The idempotency table never stores the raw `errorMessage` of a `FAILED` or `REJECTED` response.
-Since 1.3.0 it stores the message after `MessageScrubber` (by default email addresses become `[email]` and phone numbers `[phone]`), so a failure kept and replayed under `failure-policy=RELEASE_TRANSIENT` still says what went wrong; 1.2.x stored no message.
+By default it stores no message, as in 1.2.x; with `notification.idempotency.store-scrubbed-error-message=true` (since 1.3.0) it stores the message after `MessageScrubber` (by default email addresses become `[email]` and phone numbers `[phone]`), so a failure kept and replayed under `failure-policy=RELEASE_TRANSIENT` still says what went wrong.
 This keeps the stored JSON stable when the host changes its own Jackson configuration, and lets rows written by a newer library version still be read.
 
 ### Upgrading from 1.2.x
 
-1.3.0 adds one nullable column to the idempotency table: `fingerprint`, the SHA-256 of the request that claimed the key (DD-32).
-Run this before deploying 1.3.0, adjusting the table name to your prefix and schema:
+1.3.0 adds one optional, nullable column to the idempotency table: `fingerprint`, the SHA-256 of the request that claimed the key (DD-32).
+A 1.2.x table without it keeps working: the store probes for the column at startup (with the configured schema and prefix), logs one WARN with the statement below and stores no fingerprints.
+With `notification.idempotency.reject-key-reuse=true` a missing column fails startup with the same statement, because the check could never fire.
+Add it when convenient, adjusting the table name to your prefix and schema:
 
 ```sql
 ALTER TABLE notification_idempotency ADD COLUMN IF NOT EXISTS fingerprint VARCHAR(64);
 ```
 
 With `notification.audit.enabled=true`, also create the new `notification_audit` table and its three indexes, as in the reference schema above (the statements are `CREATE ... IF NOT EXISTS`, so re-running the whole reference script is safe).
+Without it, the audit table is not used and need not exist.
 
 The statement is additive and safe while 1.2.x is still running: 1.2.x neither reads nor writes the column.
 Rows written before the upgrade have no fingerprint, and the service never compares a missing fingerprint, so `reject-key-reuse` cannot refuse them.

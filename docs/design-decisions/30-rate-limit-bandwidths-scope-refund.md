@@ -61,8 +61,10 @@ The precedence and bucket configuration now live in one class, `RateLimitRuleRes
 The in-memory limiter does nothing for a key whose bucket is not cached (an absent bucket is full).
 The Redis limiter recreates an expired bucket full, so the refund changes nothing there either.
 
-`notification.rate-limit.refund-unsent` (default `false`, `RateLimitProperties.isRefundUnsent()`) says whether the service should call `refund` for a request that was admitted but never reached a provider.
-The call site in `DefaultNotificationService` is added separately; this decision only provides the SPI, the implementations and the property.
+`notification.rate-limit.refund-unsent` (default `false`, `RateLimitProperties.isRefundUnsent()`) says whether the service should call `refund` for a request that was admitted but never sent.
+`DefaultNotificationService` calls it, with the same `RateLimitKey` the send consumed from, when the idempotency release policy (DD-32) released the key of a failed send and the failure is neither `AMBIGUOUS` nor `UNKNOWN`.
+With the default policy and `failure-policy=RELEASE_TRANSIENT` that is exactly a `TRANSIENT` failure.
+A send without an idempotency key is never refunded: nothing tells the service that the caller will retry it.
 
 ### Bucket cache
 
@@ -101,10 +103,11 @@ Limiters written before 1.3.0 keep compiling and keep charging every admitted re
 
 - A tenant with its own override is not counted against a shared channel bucket, so the shared bucket alone does not cap the provider account when such overrides exist.
 - `snapshot()` keys for shared buckets use the `*` tenant, which an admin UI has to recognise.
-- With `refund-unsent` on, a caller that repeatedly sends requests that fail before dispatch is no longer throttled by those failures.
+- With `refund-unsent` on, a caller that repeatedly retries under a key whose failures the release policy releases is no longer throttled by those failures.
 
 ## Related Decisions
 
 - [12-rate-limiting.md](./12-rate-limiting.md) - the token-bucket model, key and precedence.
 - [14-distributed-redis-backends.md](./14-distributed-redis-backends.md) - the Redis limiter.
 - [23-per-channel-overrides.md](./23-per-channel-overrides.md) - per-channel rule defaults.
+- [32-idempotency-fingerprint-failure-policy.md](./32-idempotency-fingerprint-failure-policy.md) - the release policy that triggers the refund.

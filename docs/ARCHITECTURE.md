@@ -20,27 +20,46 @@ bean that registers conditionally):
                 └────────────┬────────────────┘
                              ▼
                 ┌─────────────────────────────┐
-                │  idempotency lookup         │  opt-in (DD-10)
-                │  • IN_PROGRESS → 409        │
-                │  • COMPLETE    → cached     │
-                │  • FAILED      → fresh      │
+                │  render + validate          │  opt-in (DD-27,
+                │  • TemplateRenderException  │  validate-before-dispatch)
+                │    → 422, nothing stored    │
                 └────────────┬────────────────┘
                              ▼
                 ┌─────────────────────────────┐
-                │  rate-limit check           │  opt-in (DD-12)
-                │  • token-bucket over        │
-                │    (tenant, caller, channel)│
+                │  idempotency lookup         │  opt-in (DD-10, DD-32)
+                │  • fingerprint differs      │
+                │    → 409 KEY_REUSED         │
+                │  • IN_PROGRESS → 409, or    │
+                │    settled AMBIGUOUS after  │
+                │    in-progress-timeout      │
+                │  • COMPLETE    → replay     │
+                │  • FAILED      → release    │
+                │    policy: fresh or replay  │
+                └────────────┬────────────────┘
+                             ▼
+                ┌─────────────────────────────┐
+                │  rate-limit check           │  opt-in (DD-12, DD-30)
+                │  • token buckets, one or    │
+                │    more bands, per caller   │
+                │    or shared per channel    │
                 │  • denied → 429 + Retry-After│
                 └────────────┬────────────────┘
                              ▼
                 ┌─────────────────────────────┐
                 │  mark IN_PROGRESS           │  opt-in (DD-10)
-                │  (atomic claim)             │
+                │  (atomic claim + fingerprint)│
+                └────────────┬────────────────┘
+                             ▼
+                ┌─────────────────────────────┐
+                │  recipient guard            │  opt-in (DD-34)
+                │  • redirect / drop          │
                 └────────────┬────────────────┘
                              ▼
                 ┌─────────────────────────────┐
                 │  dispatch                   │  core
-                │  • render template          │
+                │  • audit "received"         │
+                │  • render template (unless  │
+                │    already rendered above)  │
                 │  • resolve provider         │
                 │  • provider.send()          │
                 │    (wrapped in RetryExecutor│
@@ -48,9 +67,13 @@ bean that registers conditionally):
                 └────────────┬────────────────┘
                              ▼
                 ┌─────────────────────────────┐
-                │  audit + idempotency close  │  core + DD-10
-                │  • response cached against  │
-                │    the idempotency key      │
+                │  audit outcome + idempotency│  core + DD-10/32/33
+                │  close                      │
+                │  • response (failureType,   │
+                │    retryAfter) stored       │
+                │  • release policy may free  │
+                │    the key; refund-unsent   │
+                │    gives the token back     │
                 └────────────┬────────────────┘
                              │
               ┌──────────────┴───────────────┐
@@ -76,11 +99,16 @@ bean that registers conditionally):
                   ▼
     ┌─────────────────────────────┐
     │  query later                │  admin endpoints
+    │  • NotificationService.find │  (DD-33)
     │  • /admin/audit/{id}        │  (DD-20)
     │  • /admin/delivery-events   │  (DD-17, DD-18)
     │  • /admin/dead-letter       │  (DD-13)
     └─────────────────────────────┘
 ```
+
+The template is rendered exactly once per dispatched send.
+With `notification.template.validate-before-dispatch` on, it is rendered at the top, before anything is claimed, counted or stored, and the content is reused for the dispatch; with it off, it is rendered inside the dispatch, as in 1.2.0.
+The fingerprint and the idempotency key always describe the request as the caller sent it; the recipient guard only changes what the audit record and the provider see.
 
 ## The SPI catalogue
 
@@ -95,7 +123,11 @@ The defaults are `@Bean` methods in `NotificationCoreDefaultsAutoConfiguration` 
 | `RetryPredicate` | `notification-api` | classifies by `FailureType` | - | - | Decides retry on `(SendResult, attempt)` |
 | `DeliveryEventListener` | `notification-api` | `LoggingDeliveryEventListener` | - | - | Fan-out point for provider delivery callbacks |
 | `DeliveryEventStore` | `notification-api` | `InMemoryDeliveryEventStore` | `RedisDeliveryEventStore` | `JdbcDeliveryEventStore` | Persistent store; **is also a listener** via default method |
-| `NotificationAuditService` | `notification-core` | `NoOpAuditService` | - | - | Audit persistence; operators wire their own backend |
+| `NotificationAuditService` | `notification-core` | `NoOpAuditService`; `StoreBackedAuditService` when `notification.audit.enabled` | - | - | Audit persistence; an application bean replaces it |
+| `NotificationAuditStore` | `notification-api` | `InMemoryNotificationAuditStore` | - | `JdbcNotificationAuditStore` | Audit records behind the status view (DD-33) |
+| `IdempotencyReleasePolicy` | `notification-api` | `FailurePolicyReleasePolicy` | - | - | Decides whether a failed send releases its idempotency key (DD-32) |
+| `RecipientGuard` | `notification-api` | `ConfiguredRecipientGuard` (when enabled) | - | - | Allow-list, redirect or drop before dispatch (DD-34) |
+| `MessageScrubber` | `notification-api` | `MessageScrubber.placeholders()` | - | - | Scrubs error messages before they are persisted (DD-32) |
 
 Dead-letter replay (DD-15, DD-19) claims entries before sending, acknowledges with `remove` and gives them back with `release`, under `notification.dead-letter.replay-lease`.
 `JdbcDeadLetterStore` makes claims hold across replicas with `FOR UPDATE SKIP LOCKED`; the SPI's default `claim` methods, which the in-memory and Redis stores inherit, take no lease.
@@ -224,7 +256,7 @@ The strict separation lets consumers pull only the providers they use, so an SMT
 The BOM's parent is `ifrugal-parent`, not the root pom, so importing it manages only this project's artifacts and leaves Spring Boot, Jackson and the provider SDKs to the application.
 `scripts/check-bom.sh`, run in CI, fails when a jar module is missing from the BOM or the BOM's version differs from the reactor's.
 AWS SNS SMS, WhatsApp (Twilio, Meta) and APNs providers are planned; until they ship, the `SmsProvider`, `WhatsAppProvider` and `PushProvider` SPIs in `notification-api` are the extension points.
-Audit has no module of its own: the `NotificationAuditService` SPI and its `NoOpAuditService` default live in `notification-core`.
+Audit has no module of its own: the `NotificationAuditService` SPI, its `NoOpAuditService` default and the store-backed service live in `notification-core`, with the in-memory audit store; the JDBC audit store is in `notification-store-jdbc`, and Redis has none.
 
 ## Cross-cutting invariants
 
@@ -253,7 +285,7 @@ must not be trusted from clients:
 ## Versioning and release
 
 The project follows semantic versioning.
-The current snapshot is `1.1.3-SNAPSHOT`; `1.1.2` is the most recent release on Maven Central, and the next release is `1.2.0`.
+The current snapshot is `1.2.1-SNAPSHOT`; `1.2.0` is the most recent release on Maven Central, and the next release is `1.3.0`.
 Release automation is wired via GitHub Actions
 (see `.github/workflows/release.yml`). Maven Central publishing
 goes through the Central Portal via

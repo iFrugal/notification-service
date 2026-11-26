@@ -45,6 +45,7 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
   - [Option 2: FQCN (Reflection)](#option-2-fqcn-reflection)
 - [Templates](#templates)
 - [Multi-Tenancy](#multi-tenancy)
+- [Recipient guard](#recipient-guard)
 - [Audit](#audit)
 - [Distributed deployment (Redis backends)](#distributed-deployment-redis-backends)
 - [JDBC store](#jdbc-store)
@@ -62,7 +63,10 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 - **Multiple Providers per Channel**: SMTP, AWS SES and Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)) for email, Twilio for SMS, Firebase Cloud Messaging ([`push-provider-fcm`](notification-channels/notification-channel-push/push-provider-fcm/README.md), with [`push-provider-fcm-google-auth`](notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) for Application Default Credentials and workload identity federation) for push; AWS SNS, WhatsApp (Twilio, Meta) and APNs providers are planned
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
-- **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)
+- **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10); opt-in key-reuse check, failure policy with a replaceable release policy, and in-progress timeout (DD-32)
+- **Failure details on responses**: `failureType`, `providerMetadata` and the provider's `retryAfter` hint on `FAILED` responses (DD-31)
+- **Status view**: `NotificationService.find(tenantId, requestId)` and `findByIdempotencyKey(...)` over the shipped in-memory or JDBC audit store (DD-33)
+- **Recipient guard**: Opt-in allow-list with redirect or drop per channel, for non-production environments (DD-34)
 - **Rate Limiting**: Opt-in token-bucket throttle per `(tenant, caller, channel)` with `429 + Retry-After` (DD-12); per-channel default rules let operators bound SMS tighter than email without enumerating overrides (DD-23)
 - **Retries + DLQ**: Opt-in synchronous retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN) and exponential backoff with jitter; pluggable dead-letter store SPI (DD-13); operator replay endpoint with `replayOf` chain (DD-15); per-channel `byChannel` retry rule overrides (DD-23)
 - **OpenAPI / Swagger**: Self-documenting via `/v3/api-docs` + `/swagger-ui` (springdoc, optional in library mode); schema published as a CI build artifact for client codegen
@@ -74,7 +78,7 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service
 - **REST & Kafka**: Accept notifications via REST API or Kafka consumer
-- **Audit Trail**: `NotificationAuditService` SPI with a no-op default (`NoOpAuditService`); no persistence backend ships, so register your own bean to keep history
+- **Audit Trail**: `NotificationAuditService` SPI; off by default (`NoOpAuditService`), and with `notification.audit.enabled=true` records go to the in-memory or JDBC audit store of the selected store family, or to your own bean (DD-07, DD-33)
 - **Fail-Fast Validation**: All providers validated at startup
 
 ---
@@ -673,6 +677,14 @@ Content-Type: application/json
 }
 ```
 
+A `FAILED` response also carries, when known (since 1.3.0, [DD-31](docs/design-decisions/31-failure-type-on-notification-response.md)):
+
+- `failureType`: `TRANSIENT` (safe to retry), `PERMANENT` (pointless to retry), `AMBIGUOUS` (the provider may have accepted it) or `UNKNOWN`.
+- `providerMetadata`: provider details of the send, for example an ACS `acsStatus`.
+- `retryAfter`: how long the provider asked to wait (an HTTP 429 `Retry-After`), as an ISO-8601 duration such as `"PT30S"`.
+
+Each field is left out of the JSON when it is not set, so a successful response looks exactly as before.
+
 ### Idempotency
 
 To make retries safe, include an opaque `idempotencyKey` (max 255
@@ -724,6 +736,29 @@ notification:
 See [DD-10](docs/design-decisions/10-idempotency.md) for the design
 rationale, semantics, and the storage-SPI shape for replacing the
 default in-memory store with Redis.
+
+**Failure policy, key reuse and stuck keys ([DD-32](docs/design-decisions/32-idempotency-fingerprint-failure-policy.md), since 1.3.0):**
+
+```yaml
+notification:
+  idempotency:
+    failure-policy: RELEASE_TRANSIENT     # RELEASE_ALL (default) | KEEP | RELEASE_TRANSIENT
+    reject-key-reuse: true                # default false
+    in-progress-timeout: PT10M            # default unset (409 until the TTL)
+    store-scrubbed-error-message: true    # default false (stored failures have no message)
+```
+
+- `failure-policy` decides whether a failed send releases its key.
+  `RELEASE_ALL` dispatches a retry under the key again (the 1.1.2 to 1.2.0 behaviour), `KEEP` answers it with 409 until the TTL, and `RELEASE_TRANSIENT` releases only after a `TRANSIENT` failure and replays any other failure (`X-Idempotent-Replay: true`, status `FAILED`).
+  `retry-after-failure` is a deprecated alias (`true` = `RELEASE_ALL`, `false` = `KEEP`).
+- The decision is the `IdempotencyReleasePolicy` bean (`com.lazydevs.notification.api.idempotency`); declare your own to widen or narrow it, for example to also release a failure whose error code says the provider rejected the sender's credential.
+  A key settled by `in-progress-timeout` is never released, whatever the policy says.
+- `reject-key-reuse` answers a key reused for a different message (channel, recipient, template, template data, explicit provider or attachments) with `409 {"notificationId": "...", "status": "KEY_REUSED"}`; correlation id and metadata do not count.
+- `in-progress-timeout` settles a key held `IN_PROGRESS` longer than this (for example by a process that died) as `FAILED` / `IN_PROGRESS_TIMEOUT` / `AMBIGUOUS` and replays it.
+- `store-scrubbed-error-message` keeps the error message of a stored failure with email addresses and phone numbers replaced by placeholders (`MessageScrubber`), so a replayed failure says what went wrong.
+
+**Status view ([DD-33](docs/design-decisions/33-status-view.md), since 1.3.0).**
+With `notification.audit.enabled=true`, `NotificationService.find(tenantId, requestId)` and `findByIdempotencyKey(tenantId, callerId, key)` return a `NotificationView`: status, failure type, error code, provider message id, timestamps and the latest delivery status, never the recipient's address.
 
 ### Caller Identity
 
@@ -835,7 +870,8 @@ notification:
 - `scope: tenant-caller` (default) keeps one bucket per `(tenant, caller, channel)`.
   `scope: channel` shares one bucket per channel among every request that resolves to the rule.
   The rule is chosen first, so a tenant override still applies to that tenant even when the channel rule is shared.
-- `RateLimiter.refund(key)` gives one token back (never above capacity); `refund-unsent` says whether a request admitted but never sent to a provider is refunded.
+- `RateLimiter.refund(key)` gives one token back (never above capacity).
+  With `refund-unsent: true`, a failed send whose idempotency key the release policy released gets its token back, unless the failure is `AMBIGUOUS` or `UNKNOWN` (see [Idempotency](#idempotency)).
 
 **On rejection (REST):**
 
@@ -1511,21 +1547,48 @@ Each tenant can have:
 
 ---
 
+## Recipient guard
+
+Since 1.3.0 a non-production environment can make sure it only ever reaches an allow-list ([DD-34](docs/design-decisions/34-recipient-guard.md)):
+
+```yaml
+notification:
+  recipient-guard:
+    enabled: true                                      # default false
+    channels:
+      email:
+        allowed: ["@example.com", "qa.lead@example.org"]
+        redirect-to: qa-inbox@example.com
+        subject-prefix: "[redirected: {originals}] "   # default; "" disables
+      sms:
+        allowed: ["+15550100"]                         # no redirect-to: drop
+```
+
+Recipients that are not allowed are redirected one for one, or dropped when the channel has no `redirect-to`.
+When nothing is left, the send fails with `RECIPIENT_BLOCKED` (`PERMANENT`) before the provider is called.
+The guard runs after the idempotency claim, so the fingerprint and the key use the request as the caller sent it, while the audit record and the provider see only the guarded recipient.
+Push recipients are not guarded.
+Declare a `RecipientGuard` bean to replace the rules.
+
+---
+
 ## Audit
 
-Audit is a `NotificationAuditService` SPI in `notification-core` with a no-op default (`NoOpAuditService`, which logs only).
-No audit persistence backend ships with this project; to keep notification history, register your own `NotificationAuditService` bean.
-The `notification.audit.*` properties below are bound for your bean to read; the shipped no-op ignores them.
+Audit is a `NotificationAuditService` SPI in `notification-core`.
+With `notification.audit.enabled=false` (the default) the no-op `NoOpAuditService` logs only.
+Since 1.3.0, `notification.audit.enabled=true` stores the records in the audit store of the selected store family ([DD-33](docs/design-decisions/33-status-view.md)): a bounded in-memory store for `store.type: memory`, the `<prefix>audit` table for `store.type: jdbc`.
+The Redis family has no audit store; supply a `NotificationAuditStore` bean, or set `notification.redis.audit.enabled: false` to keep audit in memory.
+A `NotificationAuditService` bean of your own still replaces all of this.
 
 ```yaml
 notification:
   audit:
     enabled: true
-    store-request-payload: true
-    store-response-payload: true
-    retention-days: 90
-    async: true
+    retention-days: 90     # lifetime of a record in the shipped stores
+    max-entries: 10000     # bound of the in-memory store
 ```
+
+The audit records back `GET /api/v1/admin/audit/...` and the status view (`NotificationService.find`).
 
 Audit records passed to the SPI include:
 - Request/response details
@@ -1604,7 +1667,7 @@ Operators can read DLQ entries with `redis-cli LRANGE
 
 ## JDBC store
 
-`notification-store-jdbc` provides PostgreSQL-backed `IdempotencyStore`, `DeadLetterStore` and `DeliveryEventStore` implementations, written as plain SQL over Spring's `JdbcClient`.
+`notification-store-jdbc` provides PostgreSQL-backed `IdempotencyStore`, `DeadLetterStore`, `DeliveryEventStore` and (since 1.3.0) `NotificationAuditStore` implementations, written as plain SQL over Spring's `JdbcClient`.
 There is no ORM and no migration tool, and the library never runs DDL.
 Full details are in the [module README](notification-store-jdbc/README.md).
 
@@ -1652,6 +1715,9 @@ The host application supplies the `DataSource` and the JDBC driver.
 - **Row-level security:** every table has a nullable `tenant_id` column, the application role needs only `SELECT, INSERT, UPDATE, DELETE`, and `JdbcStoreRlsIT` runs every store as a non-owner role under a tenant-isolation policy.
 - **Dead-letter replay:** claims are leased with `FOR UPDATE SKIP LOCKED`, so replicas replaying the same tenant never send one entry twice.
 - **No rate limiter:** rate limiting stays on the in-memory Bucket4j limiter, or on Redis with `notification.redis.rate-limit.enabled=true`.
+- **Audit (since 1.3.0):** with `notification.audit.enabled=true` the audit records go to `<prefix>audit`; without it that table is not needed.
+- **Upgrading a 1.2.x schema:** the idempotency table gains an optional `fingerprint` column (DD-32).
+  Without it the store logs one WARN at startup with the `ALTER TABLE` statement and keeps working without fingerprints; with `notification.idempotency.reject-key-reuse=true` startup fails with that statement instead.
 
 ---
 
