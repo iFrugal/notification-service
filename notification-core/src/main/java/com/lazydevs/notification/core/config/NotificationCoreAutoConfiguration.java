@@ -7,6 +7,7 @@ import com.lazydevs.notification.api.delivery.DeliveryEventListener;
 import com.lazydevs.notification.api.delivery.DeliveryEventPublisher;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.guard.RecipientGuard;
+import com.lazydevs.notification.api.idempotency.IdempotencyReleasePolicy;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.util.MessageScrubber;
@@ -14,6 +15,7 @@ import com.lazydevs.notification.core.audit.StoreBackedAuditService;
 import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.delivery.ListenerDeliveryEventPublisher;
 import com.lazydevs.notification.core.guard.ConfiguredRecipientGuard;
+import com.lazydevs.notification.core.idempotency.FailurePolicyReleasePolicy;
 import com.lazydevs.notification.core.metrics.NotificationMetrics;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.provider.ProviderResolver;
@@ -116,6 +118,17 @@ public class NotificationCoreAutoConfiguration {
     }
 
     /**
+     * Decides whether a failed send releases its idempotency key, from
+     * {@code notification.idempotency.failure-policy} (DD-32). Replace it by
+     * declaring another {@link IdempotencyReleasePolicy} bean.
+     */
+    @Bean
+    @ConditionalOnMissingBean(IdempotencyReleasePolicy.class)
+    public FailurePolicyReleasePolicy idempotencyReleasePolicy(NotificationProperties properties) {
+        return new FailurePolicyReleasePolicy(properties);
+    }
+
+    /**
      * The audit service of {@code notification.audit.enabled=true} (DD-33):
      * records go to the {@link NotificationAuditStore} of the selected store
      * family. Backs off when the application declares its own
@@ -161,10 +174,12 @@ public class NotificationCoreAutoConfiguration {
             Optional<NotificationMetrics> metrics,
             MessageScrubber messageScrubber,
             Optional<DeliveryEventStore> deliveryEventStore,
-            Optional<RecipientGuard> recipientGuard) {
+            Optional<RecipientGuard> recipientGuard,
+            Optional<IdempotencyReleasePolicy> releasePolicy) {
         return new DefaultNotificationService(properties, providerRegistry, templateEngine, auditService,
                 idempotencyStore, rateLimiter, retryExecutor, deadLetterStore, metrics,
                 new NotificationServiceExtensions(messageScrubber, Clock.systemUTC(),
-                        deliveryEventStore.orElse(null), recipientGuard.orElse(null)));
+                        deliveryEventStore.orElse(null), recipientGuard.orElse(null),
+                        releasePolicy.orElse(null)));
     }
 }

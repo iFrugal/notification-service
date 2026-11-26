@@ -11,6 +11,7 @@ import com.lazydevs.notification.api.exception.RateLimitExceededException;
 import com.lazydevs.notification.api.exception.TemplateRenderException;
 import com.lazydevs.notification.api.guard.RecipientGuard;
 import com.lazydevs.notification.api.idempotency.IdempotencyKey;
+import com.lazydevs.notification.api.idempotency.IdempotencyReleasePolicy;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.model.EmailRecipient;
 import com.lazydevs.notification.api.model.FailureType;
@@ -23,6 +24,7 @@ import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.util.MessageScrubber;
 import com.lazydevs.notification.api.util.PiiMasking;
 import com.lazydevs.notification.core.config.NotificationProperties;
+import com.lazydevs.notification.core.idempotency.FailurePolicyReleasePolicy;
 import com.lazydevs.notification.core.idempotency.RequestFingerprint;
 import com.lazydevs.notification.core.metrics.NotificationMetrics;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
@@ -116,8 +118,10 @@ public class DefaultNotificationService implements NotificationService {
         this.recipientGuard = extensions.recipientGuard();
         this.asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
         // Optional<IdempotencyStore>: empty when notification.idempotency.enabled=false.
+        IdempotencyReleasePolicy releasePolicy = extensions.releasePolicy() != null ? extensions.releasePolicy()
+                : new FailurePolicyReleasePolicy(properties);
         this.idempotency = idempotencyStore.map(store -> new IdempotencyCoordinator(
-                store, properties, auditService, metrics, scrubber, extensions.clock()));
+                store, properties, auditService, metrics, scrubber, releasePolicy, extensions.clock()));
     }
 
     @Override
@@ -387,18 +391,29 @@ public class DefaultNotificationService implements NotificationService {
     }
 
     /**
-     * Give back the rate-limit token of a send that is known not to have
-     * reached the provider in a way that could deliver it (a TRANSIENT
-     * failure whose idempotency key was released under
-     * {@code failure-policy=RELEASE_TRANSIENT}, DD-32), so the caller's retry
-     * is not charged twice. The refund itself is wired after the registry
-     * track merges ({@code RateLimiter.refund} and
-     * {@code notification.rate-limit.refund-unsent}); until then this only
-     * logs which bucket it applies to.
+     * Give back the rate-limit token of a failed send whose idempotency key the
+     * {@link IdempotencyReleasePolicy} released (DD-30, DD-32), so the
+     * caller's retry under the key is not charged twice. Only with
+     * {@code notification.rate-limit.refund-unsent}, and never for an
+     * {@code AMBIGUOUS} or {@code UNKNOWN} failure, which the provider may have
+     * accepted. The key is the one {@link #checkRateLimit} consumed from.
      */
-    private void refundUnsent(NotificationRequest request) {
-        if (rateLimiter.isPresent()) {
-            log.debug("Unsent send released its idempotency key: bucket={}", rateLimitKeyFor(request));
+    private void refundUnsent(NotificationRequest request, NotificationResponse failed) {
+        NotificationProperties.RateLimitProperties rateLimit = properties.getRateLimit();
+        if (rateLimiter.isEmpty() || rateLimit == null || !rateLimit.isRefundUnsent()
+                || failed.failureType() == null
+                || failed.failureType() == FailureType.AMBIGUOUS
+                || failed.failureType() == FailureType.UNKNOWN) {
+            return;
+        }
+        RateLimiter.RateLimitKey key = rateLimitKeyFor(request);
+        try {
+            rateLimiter.get().refund(key);
+            log.debug("Rate-limit token refunded for an unsent request: requestId={}",
+                    sanitizeForLog(request.getRequestId()));
+        } catch (RuntimeException e) {
+            log.warn("Rate-limit refund failed for requestId={}: {}",
+                    sanitizeForLog(request.getRequestId()), e.toString());
         }
     }
 

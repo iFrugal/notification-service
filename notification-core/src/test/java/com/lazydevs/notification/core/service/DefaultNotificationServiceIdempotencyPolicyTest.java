@@ -201,9 +201,24 @@ class DefaultNotificationServiceIdempotencyPolicyTest {
         assertThat(replay.failureType()).isEqualTo(type);
         assertThat(replay.requestId()).isEqualTo(firstRequest.getRequestId());
         assertThat(replay.providerMessageId()).isEqualTo("op-1");
-        assertThat(replay.errorMessage()).doesNotContain("a@example.com");
+        assertThat(replay.errorMessage()).isNull();
         verify(provider, times(1)).send(any(), any());
         verify(auditService).recordDuplicateHit(any(), any());
+    }
+
+    @Test
+    void releaseTransient_withStoreScrubbedErrorMessage_replaysTheScrubbedMessage() {
+        properties.getIdempotency().setFailurePolicy(IdempotencyFailurePolicy.RELEASE_TRANSIENT);
+        properties.getIdempotency().setStoreScrubbedErrorMessage(true);
+        when(provider.send(any(), any())).thenReturn(
+                SendResult.failure("ACS_X", "mailbox a@example.com rejected", FailureType.PERMANENT, "op-1"));
+        DefaultNotificationService service = service();
+
+        service.send(request("k-scrubbed", "Ada"));
+        NotificationResponse replay = service.send(request("k-scrubbed", "Ada"));
+
+        assertThat(replay.idempotentReplay()).isTrue();
+        assertThat(replay.errorMessage()).isNotNull().doesNotContain("a@example.com").contains("rejected");
     }
 
     @Test
@@ -405,6 +420,7 @@ class DefaultNotificationServiceIdempotencyPolicyTest {
     @Test
     void customScrubber_isAppliedToTheStoredResponseAndTheAudit() {
         properties.getIdempotency().setFailurePolicy(IdempotencyFailurePolicy.KEEP);
+        properties.getIdempotency().setStoreScrubbedErrorMessage(true);
         when(provider.send(any(), any())).thenReturn(SendResult.failure("E", "secret detail", FailureType.PERMANENT));
         MessageScrubber dropAll = message -> null;
         DefaultNotificationService service = new DefaultNotificationService(

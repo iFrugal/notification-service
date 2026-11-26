@@ -193,7 +193,7 @@ class DefaultNotificationServiceStatusViewTest {
         DefaultNotificationService service = new DefaultNotificationService(properties, providerRegistry,
                 templateEngine, audit, Optional.of(idempotency), Optional.empty(), Optional.empty(),
                 Optional.empty(), Optional.empty(),
-                new NotificationServiceExtensions(MessageScrubber.placeholders(), Clock.systemUTC(), broken, null));
+                new NotificationServiceExtensions(MessageScrubber.placeholders(), Clock.systemUTC(), broken, null, null));
         service.send(request("r-6", null));
 
         assertThat(service.find("acme", "r-6").orElseThrow().deliveryStatus()).isNull();
@@ -217,7 +217,7 @@ class DefaultNotificationServiceStatusViewTest {
     private DefaultNotificationService service(Clock clock) {
         return new DefaultNotificationService(properties, providerRegistry, templateEngine, audit,
                 Optional.of(idempotency), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-                new NotificationServiceExtensions(MessageScrubber.placeholders(), clock, deliveryEvents, null));
+                new NotificationServiceExtensions(MessageScrubber.placeholders(), clock, deliveryEvents, null, null));
     }
 
     private static NotificationRequest request(String requestId, String key) {

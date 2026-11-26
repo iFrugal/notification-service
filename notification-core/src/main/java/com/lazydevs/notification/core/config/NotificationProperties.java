@@ -322,6 +322,17 @@ public class NotificationProperties {
         private java.time.Duration inProgressTimeout;
 
         /**
+         * Keep the error message of a stored {@code FAILED} or {@code REJECTED}
+         * response, scrubbed by the {@code MessageScrubber} (email addresses
+         * and phone numbers become placeholders), so a replayed failure says
+         * what went wrong (DD-32). Off by default: the stored copy has no
+         * error message, as in 1.1.2 to 1.2.0.
+         *
+         * @since 1.3.0
+         */
+        private boolean storeScrubbedErrorMessage = false;
+
+        /**
          * Whether a failed key is released for a retry, the 1.1.2 view of
          * {@link #resolvedFailurePolicy()}.
          *

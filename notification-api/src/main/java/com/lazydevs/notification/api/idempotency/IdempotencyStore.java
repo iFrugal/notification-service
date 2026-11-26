@@ -148,9 +148,13 @@ public interface IdempotencyStore {
      * response is free text from a provider and can carry recipient data, so
      * the stored copy never holds it raw: it passes through
      * {@link MessageScrubber#placeholders()}, which replaces email addresses
-     * and phone numbers with placeholders (1.2.0 dropped the message; since
-     * 1.3.0 a scrubbed message is kept, so a replayed failure can say what
-     * went wrong). Every other response is returned unchanged.
+     * and phone numbers with placeholders. Every other response is returned
+     * unchanged.
+     *
+     * <p>Stores call this as a safety net. {@code DefaultNotificationService}
+     * already hands them the message removed (the 1.1.2 to 1.2.0 behaviour), or
+     * scrubbed when {@code notification.idempotency.store-scrubbed-error-message}
+     * is on (since 1.3.0).
      *
      * @param response the terminal response, may be {@code null}
      * @return the response to persist

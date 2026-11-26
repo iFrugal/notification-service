@@ -5,6 +5,7 @@ import com.lazydevs.notification.api.exception.IdempotencyInProgressException;
 import com.lazydevs.notification.api.exception.IdempotencyKeyReusedException;
 import com.lazydevs.notification.api.idempotency.IdempotencyKey;
 import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
+import com.lazydevs.notification.api.idempotency.IdempotencyReleasePolicy;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.model.FailureType;
@@ -20,7 +21,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 /**
  * The idempotency part of {@link DefaultNotificationService#send} (DD-10,
@@ -38,16 +39,19 @@ final class IdempotencyCoordinator {
     private final NotificationAuditService auditService;
     private final Optional<NotificationMetrics> metrics;
     private final MessageScrubber scrubber;
+    private final IdempotencyReleasePolicy releasePolicy;
     private final Clock clock;
 
+    @SuppressWarnings("java:S107") // one parameter per collaborator
     IdempotencyCoordinator(IdempotencyStore store, NotificationProperties properties,
                            NotificationAuditService auditService, Optional<NotificationMetrics> metrics,
-                           MessageScrubber scrubber, Clock clock) {
+                           MessageScrubber scrubber, IdempotencyReleasePolicy releasePolicy, Clock clock) {
         this.store = store;
         this.properties = properties;
         this.auditService = auditService;
         this.metrics = metrics;
         this.scrubber = scrubber;
+        this.releasePolicy = releasePolicy;
         this.clock = clock;
         NotificationProperties.IdempotencyProperties config = properties.getIdempotency();
         if (config != null && config.hasConflictingFailurePolicy()) {
@@ -91,24 +95,30 @@ final class IdempotencyCoordinator {
 
     /**
      * Record the outcome of a send that held the key, then release the key
-     * when the failure policy says so.
+     * when the {@link IdempotencyReleasePolicy} says so.
      *
-     * @param refundUnsent called after a release under
-     *                     {@link IdempotencyFailurePolicy#RELEASE_TRANSIENT},
-     *                     when the failed attempt is known not to have sent anything
+     * @param onReleased called with the request and its failed outcome after
+     *                   the policy released the key (the rate-limit refund)
      */
     void close(NotificationRequest request, IdempotencyKey key, NotificationResponse outcome,
-               Consumer<NotificationRequest> refundUnsent) {
-        store.markComplete(key, IdempotencyStore.storedForm(outcome, scrubber));
+               BiConsumer<NotificationRequest, NotificationResponse> onReleased) {
+        store.markComplete(key, persisted(outcome));
         if (isReplayable(outcome.status())) {
             return;
         }
-        IdempotencyFailurePolicy policy = policy();
-        if (policy.releases(outcome.failureType())
-                && releaseQuietly(key, request.getRequestId())
-                && policy == IdempotencyFailurePolicy.RELEASE_TRANSIENT) {
-            refundUnsent.accept(request);
+        if (releasePolicy.releases(request, outcome) && releaseQuietly(key, request.getRequestId())) {
+            onReleased.accept(request, outcome);
         }
+    }
+
+    /**
+     * The form of a terminal response written to the store: the error message
+     * of a failure is dropped (as in 1.2.0), or kept scrubbed with
+     * {@code notification.idempotency.store-scrubbed-error-message} (DD-32).
+     */
+    private NotificationResponse persisted(NotificationResponse response) {
+        return IdempotencyStore.storedForm(response,
+                properties.getIdempotency().isStoreScrubbedErrorMessage() ? scrubber : message -> null);
     }
 
     private Optional<NotificationResponse> answer(NotificationRequest request, IdempotencyKey key,
@@ -119,32 +129,30 @@ final class IdempotencyCoordinator {
         }
         NotificationResponse cached = rec.response();
         if (cached == null) {
-            // A COMPLETE record without a response cannot be replayed; treat it as a failure.
-            releaseIfPolicyAllows(key, rec, null);
+            // A COMPLETE record without a response cannot be replayed; treat it as an
+            // unclassified failure, which only the configured failure policy can judge.
+            if (policy().releases(null)) {
+                releaseQuietly(key, rec.notificationId());
+            }
             return Optional.empty();
         }
-        IdempotencyFailurePolicy policy = policy();
-        if (isReplayable(cached.status())
-                || isSettledTimeout(cached)
-                || (!policy.releases(cached.failureType()) && policy.replaysKeptFailures())) {
+        if (isReplayable(cached.status()) || isSettledTimeout(cached)) {
+            return Optional.of(replay(request, rec, cached));
+        }
+        boolean releases = releasePolicy.releases(request, cached);
+        if (!releases && policy().replaysKeptFailures()) {
             return Optional.of(replay(request, rec, cached));
         }
         log.debug("Idempotency key '{}' had a prior {} attempt; proceeding fresh.",
                 sanitize(request.getIdempotencyKey()), cached.status());
-        releaseIfPolicyAllows(key, rec, cached.failureType());
-        return Optional.empty();
-    }
-
-    /**
-     * A failed record left behind (by an older version, or because a
-     * release failed) is released before the claim, so markInProgress can
-     * win. Compare-and-delete on the failed attempt's id, so a concurrent
-     * retry that already re-claimed the key keeps its claim.
-     */
-    private void releaseIfPolicyAllows(IdempotencyKey key, IdempotencyRecord rec, FailureType failureType) {
-        if (policy().releases(failureType)) {
+        if (releases) {
+            // A failed record left behind (by an older version, or because a release
+            // failed) is released before the claim, so markInProgress can win.
+            // Compare-and-delete on the failed attempt's id, so a concurrent retry
+            // that already re-claimed the key keeps its claim.
             releaseQuietly(key, rec.notificationId());
         }
+        return Optional.empty();
     }
 
     private Optional<NotificationResponse> settleOrConflict(NotificationRequest request, IdempotencyKey key,
@@ -155,7 +163,7 @@ final class IdempotencyCoordinator {
             throw new IdempotencyInProgressException(rec.notificationId());
         }
         NotificationResponse settled = timedOut(request, rec, timeout, now);
-        if (store.settleInProgress(key, rec.notificationId(), IdempotencyStore.storedForm(settled, scrubber))) {
+        if (store.settleInProgress(key, rec.notificationId(), persisted(settled))) {
             log.warn("Idempotency key held IN_PROGRESS for longer than {}; settled as FAILED/AMBIGUOUS"
                             + " (the first attempt may have been delivered): notificationId={}",
                     timeout, sanitize(rec.notificationId()));

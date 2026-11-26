@@ -313,7 +313,7 @@ class JdbcNotificationAuditStoreIT {
         return new DefaultNotificationService(properties, registry(provider), templates(),
                 new StoreBackedAuditService(store, "default", Clock.systemUTC()), Optional.of(idempotency),
                 Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-                new NotificationServiceExtensions(MessageScrubber.placeholders(), Clock.systemUTC(), events, null));
+                new NotificationServiceExtensions(MessageScrubber.placeholders(), Clock.systemUTC(), events, null, null));
     }
 
     private static ProviderRegistry registry(NotificationProvider provider) {

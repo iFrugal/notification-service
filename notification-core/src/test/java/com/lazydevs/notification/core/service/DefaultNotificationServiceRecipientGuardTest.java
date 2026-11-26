@@ -201,6 +201,24 @@ class DefaultNotificationServiceRecipientGuardTest {
         assertThat(content.getValue().subject()).isNull();
     }
 
+    @Test
+    void validateBeforeDispatch_rendersOnce_andTheGuardPrefixesThePreRenderedSubject() {
+        properties.getTemplate().setValidateBeforeDispatch(true);
+        when(templateEngine.renderAndValidate(any())).thenReturn(new RenderedContent("Welcome", "b", null, "W"));
+        when(provider.send(any(), any())).thenReturn(SendResult.success("m-1"));
+
+        NotificationResponse response = service(configuredGuard()).send(request("customer@customer.io", null));
+
+        assertThat(response.status()).isEqualTo(NotificationStatus.SENT);
+        verify(templateEngine).renderAndValidate(any());
+        verify(templateEngine, never()).render(any());
+        ArgumentCaptor<NotificationRequest> sent = ArgumentCaptor.forClass(NotificationRequest.class);
+        ArgumentCaptor<RenderedContent> content = ArgumentCaptor.forClass(RenderedContent.class);
+        verify(provider).send(sent.capture(), content.capture());
+        assertThat(((EmailRecipient) sent.getValue().getRecipient()).to()).isEqualTo(REDIRECT);
+        assertThat(content.getValue().subject()).isEqualTo("[redirected: customer@customer.io] Welcome");
+    }
+
     private DefaultNotificationService service(RecipientGuard guard) {
         return new DefaultNotificationService(properties, providerRegistry, templateEngine, audit,
                 Optional.of(idempotency), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
@@ -208,7 +226,7 @@ class DefaultNotificationServiceRecipientGuardTest {
     }
 
     private static NotificationServiceExtensions extensions(RecipientGuard guard) {
-        return new NotificationServiceExtensions(MessageScrubber.placeholders(), Clock.systemUTC(), null, guard);
+        return new NotificationServiceExtensions(MessageScrubber.placeholders(), Clock.systemUTC(), null, guard, null);
     }
 
     private ConfiguredRecipientGuard configuredGuard() {

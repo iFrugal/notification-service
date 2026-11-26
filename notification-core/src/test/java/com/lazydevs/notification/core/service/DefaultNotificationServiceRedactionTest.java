@@ -78,13 +78,25 @@ class DefaultNotificationServiceRedactionTest {
         assertThat(audited.getValue().errorCode()).isEqualTo("ACS_400");
         assertThat(audited.getValue().errorMessage()).isEqualTo(response.errorMessage());
         IdempotencyRecord stored = store.findExisting(new IdempotencyKey("acme", null, "idem-redact")).orElseThrow();
-        // Since 1.3.0 a scrubbed message is stored instead of none (DD-32).
+        // As in 1.1.2 to 1.2.0 the stored copy has no message by default (DD-32).
+        assertThat(stored.response().errorMessage()).isNull();
+        assertThat(stored.response().errorCode()).isEqualTo("ACS_400");
+        assertThat(stored.response().status()).isEqualTo(NotificationStatus.FAILED);
+    }
+
+    @Test
+    void storeScrubbedErrorMessage_keepsTheScrubbedMessageInTheStoredCopy() {
+        properties.getIdempotency().setStoreScrubbedErrorMessage(true);
+        when(provider.send(any(), any()))
+                .thenReturn(SendResult.failure("ACS_400", ADDRESS_TEXT, FailureType.PERMANENT));
+
+        NotificationResponse response = service(Optional.empty()).send(request("idem-scrubbed"));
+
+        IdempotencyRecord stored = store.findExisting(new IdempotencyKey("acme", null, "idem-scrubbed")).orElseThrow();
         assertThat(stored.response().errorMessage())
                 .isEqualTo(response.errorMessage())
                 .doesNotContain("john.doe@example.com")
                 .doesNotContain("15551234590");
-        assertThat(stored.response().errorCode()).isEqualTo("ACS_400");
-        assertThat(stored.response().status()).isEqualTo(NotificationStatus.FAILED);
     }
 
     @Test
