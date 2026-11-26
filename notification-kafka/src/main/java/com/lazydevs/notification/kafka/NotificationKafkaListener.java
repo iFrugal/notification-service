@@ -1,6 +1,7 @@
 package com.lazydevs.notification.kafka;
 
 import com.lazydevs.notification.api.NotificationService;
+import com.lazydevs.notification.api.exception.TemplateRenderException;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.core.config.NotificationProperties;
@@ -102,6 +103,14 @@ public class NotificationKafkaListener {
                         response.requestId(), response.status());
             }
 
+        } catch (TemplateRenderException e) {
+            // DD-27 (validate-before-dispatch): the message can never render as sent, so
+            // redelivery would fail the same way. Reject it with one WARN, no stack trace,
+            // and let the offset commit; nothing was stored and nothing goes to the DLQ.
+            log.warn("Rejected notification from Kafka: key={}, partition={}, offset={}, error={}, path={}: {}",
+                    sanitize(key), partition, offset, e.getErrorCode(), sanitize(e.getVariablePath()),
+                    sanitize(e.getMessage()));
+
         } catch (Exception e) {
             log.error("Error processing notification from Kafka: key={}", key, e);
             // Don't rethrow - let Kafka commit the offset
@@ -111,5 +120,10 @@ public class NotificationKafkaListener {
             // TenantContext was renamed clear() -> reset() in persistence-utils 1.0.46.
             TenantContext.reset();
         }
+    }
+
+    /** Strip control characters so producer-supplied values cannot forge log lines. */
+    private static String sanitize(String s) {
+        return s == null ? "null" : s.replaceAll("[\\p{Cntrl}]", "_");
     }
 }

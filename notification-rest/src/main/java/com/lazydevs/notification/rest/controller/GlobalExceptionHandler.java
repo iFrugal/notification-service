@@ -2,6 +2,7 @@ package com.lazydevs.notification.rest.controller;
 
 import com.lazydevs.notification.api.exception.IdempotencyInProgressException;
 import com.lazydevs.notification.api.exception.RateLimitExceededException;
+import com.lazydevs.notification.api.exception.TemplateRenderException;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
 import com.lazydevs.notification.rest.webhook.WebhookController;
 import lazydevs.services.basic.handler.RESTExceptionHandler;
@@ -87,5 +88,39 @@ public class GlobalExceptionHandler extends RESTExceptionHandler {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                 .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
                 .body(body);
+    }
+
+    /**
+     * Render a template that could not be turned into sendable content per DD-27
+     * ({@code notification.template.validate-before-dispatch=true}):
+     * <pre>
+     * HTTP/1.1 422 Unprocessable Content
+     * Content-Type: application/json
+     *
+     * { "error": "TEMPLATE_MODEL_INVALID", "reason": "MODEL_INVALID", "templateId": "WELCOME",
+     *   "path": "user.name", "message": "..." }
+     * </pre>
+     *
+     * <p>Every reason, {@code NOT_FOUND} included, is a 422: the endpoint exists and the
+     * request is well formed, but it names a template that cannot be rendered with its data.
+     * {@code path} is the data-model path of the missing or invalid value, or {@code null}.
+     * Logged once at WARN without a stack trace; the message already names the template,
+     * the line and the failing expression.
+     */
+    @ExceptionHandler(TemplateRenderException.class)
+    public ResponseEntity<Map<String, Object>> handleTemplateRender(TemplateRenderException e) {
+        log.warn("Template render failed: {}", sanitize(e.getMessage()));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", e.getErrorCode());
+        body.put("reason", e.getReason().name());
+        body.put("templateId", e.getTemplateId());
+        body.put("path", e.getVariablePath());
+        body.put("message", e.getMessage());
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_CONTENT).body(body);
+    }
+
+    /** Strip control characters so a request-derived value cannot forge log lines. */
+    private static String sanitize(String s) {
+        return s == null ? "null" : s.replaceAll("[\\p{Cntrl}]", "_");
     }
 }

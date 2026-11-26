@@ -204,6 +204,28 @@ public class NotificationProperties {
          * {@code ?no_esc} prints trusted markup as is.
          */
         private boolean autoEscape = false;
+        /**
+         * Put the persistence-utils helpers {@code eval}, {@code file}, {@code js},
+         * {@code serde_deserializeToMap} and {@code serde_serialize} into every template model
+         * and leave FreeMarker's {@code ?new} unrestricted, as up to 1.2.
+         * {@code file} reads any path the process can read and {@code js} runs script functions,
+         * so {@code true} is deprecated: it logs a WARN at startup and the default becomes
+         * {@code false} in 2.0. {@code uuid}, {@code trim} and the notification helpers are
+         * available either way (DD-26).
+         *
+         * @since 1.3.0
+         */
+        private boolean legacyHelpers = true;
+        /**
+         * Render the template before the idempotency check, rate limit, audit and dispatch, and
+         * throw {@code TemplateRenderException} to the caller (HTTP 422 over REST) when it is
+         * missing, invalid, does not fit the data or renders an empty email; nothing is stored
+         * for such a request. {@code false} keeps the 1.2 flow, where a render failure is a
+         * stored {@code FAILED} attempt. Planned to default to {@code true} in 2.0 (DD-27).
+         *
+         * @since 1.3.0
+         */
+        private boolean validateBeforeDispatch = false;
     }
 
     /**

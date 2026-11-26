@@ -579,6 +579,8 @@ notification:
     cache-ttl-seconds: 3600
     cache-max-size: 1000
     auto-escape: false
+    legacy-helpers: true             # deprecated; false from 2.0
+    validate-before-dispatch: false  # true from 2.0
 ```
 
 | Property | Default | Meaning |
@@ -588,8 +590,11 @@ notification:
 | `cache-ttl-seconds` | `3600` | Seconds before a cached template is read again; `0` or negative never expires. Read since 1.1.2 (it was bound but ignored before). |
 | `cache-max-size` | `1000` | Maximum cached templates across all tenants; `0` or negative is unbounded. Since 1.1.2. |
 | `auto-escape` | `false` | HTML-escape interpolated values in HTML email bodies (see [Auto-escaping](#auto-escaping)). Since 1.1.2. |
+| `legacy-helpers` | `true` | Add the persistence-utils helpers `eval`, `file`, `js`, `serde_deserializeToMap` and `serde_serialize` to every template and leave `?new` unrestricted, as up to 1.2. Deprecated: `true` logs a WARN at startup and the default becomes `false` in 2.0. See [Helpers](#helpers). Since 1.3.0. |
+| `validate-before-dispatch` | `false` | Render the template before anything is stored and refuse a request whose template cannot render (HTTP 422, see [Render errors](#render-errors)). Planned default in 2.0. Since 1.3.0. |
 
-`POST /api/v1/admin/cache/templates/clear` still clears the cache for one tenant (`?tenantId=acme`) or for all tenants.
+The cache settings apply to included templates too.
+`POST /api/v1/admin/cache/templates/clear` still clears the cache for one tenant (`?tenantId=acme`) or for all tenants; included templates are shared, so their cache is cleared completely either way.
 
 ---
 
@@ -1240,6 +1245,11 @@ Message format (same as REST API body):
   same audit trail as REST. If the message body already sets `callerId`,
   the body wins.
 
+With `notification.template.validate-before-dispatch: true`, a message
+whose template cannot render is logged once at WARN (key, partition,
+offset, error code and variable path) and its offset commits; it is not
+retried and not dead-lettered (DD-27).
+
 The caller registry (`notification.caller-registry`) is consulted by the
 REST admission filter only — Kafka deliveries skip the strict-mode 403
 gate by design (publishers can't observe a 403 from a topic), so unknown
@@ -1357,7 +1367,8 @@ Since 1.1.2 it resolves the paths above.
 For one release it still falls back to the old location (`{base-path}templates/{tenantId}/...`, then `{base-path}templates/default/...`) after the new one, and logs a WARN naming the file.
 If you see that warning, move the file or append `templates/` to your `base-path`; the fallback is removed in 1.2.
 
-**Security:** since 1.1.2, tenant ids, channel names and template ids must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` and contain no `..`, `/` or `\`, so a request cannot read files outside `base-path`; an invalid id fails as template-not-found (HTTP 404) without echoing the value.
+**Security:** since 1.1.2, tenant ids, channel names and template ids must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` and contain no `..`, `/` or `\`, so a request cannot read files outside `base-path`; an invalid id fails as template-not-found without echoing the value.
+Since 1.3.0 the same rule applies to every path segment of an included template.
 
 **Email sections:**
 
@@ -1378,6 +1389,22 @@ Hi ${customerName}, ...
 - Only markers written in the template delimit sections.
   Since 1.1.2 a marker that arrives in template data (for example a name of `Bob[BODY]...[/BODY]`) is printed as text; before, it could replace the body or cut the subject short.
 
+#### Includes and imports
+
+Since 1.3.0 the engine owns its FreeMarker configuration (DD-26), and `<#include>` and `<#import>` resolve against `base-path`, through the same `classpath:` or `file:` location as the templates:
+
+```text
+<#include "parts/footer.ftl">               <#-- next to the including template: default/email/parts/footer.ftl -->
+<#import "/shared/macros.ftl" as m>          <#-- from base-path: shared/macros.ftl -->
+```
+
+- A relative name resolves against the template that includes it; a name starting with `/` resolves from `base-path`.
+- The tenant-then-default lookup applies to the top-level template only; an include resolves from the directory of the file that was chosen, so a tenant template names a default partial as `/default/email/footer.ftl`.
+- Every path segment must pass the id rule above, and `..` cannot back out of `base-path`; anything else (`file://`, `classpath:`, `%2F`, hidden files) is not found and logged at WARN with a masked prefix.
+- The FreeMarker settings are the ones persistence-utils used (incompatible improvements 2.3.23, UTF-8, `Locale.US`, `computer` number format), so existing templates render exactly as before.
+
+#### Helpers
+
 **Helpers** available in every template:
 
 | Helper | Notes |
@@ -1388,6 +1415,13 @@ Hi ${customerName}, ...
 | `truncate(text, maxLength)` | Ends with `...` within the limit; a limit of 3 or less cuts without the ellipsis. |
 | `capitalize(text)`, `escapeHtml(text)`, `urlEncode(text)` | A null value prints as an empty string. |
 | `defaultValue(value, fallback)` | `fallback` when `value` is null or blank. |
+
+| `uuid()`, `trim(text)` | A random UUID; the text without leading and trailing whitespace. |
+
+With `notification.template.legacy-helpers: true` (the 1.x default, deprecated) templates also get `eval(source)`, `file(path)`, `js(function, args...)`, `serde_deserializeToMap(json)` and `serde_serialize(value)`, which behave as in 1.2, and `?new` can instantiate any class.
+`file` reads any path the server process can read and `js` runs script functions, so set the flag to `false` unless your templates use them; `?new` is then limited by FreeMarker's `SAFER_RESOLVER`.
+The default becomes `false` in 2.0.
+A helper replaces a template-data entry of the same name; with the flag `false`, entries named `eval`, `file`, `js` or `serde_*` are plain data.
 
 `zone` is a zone id such as `Europe/Berlin` and `locale` a BCP-47 tag such as `de-DE`; pass `''` for the zone to set only the locale.
 Values that carry their own offset (an `OffsetDateTime`, or a string such as `2026-10-02T09:15:00+05:30`) keep it unless you pass a zone.
@@ -1403,12 +1437,36 @@ A body with a `[TEXT]` section is the HTML part and is always escaped.
 The engine wraps the body section of the template source in `<#outputformat "HTML">`, so a FreeMarker directive that opens inside the body and closes outside it (or the reverse) is a template error with the flag on.
 String built-ins cannot be chained directly after `escapeHtml(...)` with the flag on (for example `escapeHtml(x)?upper_case`), because it returns markup rather than a string.
 
+#### Render errors
+
+A template that cannot be rendered raises `TemplateRenderException` (DD-27) with a `reason` and an error code:
+
+| `reason` | Error code | When |
+|----------|------------|------|
+| `NOT_FOUND` | `TEMPLATE_NOT_FOUND` | No template for the tenant, channel and id, or an id is invalid (still thrown as `TemplateNotFoundException`) |
+| `INVALID_TEMPLATE` | `TEMPLATE_INVALID` | A syntax error, or an include or import that is missing or invalid |
+| `MODEL_INVALID` | `TEMPLATE_MODEL_INVALID` | A missing, null or wrongly typed value, or a helper that failed |
+| `EMPTY_OUTPUT` | `TEMPLATE_EMPTY_OUTPUT` | With `validate-before-dispatch`, an email with a blank subject or an empty body |
+
+For `MODEL_INVALID`, `getVariablePath()` names the value in the template data, such as `order.items[2].price`, also when the template reached it through a macro or function parameter (`<@card u=user/>` failing on `u.name` reports `user.name`); it is `null` when it cannot be determined.
+The message gives FreeMarker's description, the template, line and column on one line; FreeMarker no longer logs render errors itself.
+
+With `validate-before-dispatch: false` (the 1.x default) a render error is a `FAILED` response, stored in the audit and dead-letter records as in 1.2, now with the error codes above instead of `INTERNAL_ERROR`.
+With `validate-before-dispatch: true` the template is rendered before the idempotency check, the rate limit and the audit record, and the exception reaches the caller; nothing is stored, and the rendered content is reused for the send.
+Over REST it is an HTTP 422:
+
+```json
+{ "error": "TEMPLATE_MODEL_INVALID", "reason": "MODEL_INVALID", "templateId": "WELCOME",
+  "path": "user.address.city", "message": "Template WELCOME for tenant acme could not be rendered: ..." }
+```
+
+On Kafka the message is logged once at WARN and its offset commits; it is not retried or dead-lettered.
+Each refusal increments `notification.template.validation.failed.total{channel, reason}`.
+
 #### Known limitations
 
 - `formatDate` defaults to the JVM zone and `formatDateTime` to UTC, and only `formatCurrency` defaults to a fixed locale (`en-US`); the defaults are kept for compatibility and will be unified in 1.2.
-- The persistence-utils `TemplateEngine` that renders templates injects `file`, `eval` and `js` helpers into every template model; `file` reads any path the server process can read, so treat template authoring as a trusted, code-level capability.
-  They will be removed when the engine owns its FreeMarker configuration in 1.2.
-- `<#include>` and `<#import>` resolve against persistence-utils' own loaders (`classpath:/templates/` and `./templates`), not relative to the including template or to `base-path`, because templates are rendered from their source text.
+- With `legacy-helpers: true`, `eval` and `file` still render through the persistence-utils FreeMarker configuration, which logs its own errors.
 
 **Example template (`templates/default/email/ORDER_CONFIRMATION.ftl`):**
 
@@ -1629,7 +1687,7 @@ This project uses libraries from [all-about-persistence](https://github.com/iFru
 
 | Library | Usage |
 |---------|-------|
-| `persistence-utils` | `TemplateEngine`, `TenantContext`, `ClassUtils`, `ReflectionUtils` |
+| `persistence-utils` | `TenantContext`, `ClassUtils`, `ReflectionUtils`; the legacy template helpers (`eval`, `file`, `js`, `serde_*`) |
 | `persistence-api` | Audit persistence interfaces |
 | `app-building-commons` | `RequestContext`, `BasicRequestFilter`, `RESTException`, exception handling |
 
