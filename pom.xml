@@ -217,6 +217,11 @@
                 <artifactId>whatsapp-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>whatsapp-provider-meta</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
             <!-- all-about-persistence -->
             <dependency>

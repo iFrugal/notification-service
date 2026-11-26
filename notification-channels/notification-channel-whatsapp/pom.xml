@@ -17,6 +17,7 @@
 
     <modules>
         <module>whatsapp-core</module>
+        <module>whatsapp-provider-meta</module>
     </modules>
 
 </project>

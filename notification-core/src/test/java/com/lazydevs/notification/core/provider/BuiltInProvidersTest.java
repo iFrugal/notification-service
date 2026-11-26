@@ -43,4 +43,17 @@ class BuiltInProvidersTest {
         assertThat(BuiltInProviders.find(Channel.PUSH, "apns")).hasValueSatisfying(
                 entry -> assertThat(entry.implemented()).isFalse());
     }
+
+    @Test
+    void meta_isImplemented_andTwilioWhatsAppIsStillPlanned() {
+        assertThat(BuiltInProviders.find(Channel.WHATSAPP, "meta")).hasValueSatisfying(entry -> {
+            assertThat(entry.implemented()).isTrue();
+            assertThat(entry.artifactId()).isEqualTo("whatsapp-provider-meta");
+            assertThat(entry.className())
+                    .isEqualTo("com.lazydevs.notification.channel.whatsapp.meta.MetaWhatsAppProvider");
+            assertThat(entry.beanName()).isEqualTo("metaWhatsappProvider");
+        });
+        assertThat(BuiltInProviders.find(Channel.WHATSAPP, "twilio")).hasValueSatisfying(
+                entry -> assertThat(entry.implemented()).isFalse());
+    }
 }
