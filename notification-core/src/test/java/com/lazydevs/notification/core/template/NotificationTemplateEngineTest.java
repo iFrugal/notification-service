@@ -118,6 +118,8 @@ class NotificationTemplateEngineTest {
             return appender.list.stream()
                     .filter(e -> e.getLevel() == Level.WARN)
                     .map(ILoggingEvent::getFormattedMessage)
+                    // The startup notice for legacy-helpers=true (DD-26) is covered elsewhere
+                    .filter(m -> !m.startsWith("notification.template.legacy-helpers"))
                     .toList();
         }
 

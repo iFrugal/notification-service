@@ -9,6 +9,7 @@ import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.exception.IdempotencyInProgressException;
 import com.lazydevs.notification.api.exception.NotificationException;
 import com.lazydevs.notification.api.exception.RateLimitExceededException;
+import com.lazydevs.notification.api.exception.TemplateRenderException;
 import com.lazydevs.notification.api.idempotency.IdempotencyKey;
 import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
@@ -99,6 +100,10 @@ public class DefaultNotificationService implements NotificationService {
         log.debug("Processing notification: requestId={}, channel={}, type={}",
                 request.getRequestId(), request.getChannel(), request.getNotificationType());
 
+        // DD-27: with validate-before-dispatch on, a request whose template cannot
+        // render is refused here, before anything is claimed, counted or stored.
+        RenderedContent preRendered = renderBeforeDispatch(request);
+
         // ============== Idempotency check (DD-10) ==============
         // Run BEFORE the main try/catch so IdempotencyInProgressException
         // (a NotificationException subclass) propagates as 409 rather than
@@ -165,8 +170,8 @@ public class DefaultNotificationService implements NotificationService {
             // Record audit (received)
             fillRecipientSummary(auditService.recordReceived(request), request);
 
-            // Render template
-            RenderedContent content = templateEngine.render(request);
+            // Render template (already rendered when validate-before-dispatch is on)
+            RenderedContent content = preRendered != null ? preRendered : templateEngine.render(request);
 
             // Get provider
             NotificationProvider provider = providerRegistry.getProvider(
@@ -306,6 +311,28 @@ public class DefaultNotificationService implements NotificationService {
                                 "INTERNAL_ERROR", "Dispatch terminated without a response", receivedAt);
                 closeIdempotencyRecord(idemKey, request.getRequestId(), toRecord);
             }
+        }
+    }
+
+    /**
+     * Render and validate the template up front when
+     * {@code notification.template.validate-before-dispatch} is on (DD-27), so a
+     * {@link TemplateRenderException} reaches the caller with no idempotency claim, rate
+     * token, audit row or DLQ entry. {@code null} when the flag is off: the engine is not
+     * touched and the dispatch path renders as in 1.2. A request without a channel also
+     * gets {@code null}, so it fails on the dispatch path exactly as before.
+     */
+    private RenderedContent renderBeforeDispatch(NotificationRequest request) {
+        // getTemplate() is never null in a bound configuration; tolerate it like a flag that is off
+        NotificationProperties.TemplateProperties template = properties.getTemplate();
+        if (template == null || !template.isValidateBeforeDispatch() || request.getChannel() == null) {
+            return null;
+        }
+        try {
+            return templateEngine.renderAndValidate(request);
+        } catch (TemplateRenderException e) {
+            metrics.ifPresent(m -> m.recordTemplateValidationFailed(request.getChannel(), e.getReason()));
+            throw e;
         }
     }
 
