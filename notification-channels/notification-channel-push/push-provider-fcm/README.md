@@ -125,6 +125,7 @@ Set exactly one of these on the `PushRecipient`; anything else fails with `FCM_I
 | `fid` | `message.fid` (Firebase installation id) |
 | `topic` | `message.topic`; a `/topics/` prefix is removed |
 | `condition` | `message.condition` |
+| `userId` (since 1.4.0) | none: the send pipeline replaces it with the user's registered device tokens (`deviceTokens`) before FCM is called, see DD-37; one that reaches the provider unresolved fails with `FCM_INVALID_TARGET_SPEC` |
 
 ## Message mapping
 
@@ -133,14 +134,15 @@ Set exactly one of these on the `PushRecipient`; anything else fails with `FCM_I
 | rendered subject, else `PushRecipient.title` | `notification.title` |
 | rendered text, else `PushRecipient.body` | `notification.body` |
 | `imageUrl` | `notification.image` |
-| `data` | `data` (string values) |
+| the push template's `[DATA]` sections, then `data` over them | `data` (string values; the caller's key wins) |
 | `badge` | `apns.payload.aps.badge` |
 | `sound` | `apns.payload.aps.sound` and `android.notification.sound` |
 | `clickAction` | `android.notification.click_action`, `apns.payload.aps.category`, and `webpush.fcm_options.link` when it is an https URL |
 
-For the `PUSH` channel the template engine renders plain text, so the rendered text becomes the body and `PushRecipient.title` the title.
+For the `PUSH` channel a template without sections renders plain text, so the rendered text becomes the body and `PushRecipient.title` the title.
+Since 1.4.0 a push template may carry `[TITLE]`, `[BODY]` and `[DATA key="..."]` sections (DD-37): the `[TITLE]` section becomes the title, before `PushRecipient.title`, and the data sections are merged under the recipient's `data`.
 
-Data keys that FCM reserves (`from`, `message_type`, `google.*`, `gcm.*`) fail with `FCM_INVALID_DATA_KEY`.
+Data keys that FCM reserves (`from`, `message_type`, `google.*`, `gcm.*`) fail with `FCM_INVALID_DATA_KEY`, whether the caller or the template set them.
 
 **Size limits.**
 The UTF-8 bytes of every data key and value plus the notification title, body and image may not exceed 4096 bytes, or 2048 bytes for a topic or condition.
@@ -189,6 +191,9 @@ The provider metadata of the result carries per-token results, identified by has
 | none sent, otherwise | `PERMANENT` | `PERMANENT` |
 
 A partial result is `AMBIGUOUS` under `all` because a retry would notify the devices that already got the message a second time.
+
+Since 1.4.0 one request can choose its own policy with the metadata key `push.multi-token-policy` (`any` or `all`; anything else fails with `FCM_INVALID_OVERRIDE`).
+A push addressed to a user gets it from `notification.push.user-targets.multi-token-policy` (default `any`) unless the caller set it, so one dead device does not fail the user's notification; the dead device is then removed from the registry by its `INVALID_TARGET` event.
 The message id is the name of the first sent token, or `fcm-local:<uuid>` when none was sent.
 A send waits at most `timeout` for a concurrency slot, so a long list needs `concurrency` high enough to work through it: a token that got no slot fails with `FCM_CONCURRENCY_LIMIT` (`TRANSIENT`).
 
@@ -325,8 +330,8 @@ The module's own tests do exactly that with a `com.sun.net.httpserver` stub that
 
 ## GraalVM native image
 
-The module binds no JSON to classes and uses no reflection of its own, so it needs no reachability metadata.
-`ServiceLoader` lookups of `FcmAccessTokenProviderFactory` and `FcmHttpTransport` are resolved by the native-image builder from the `META-INF/services` files on the classpath; the built-in service-account factory is also used directly when no entry is found.
+The module binds no JSON to classes and uses no reflection of its own.
+Since 1.4.0 `FcmRuntimeHints`, imported by the auto-configuration, includes the `FcmAccessTokenProviderFactory` service file in the image and registers the public constructors of the shipped factories (the google-auth one by name), so the `ServiceLoader` lookup works the same in a native image; the built-in service-account factory is also used directly when no entry is found.
 Native support is not yet claimed or tested in CI.
 Smoke plan for a native build of your application:
 

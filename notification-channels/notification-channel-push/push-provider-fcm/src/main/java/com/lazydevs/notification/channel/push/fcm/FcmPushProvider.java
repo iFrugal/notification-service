@@ -293,9 +293,11 @@ public class FcmPushProvider implements PushProvider, DeliveryEventEmitter {
         FcmMessageMapper mapper = new FcmMessageMapper(settings);
         Target target;
         ObjectNode message;
+        FcmSettings.MultiTokenPolicy policy;
         try {
             target = mapper.target(recipient);
             message = mapper.message(request, content, recipient, target);
+            policy = mapper.multiTokenPolicy(request);
         } catch (InvalidMessageException e) {
             log.warn("FCM message rejected before sending: {} code={}: {}", describe(recipient), e.code(),
                     PiiMasking.redact(e.getMessage()));
@@ -307,7 +309,7 @@ public class FcmPushProvider implements PushProvider, DeliveryEventEmitter {
             return SendResult.success(id, Map.of(METADATA_DRY_RUN, true));
         }
         return target.multi()
-                ? current.sendMulti(message, target, deliveryEventPublisher)
+                ? current.sendMulti(message, target, policy, deliveryEventPublisher)
                 : current.sendSingle(message, target, deliveryEventPublisher);
     }
 
@@ -328,7 +330,10 @@ public class FcmPushProvider implements PushProvider, DeliveryEventEmitter {
         if (FcmSettings.hasText(recipient.topic())) {
             return "topic=" + recipient.topic().strip();
         }
-        return FcmSettings.hasText(recipient.condition()) ? "condition=(set)" : "target=(none)";
+        if (FcmSettings.hasText(recipient.condition())) {
+            return "condition=(set)";
+        }
+        return recipient.isUserTarget() ? "userId=(set)" : "target=(none)";
     }
 
     private String hashOrHidden(String value) {

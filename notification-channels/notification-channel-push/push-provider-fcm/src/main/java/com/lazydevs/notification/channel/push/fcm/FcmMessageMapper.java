@@ -5,10 +5,13 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.lazydevs.notification.api.channel.RenderedContent;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.PushRecipient;
+import com.lazydevs.notification.api.push.PushContent;
+import com.lazydevs.notification.api.push.PushTargeting;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -23,12 +26,14 @@ import java.util.regex.Pattern;
  *
  * <ul>
  *   <li>Target: exactly one of {@code deviceToken}, {@code deviceTokens},
- *       {@code fid}, {@code topic} or {@code condition}; anything else fails with
+ *       {@code fid}, {@code topic} or {@code condition}; a {@code userId} the send pipeline
+ *       did not resolve, and anything else, fails with
  *       {@value #CODE_INVALID_TARGET_SPEC}.</li>
  *   <li>{@code notification}: {@code title} is the rendered subject, else
  *       {@code PushRecipient.title}; {@code body} is the rendered text, else
  *       {@code PushRecipient.body}; {@code image} is {@code imageUrl}.</li>
- *   <li>{@code data}: string values; reserved keys ({@code from},
+ *   <li>{@code data}: the push template's {@code [DATA]} sections, then the recipient's
+ *       {@code data} over them (the caller's key wins); string values; reserved keys ({@code from},
  *       {@code message_type}, {@code google.*}, {@code gcm.*}) fail with
  *       {@value #CODE_INVALID_DATA_KEY}.</li>
  *   <li>{@code badge} becomes {@code apns.payload.aps.badge}; {@code sound} becomes
@@ -149,12 +154,20 @@ final class FcmMessageMapper {
         if (hasText(recipient.condition())) {
             named.add("condition");
         }
+        if (recipient.isUserTarget()) {
+            named.add("userId");
+        }
+        if (named.size() == 1 && "userId".equals(named.getFirst())) {
+            throw new InvalidMessageException(CODE_INVALID_TARGET_SPEC, "the push recipient names a userId, which"
+                    + " the send pipeline resolves into device tokens only with a push device registry"
+                    + " (notification.push.devices.enabled=true)");
+        }
         if (named.size() != 1) {
             throw new InvalidMessageException(CODE_INVALID_TARGET_SPEC, named.isEmpty()
                     ? "the push recipient names no target; set exactly one of deviceToken, deviceTokens, fid,"
-                    + " topic or condition"
+                    + " topic, condition or userId"
                     : "the push recipient names " + named.size() + " targets " + named
-                    + "; set exactly one of deviceToken, deviceTokens, fid, topic or condition");
+                    + "; set exactly one of deviceToken, deviceTokens, fid, topic, condition or userId");
         }
         return switch (named.getFirst()) {
             case "deviceToken" -> new Target(TARGET_TOKEN, List.of(recipient.deviceToken().strip()), false);
@@ -210,7 +223,7 @@ final class FcmMessageMapper {
             message.set("notification", notification);
         }
 
-        ObjectNode data = data(recipient.data());
+        ObjectNode data = data(mergedData(content, recipient));
         if (!data.isEmpty()) {
             message.set("data", data);
         }
@@ -293,6 +306,41 @@ final class FcmMessageMapper {
             }
         }
         return size;
+    }
+
+    /**
+     * The data of a push template's {@code [DATA]} sections, then the recipient's own data
+     * over it: a key the caller set wins.
+     */
+    private static Map<String, String> mergedData(RenderedContent content, PushRecipient recipient) {
+        Map<String, String> rendered = content == null ? Map.of()
+                : content.payload(PushContent.class).map(PushContent::data).orElse(Map.of());
+        if (rendered.isEmpty()) {
+            return recipient.data();
+        }
+        Map<String, String> merged = new LinkedHashMap<>(rendered);
+        if (recipient.data() != null) {
+            merged.putAll(recipient.data());
+        }
+        return merged;
+    }
+
+    /**
+     * The multi-token policy of one request: the
+     * {@value PushTargeting#MULTI_TOKEN_POLICY_METADATA} metadata ({@code any} or {@code all}),
+     * else the tenant's {@code multi-token-policy}.
+     */
+    FcmSettings.MultiTokenPolicy multiTokenPolicy(NotificationRequest request) throws InvalidMessageException {
+        Map<String, String> metadata = request.getMetadata();
+        String value = metadata == null ? null : metadata.get(PushTargeting.MULTI_TOKEN_POLICY_METADATA);
+        if (value == null) {
+            return settings.multiTokenPolicy();
+        }
+        return switch (value.strip().toLowerCase(Locale.ROOT)) {
+            case "any" -> FcmSettings.MultiTokenPolicy.ANY;
+            case "all" -> FcmSettings.MultiTokenPolicy.ALL;
+            default -> throw invalidOverride(PushTargeting.MULTI_TOKEN_POLICY_METADATA, value, "any or all");
+        };
     }
 
     private static ObjectNode data(Map<String, String> data) throws InvalidMessageException {

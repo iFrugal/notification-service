@@ -6,6 +6,7 @@ import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.context.annotation.Scope;
 
 import java.util.Map;
@@ -30,6 +31,7 @@ import java.util.Map;
  * </ul>
  */
 @AutoConfiguration
+@ImportRuntimeHints(FcmRuntimeHints.class)
 public class FcmPushProviderAutoConfiguration implements BeanClassLoaderAware {
 
     /** Bean name the provider catalog refers to for {@code PUSH:fcm}. */
