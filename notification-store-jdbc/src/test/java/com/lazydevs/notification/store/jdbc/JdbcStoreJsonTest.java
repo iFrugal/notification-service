@@ -23,6 +23,19 @@ class JdbcStoreJsonTest {
     }
 
     @Test
+    void retryAfterIsStoredAsAnIsoDuration_andRoundTrips() throws Exception {
+        NotificationResponse failed = NotificationResponse.failure(
+                        PostgresTestSupport.request("acme", "req-1"), "acs", "THROTTLED", null)
+                .withRetryAfter(java.time.Duration.ofSeconds(30));
+
+        String body = json.writeValueAsString(failed);
+
+        assertThat(body).contains("\"retryAfter\":\"PT30S\"");
+        assertThat(json.readValue(body, NotificationResponse.class).retryAfter())
+                .isEqualTo(java.time.Duration.ofSeconds(30));
+    }
+
+    @Test
     void ignoresUnknownPropertiesWrittenByANewerVersion() throws Exception {
         NotificationResponse read = json.readValue(
                 "{\"requestId\":\"req-1\",\"status\":\"SENT\",\"addedLater\":42}", NotificationResponse.class);

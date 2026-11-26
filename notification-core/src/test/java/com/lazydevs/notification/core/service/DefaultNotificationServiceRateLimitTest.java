@@ -63,6 +63,7 @@ class DefaultNotificationServiceRateLimitTest {
     @BeforeEach
     void setUp() {
         lenient().when(properties.getDefaultTenant()).thenReturn("default");
+        lenient().when(properties.getIdempotency()).thenReturn(new NotificationProperties.IdempotencyProperties());
         // Default service has idempotency disabled so most tests don't
         // have to stub the store. The replay-exempt test below builds
         // its own service with the store wired.
@@ -198,7 +199,7 @@ class DefaultNotificationServiceRateLimitTest {
                 Optional.empty(), Optional.empty(), Optional.empty());
 
         when(idempotencyStore.findExisting(any())).thenReturn(Optional.empty());
-        when(idempotencyStore.markInProgress(any(), anyString())).thenReturn(true);
+        when(idempotencyStore.markInProgress(any(), anyString(), anyString())).thenReturn(true);
         when(rateLimiter.tryConsume(any())).thenReturn(Decision.allow());
         stubProviderHappyPath();
 

@@ -7,6 +7,7 @@ import com.lazydevs.notification.api.model.SmsRecipient;
 import com.lazydevs.notification.api.model.WhatsAppRecipient;
 
 import java.util.List;
+import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -41,20 +42,17 @@ public final class PiiMasking {
     private static final int MIN_TOKEN_LENGTH_SHOWN = 12;
     private static final int TOKEN_SUFFIX_LENGTH = 4;
 
-    /**
-     * An email address inside free text. Unicode letters and digits are allowed
-     * in both parts (RFC 6531 addresses); the domain needs no dot so
-     * {@code user@localhost} is masked too.
-     */
-    private static final Pattern EMAIL = Pattern.compile(
-            "[\\p{L}\\p{M}\\p{N}._%+-]+@[\\p{L}\\p{M}\\p{N}-]+(?:\\.[\\p{L}\\p{M}\\p{N}-]+)*");
+    /** Characters other than letters, marks and numbers allowed in an email's local part. */
+    private static final String LOCAL_PART_SYMBOLS = "._%+-";
+    /** {@link #domainEnd} result when no domain follows the {@code @}. */
+    private static final int NO_DOMAIN = -1;
 
     /**
      * Seven or more digits with an optional leading {@code +}, not glued to a
      * word character or a dash, so identifiers such as UUID groups and Twilio
      * SIDs are left alone.
      */
-    private static final Pattern PHONE = Pattern.compile("(?<![\\w+-])\\+?\\d{7,}(?![\\w-])");
+    static final Pattern PHONE = Pattern.compile("(?<![\\w+-])\\+?\\d{7,}(?![\\w-])");
 
     private PiiMasking() {
     }
@@ -146,8 +144,92 @@ public final class PiiMasking {
         if (text == null || text.isEmpty()) {
             return text;
         }
-        String out = EMAIL.matcher(text).replaceAll(m -> Matcher.quoteReplacement(maskEmail(m.group())));
+        String out = replaceEmails(text, PiiMasking::maskEmail);
         return PHONE.matcher(out).replaceAll(m -> Matcher.quoteReplacement(maskPhone(m.group())));
+    }
+
+    /**
+     * Replace every email address inside free text. An address is what the regular
+     * expression {@code [\p{L}\p{M}\p{N}._%+-]+@[\p{L}\p{M}\p{N}-]+(?:\.[\p{L}\p{M}\p{N}-]+)*}
+     * matches: Unicode letters and digits are allowed in both parts (RFC 6531
+     * addresses) and the domain needs no dot, so {@code user@localhost} counts too.
+     * A scanner finds the same matches as that expression in linear time; the
+     * expression itself backtracks quadratically on a long run of local-part
+     * characters without an {@code @}.
+     *
+     * @param text        the text, not {@code null}
+     * @param replacement maps each address to its replacement
+     * @return the text with every address replaced
+     */
+    static String replaceEmails(String text, UnaryOperator<String> replacement) {
+        StringBuilder out = new StringBuilder(text.length());
+        int copied = 0;
+        int at = text.indexOf('@');
+        while (at >= 0) {
+            int start = localPartStart(text, at, copied);
+            int end = start < at ? domainEnd(text, at + 1) : NO_DOMAIN;
+            if (end == NO_DOMAIN) {
+                at = text.indexOf('@', at + 1);
+            } else {
+                out.append(text, copied, start).append(replacement.apply(text.substring(start, end)));
+                copied = end;
+                at = text.indexOf('@', end);
+            }
+        }
+        return out.append(text, copied, text.length()).toString();
+    }
+
+    /** Start of the local part that ends at {@code at}, not before {@code floor}; {@code at} when empty. */
+    private static int localPartStart(String text, int at, int floor) {
+        int i = at;
+        while (i > floor) {
+            int cp = text.codePointBefore(i);
+            int width = Character.charCount(cp);
+            if (i - width < floor || !(isLetterMarkOrNumber(cp) || LOCAL_PART_SYMBOLS.indexOf(cp) >= 0)) {
+                break;
+            }
+            i -= width;
+        }
+        return i;
+    }
+
+    /** End of the domain that starts at {@code from}, or {@link #NO_DOMAIN} when there is none. */
+    private static int domainEnd(String text, int from) {
+        int end = skipDomainLabel(text, from);
+        if (end == from) {
+            return NO_DOMAIN;
+        }
+        while (end < text.length() && text.charAt(end) == '.') {
+            int next = skipDomainLabel(text, end + 1);
+            if (next == end + 1) {
+                break;
+            }
+            end = next;
+        }
+        return end;
+    }
+
+    private static int skipDomainLabel(String text, int from) {
+        int i = from;
+        while (i < text.length()) {
+            int cp = text.codePointAt(i);
+            if (!(isLetterMarkOrNumber(cp) || cp == '-')) {
+                break;
+            }
+            i += Character.charCount(cp);
+        }
+        return i;
+    }
+
+    /** {@code \p{L}}, {@code \p{M}} or {@code \p{N}}. */
+    private static boolean isLetterMarkOrNumber(int codePoint) {
+        return switch (Character.getType(codePoint)) {
+            case Character.UPPERCASE_LETTER, Character.LOWERCASE_LETTER, Character.TITLECASE_LETTER,
+                 Character.MODIFIER_LETTER, Character.OTHER_LETTER,
+                 Character.NON_SPACING_MARK, Character.ENCLOSING_MARK, Character.COMBINING_SPACING_MARK,
+                 Character.DECIMAL_DIGIT_NUMBER, Character.LETTER_NUMBER, Character.OTHER_NUMBER -> true;
+            default -> false;
+        };
     }
 
     private static String maskPush(PushRecipient push) {

@@ -45,6 +45,7 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
   - [Option 2: FQCN (Reflection)](#option-2-fqcn-reflection)
 - [Templates](#templates)
 - [Multi-Tenancy](#multi-tenancy)
+- [Recipient guard](#recipient-guard)
 - [Audit](#audit)
 - [Distributed deployment (Redis backends)](#distributed-deployment-redis-backends)
 - [JDBC store](#jdbc-store)
@@ -62,7 +63,10 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 - **Multiple Providers per Channel**: SMTP, AWS SES and Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)) for email, Twilio for SMS, Firebase Cloud Messaging ([`push-provider-fcm`](notification-channels/notification-channel-push/push-provider-fcm/README.md), with [`push-provider-fcm-google-auth`](notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) for Application Default Credentials and workload identity federation) for push; AWS SNS, WhatsApp (Twilio, Meta) and APNs providers are planned
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
-- **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10)
+- **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10); opt-in key-reuse check, failure policy with a replaceable release policy, and in-progress timeout (DD-32)
+- **Failure details on responses**: `failureType`, `providerMetadata` and the provider's `retryAfter` hint on `FAILED` responses (DD-31)
+- **Status view**: `NotificationService.find(tenantId, requestId)` and `findByIdempotencyKey(...)` over the shipped in-memory or JDBC audit store (DD-33)
+- **Recipient guard**: Opt-in allow-list with redirect or drop per channel, for non-production environments (DD-34)
 - **Rate Limiting**: Opt-in token-bucket throttle per `(tenant, caller, channel)` with `429 + Retry-After` (DD-12); per-channel default rules let operators bound SMS tighter than email without enumerating overrides (DD-23)
 - **Retries + DLQ**: Opt-in synchronous retry with classified failures (TRANSIENT/PERMANENT/UNKNOWN) and exponential backoff with jitter; pluggable dead-letter store SPI (DD-13); operator replay endpoint with `replayOf` chain (DD-15); per-channel `byChannel` retry rule overrides (DD-23)
 - **OpenAPI / Swagger**: Self-documenting via `/v3/api-docs` + `/swagger-ui` (springdoc, optional in library mode); schema published as a CI build artifact for client codegen
@@ -74,7 +78,7 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service
 - **REST & Kafka**: Accept notifications via REST API or Kafka consumer
-- **Audit Trail**: `NotificationAuditService` SPI with a no-op default (`NoOpAuditService`); no persistence backend ships, so register your own bean to keep history
+- **Audit Trail**: `NotificationAuditService` SPI; off by default (`NoOpAuditService`), and with `notification.audit.enabled=true` records go to the in-memory or JDBC audit store of the selected store family, or to your own bean (DD-07, DD-33)
 - **Fail-Fast Validation**: All providers validated at startup
 
 ---
@@ -496,6 +500,46 @@ When a request doesn't specify a provider:
 | Multiple providers, none with `default: true` | Error: provider required in request |
 | Multiple providers, 2+ with `default: true` | Startup failure |
 
+### Default-tenant provider fallback
+
+A tenant with no entry under `notification.tenants` fails with `TENANT_NOT_FOUND`.
+Turn on the fallback to let such tenants send through the providers of `notification.default-tenant` ([DD-28](docs/design-decisions/28-default-tenant-provider-fallback.md)):
+
+```yaml
+notification:
+  default-tenant: default
+  tenant-fallback:
+    enabled: true          # default false
+  tenants:
+    default:
+      channels:
+        email:
+          providers:
+            smtp:
+              properties:
+                host: smtp.example.com
+```
+
+Only provider resolution falls back.
+The request keeps its own tenant id for idempotency, rate limits, templates, audit and the dead-letter store, and the admin endpoints never list the unconfigured tenant.
+If the default tenant is not configured either, the request still fails with `TENANT_NOT_FOUND`.
+
+### Lazy provider initialisation
+
+By default every provider is configured and initialised at startup, and a provider with missing or invalid settings stops the application.
+With `notification.providers.lazy-init: true` a provider is built on the first send that needs it instead, so the application boots without the settings of a channel it does not use yet ([DD-29](docs/design-decisions/29-lazy-provider-initialisation.md)):
+
+```yaml
+notification:
+  providers:
+    lazy-init: true        # default false
+```
+
+- Concurrent first sends share one build.
+- When the build fails, the send fails with error code `PROVIDER_NOT_CONFIGURED` as a `TRANSIENT` failure: retries and the dead-letter store apply as for any provider failure, and nothing is cached, so the next send tries the build again.
+- `GET /admin/health` lists a provider no send has needed yet as `NOT_INITIALIZED` (status stays `UP`) and one whose last build failed as `INIT_FAILED` (status `DEGRADED`).
+- Startup still rejects a channel with more than one `default: true` provider.
+
 ### Store selection
 
 Idempotency, rate limiting, the dead-letter queue and delivery events each keep state in a store.
@@ -539,6 +583,8 @@ notification:
     cache-ttl-seconds: 3600
     cache-max-size: 1000
     auto-escape: false
+    legacy-helpers: true             # deprecated; false from 2.0
+    validate-before-dispatch: false  # true from 2.0
 ```
 
 | Property | Default | Meaning |
@@ -548,8 +594,11 @@ notification:
 | `cache-ttl-seconds` | `3600` | Seconds before a cached template is read again; `0` or negative never expires. Read since 1.1.2 (it was bound but ignored before). |
 | `cache-max-size` | `1000` | Maximum cached templates across all tenants; `0` or negative is unbounded. Since 1.1.2. |
 | `auto-escape` | `false` | HTML-escape interpolated values in HTML email bodies (see [Auto-escaping](#auto-escaping)). Since 1.1.2. |
+| `legacy-helpers` | `true` | Add the persistence-utils helpers `eval`, `file`, `js`, `serde_deserializeToMap` and `serde_serialize` to every template and leave `?new` unrestricted, as up to 1.2. Deprecated: `true` logs a WARN at startup and the default becomes `false` in 2.0. See [Helpers](#helpers). Since 1.3.0. |
+| `validate-before-dispatch` | `false` | Render the template before anything is stored and refuse a request whose template cannot render (HTTP 422, see [Render errors](#render-errors)). Planned default in 2.0. Since 1.3.0. |
 
-`POST /api/v1/admin/cache/templates/clear` still clears the cache for one tenant (`?tenantId=acme`) or for all tenants.
+The cache settings apply to included templates too.
+`POST /api/v1/admin/cache/templates/clear` still clears the cache for one tenant (`?tenantId=acme`) or for all tenants; included templates are shared, so their cache is cleared completely either way.
 
 ---
 
@@ -628,6 +677,14 @@ Content-Type: application/json
 }
 ```
 
+A `FAILED` response also carries, when known (since 1.3.0, [DD-31](docs/design-decisions/31-failure-type-on-notification-response.md)):
+
+- `failureType`: `TRANSIENT` (safe to retry), `PERMANENT` (pointless to retry), `AMBIGUOUS` (the provider may have accepted it) or `UNKNOWN`.
+- `providerMetadata`: provider details of the send, for example an ACS `acsStatus`.
+- `retryAfter`: how long the provider asked to wait (an HTTP 429 `Retry-After`), as an ISO-8601 duration such as `"PT30S"`.
+
+Each field is left out of the JSON when it is not set, so a successful response looks exactly as before.
+
 ### Idempotency
 
 To make retries safe, include an opaque `idempotencyKey` (max 255
@@ -679,6 +736,29 @@ notification:
 See [DD-10](docs/design-decisions/10-idempotency.md) for the design
 rationale, semantics, and the storage-SPI shape for replacing the
 default in-memory store with Redis.
+
+**Failure policy, key reuse and stuck keys ([DD-32](docs/design-decisions/32-idempotency-fingerprint-failure-policy.md), since 1.3.0):**
+
+```yaml
+notification:
+  idempotency:
+    failure-policy: RELEASE_TRANSIENT     # RELEASE_ALL (default) | KEEP | RELEASE_TRANSIENT
+    reject-key-reuse: true                # default false
+    in-progress-timeout: PT10M            # default unset (409 until the TTL)
+    store-scrubbed-error-message: true    # default false (stored failures have no message)
+```
+
+- `failure-policy` decides whether a failed send releases its key.
+  `RELEASE_ALL` dispatches a retry under the key again (the 1.1.2 to 1.2.0 behaviour), `KEEP` answers it with 409 until the TTL, and `RELEASE_TRANSIENT` releases only after a `TRANSIENT` failure and replays any other failure (`X-Idempotent-Replay: true`, status `FAILED`).
+  `retry-after-failure` is a deprecated alias (`true` = `RELEASE_ALL`, `false` = `KEEP`).
+- The decision is the `IdempotencyReleasePolicy` bean (`com.lazydevs.notification.api.idempotency`); declare your own to widen or narrow it, for example to also release a failure whose error code says the provider rejected the sender's credential.
+  A key settled by `in-progress-timeout` is never released, whatever the policy says.
+- `reject-key-reuse` answers a key reused for a different message (channel, recipient, template, template data, explicit provider or attachments) with `409 {"notificationId": "...", "status": "KEY_REUSED"}`; correlation id and metadata do not count.
+- `in-progress-timeout` settles a key held `IN_PROGRESS` longer than this (for example by a process that died) as `FAILED` / `IN_PROGRESS_TIMEOUT` / `AMBIGUOUS` and replays it.
+- `store-scrubbed-error-message` keeps the error message of a stored failure with email addresses and phone numbers replaced by placeholders (`MessageScrubber`), so a replayed failure says what went wrong.
+
+**Status view ([DD-33](docs/design-decisions/33-status-view.md), since 1.3.0).**
+With `notification.audit.enabled=true`, `NotificationService.find(tenantId, requestId)` and `findByIdempotencyKey(tenantId, callerId, key)` return a `NotificationView`: status, failure type, error code, provider message id, timestamps and the latest delivery status, never the recipient's address.
 
 ### Caller Identity
 
@@ -764,7 +844,34 @@ notification:
 ```
 
 **Match precedence (most specific wins):**
-`(tenant, caller, channel)` → `(tenant, caller)` → `(tenant)` → `default`.
+`(tenant, caller, channel)` → `(tenant, caller)` → `(tenant)` → `by-channel.<channel>` → `default-rule`.
+
+**Several limits, shared buckets and refunds ([DD-30](docs/design-decisions/30-rate-limit-bandwidths-scope-refund.md)):**
+
+```yaml
+notification:
+  rate-limit:
+    enabled: true
+    refund-unsent: false        # default; see below
+    by-channel:
+      sms:
+        scope: channel          # one bucket for all tenants and callers
+        bandwidths:             # all must allow: 2 per minute and 5 per hour
+          - capacity: 2
+            refill-tokens: 2
+            refill-period: PT1M
+          - capacity: 5
+            refill-tokens: 5
+            refill-period: PT1H
+```
+
+- `bandwidths` replaces `capacity` / `refill-tokens` / `refill-period` on any rule (default, by-channel or override); setting both on one rule fails startup.
+  On a denial, `Retry-After` is the time until every band has a token.
+- `scope: tenant-caller` (default) keeps one bucket per `(tenant, caller, channel)`.
+  `scope: channel` shares one bucket per channel among every request that resolves to the rule.
+  The rule is chosen first, so a tenant override still applies to that tenant even when the channel rule is shared.
+- `RateLimiter.refund(key)` gives one token back (never above capacity).
+  With `refund-unsent: true`, a failed send whose idempotency key the release policy released gets its token back, unless the failure is `AMBIGUOUS` or `UNKNOWN` (see [Idempotency](#idempotency)).
 
 **On rejection (REST):**
 
@@ -1174,6 +1281,11 @@ Message format (same as REST API body):
   same audit trail as REST. If the message body already sets `callerId`,
   the body wins.
 
+With `notification.template.validate-before-dispatch: true`, a message
+whose template cannot render is logged once at WARN (key, partition,
+offset, error code and variable path) and its offset commits; it is not
+retried and not dead-lettered (DD-27).
+
 The caller registry (`notification.caller-registry`) is consulted by the
 REST admission filter only — Kafka deliveries skip the strict-mode 403
 gate by design (publishers can't observe a 403 from a topic), so unknown
@@ -1291,7 +1403,8 @@ Since 1.1.2 it resolves the paths above.
 For one release it still falls back to the old location (`{base-path}templates/{tenantId}/...`, then `{base-path}templates/default/...`) after the new one, and logs a WARN naming the file.
 If you see that warning, move the file or append `templates/` to your `base-path`; the fallback is removed in 1.2.
 
-**Security:** since 1.1.2, tenant ids, channel names and template ids must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` and contain no `..`, `/` or `\`, so a request cannot read files outside `base-path`; an invalid id fails as template-not-found (HTTP 404) without echoing the value.
+**Security:** since 1.1.2, tenant ids, channel names and template ids must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` and contain no `..`, `/` or `\`, so a request cannot read files outside `base-path`; an invalid id fails as template-not-found without echoing the value.
+Since 1.3.0 the same rule applies to every path segment of an included template.
 
 **Email sections:**
 
@@ -1312,6 +1425,22 @@ Hi ${customerName}, ...
 - Only markers written in the template delimit sections.
   Since 1.1.2 a marker that arrives in template data (for example a name of `Bob[BODY]...[/BODY]`) is printed as text; before, it could replace the body or cut the subject short.
 
+#### Includes and imports
+
+Since 1.3.0 the engine owns its FreeMarker configuration (DD-26), and `<#include>` and `<#import>` resolve against `base-path`, through the same `classpath:` or `file:` location as the templates:
+
+```text
+<#include "parts/footer.ftl">               <#-- next to the including template: default/email/parts/footer.ftl -->
+<#import "/shared/macros.ftl" as m>          <#-- from base-path: shared/macros.ftl -->
+```
+
+- A relative name resolves against the template that includes it; a name starting with `/` resolves from `base-path`.
+- The tenant-then-default lookup applies to the top-level template only; an include resolves from the directory of the file that was chosen, so a tenant template names a default partial as `/default/email/footer.ftl`.
+- Every path segment must pass the id rule above, and `..` cannot back out of `base-path`; anything else (`file://`, `classpath:`, `%2F`, hidden files) is not found and logged at WARN with a masked prefix.
+- The FreeMarker settings are the ones persistence-utils used (incompatible improvements 2.3.23, UTF-8, `Locale.US`, `computer` number format), so existing templates render exactly as before.
+
+#### Helpers
+
 **Helpers** available in every template:
 
 | Helper | Notes |
@@ -1322,6 +1451,13 @@ Hi ${customerName}, ...
 | `truncate(text, maxLength)` | Ends with `...` within the limit; a limit of 3 or less cuts without the ellipsis. |
 | `capitalize(text)`, `escapeHtml(text)`, `urlEncode(text)` | A null value prints as an empty string. |
 | `defaultValue(value, fallback)` | `fallback` when `value` is null or blank. |
+
+| `uuid()`, `trim(text)` | A random UUID; the text without leading and trailing whitespace. |
+
+With `notification.template.legacy-helpers: true` (the 1.x default, deprecated) templates also get `eval(source)`, `file(path)`, `js(function, args...)`, `serde_deserializeToMap(json)` and `serde_serialize(value)`, which behave as in 1.2, and `?new` can instantiate any class.
+`file` reads any path the server process can read and `js` runs script functions, so set the flag to `false` unless your templates use them; `?new` is then limited by FreeMarker's `SAFER_RESOLVER`.
+The default becomes `false` in 2.0.
+A helper replaces a template-data entry of the same name; with the flag `false`, entries named `eval`, `file`, `js` or `serde_*` are plain data.
 
 `zone` is a zone id such as `Europe/Berlin` and `locale` a BCP-47 tag such as `de-DE`; pass `''` for the zone to set only the locale.
 Values that carry their own offset (an `OffsetDateTime`, or a string such as `2026-10-02T09:15:00+05:30`) keep it unless you pass a zone.
@@ -1337,12 +1473,36 @@ A body with a `[TEXT]` section is the HTML part and is always escaped.
 The engine wraps the body section of the template source in `<#outputformat "HTML">`, so a FreeMarker directive that opens inside the body and closes outside it (or the reverse) is a template error with the flag on.
 String built-ins cannot be chained directly after `escapeHtml(...)` with the flag on (for example `escapeHtml(x)?upper_case`), because it returns markup rather than a string.
 
+#### Render errors
+
+A template that cannot be rendered raises `TemplateRenderException` (DD-27) with a `reason` and an error code:
+
+| `reason` | Error code | When |
+|----------|------------|------|
+| `NOT_FOUND` | `TEMPLATE_NOT_FOUND` | No template for the tenant, channel and id, or an id is invalid (still thrown as `TemplateNotFoundException`) |
+| `INVALID_TEMPLATE` | `TEMPLATE_INVALID` | A syntax error, or an include or import that is missing or invalid |
+| `MODEL_INVALID` | `TEMPLATE_MODEL_INVALID` | A missing, null or wrongly typed value, or a helper that failed |
+| `EMPTY_OUTPUT` | `TEMPLATE_EMPTY_OUTPUT` | With `validate-before-dispatch`, an email with a blank subject or an empty body |
+
+For `MODEL_INVALID`, `getVariablePath()` names the value in the template data, such as `order.items[2].price`, also when the template reached it through a macro or function parameter (`<@card u=user/>` failing on `u.name` reports `user.name`); it is `null` when it cannot be determined.
+The message gives FreeMarker's description, the template, line and column on one line; FreeMarker no longer logs render errors itself.
+
+With `validate-before-dispatch: false` (the 1.x default) a render error is a `FAILED` response, stored in the audit and dead-letter records as in 1.2, now with the error codes above instead of `INTERNAL_ERROR`.
+With `validate-before-dispatch: true` the template is rendered before the idempotency check, the rate limit and the audit record, and the exception reaches the caller; nothing is stored, and the rendered content is reused for the send.
+Over REST it is an HTTP 422:
+
+```json
+{ "error": "TEMPLATE_MODEL_INVALID", "reason": "MODEL_INVALID", "templateId": "WELCOME",
+  "path": "user.address.city", "message": "Template WELCOME for tenant acme could not be rendered: ..." }
+```
+
+On Kafka the message is logged once at WARN and its offset commits; it is not retried or dead-lettered.
+Each refusal increments `notification.template.validation.failed.total{channel, reason}`.
+
 #### Known limitations
 
 - `formatDate` defaults to the JVM zone and `formatDateTime` to UTC, and only `formatCurrency` defaults to a fixed locale (`en-US`); the defaults are kept for compatibility and will be unified in 1.2.
-- The persistence-utils `TemplateEngine` that renders templates injects `file`, `eval` and `js` helpers into every template model; `file` reads any path the server process can read, so treat template authoring as a trusted, code-level capability.
-  They will be removed when the engine owns its FreeMarker configuration in 1.2.
-- `<#include>` and `<#import>` resolve against persistence-utils' own loaders (`classpath:/templates/` and `./templates`), not relative to the including template or to `base-path`, because templates are rendered from their source text.
+- With `legacy-helpers: true`, `eval` and `file` still render through the persistence-utils FreeMarker configuration, which logs its own errors.
 
 **Example template (`templates/default/email/ORDER_CONFIRMATION.ftl`):**
 
@@ -1377,6 +1537,8 @@ Tenant is determined by:
 3. **Programmatic**: `request.setTenantId("tenant-a")`
 4. **Fallback**: `notification.default-tenant` config
 
+A tenant id that has no entry under `notification.tenants` fails with `TENANT_NOT_FOUND`, unless `notification.tenant-fallback.enabled` lets it use the default tenant's providers (see [Default-tenant provider fallback](#default-tenant-provider-fallback)).
+
 Each tenant can have:
 - Different enabled channels
 - Different providers per channel
@@ -1385,21 +1547,48 @@ Each tenant can have:
 
 ---
 
+## Recipient guard
+
+Since 1.3.0 a non-production environment can make sure it only ever reaches an allow-list ([DD-34](docs/design-decisions/34-recipient-guard.md)):
+
+```yaml
+notification:
+  recipient-guard:
+    enabled: true                                      # default false
+    channels:
+      email:
+        allowed: ["@example.com", "qa.lead@example.org"]
+        redirect-to: qa-inbox@example.com
+        subject-prefix: "[redirected: {originals}] "   # default; "" disables
+      sms:
+        allowed: ["+15550100"]                         # no redirect-to: drop
+```
+
+Recipients that are not allowed are redirected one for one, or dropped when the channel has no `redirect-to`.
+When nothing is left, the send fails with `RECIPIENT_BLOCKED` (`PERMANENT`) before the provider is called.
+The guard runs after the idempotency claim, so the fingerprint and the key use the request as the caller sent it, while the audit record and the provider see only the guarded recipient.
+Push recipients are not guarded.
+Declare a `RecipientGuard` bean to replace the rules.
+
+---
+
 ## Audit
 
-Audit is a `NotificationAuditService` SPI in `notification-core` with a no-op default (`NoOpAuditService`, which logs only).
-No audit persistence backend ships with this project; to keep notification history, register your own `NotificationAuditService` bean.
-The `notification.audit.*` properties below are bound for your bean to read; the shipped no-op ignores them.
+Audit is a `NotificationAuditService` SPI in `notification-core`.
+With `notification.audit.enabled=false` (the default) the no-op `NoOpAuditService` logs only.
+Since 1.3.0, `notification.audit.enabled=true` stores the records in the audit store of the selected store family ([DD-33](docs/design-decisions/33-status-view.md)): a bounded in-memory store for `store.type: memory`, the `<prefix>audit` table for `store.type: jdbc`.
+The Redis family has no audit store; supply a `NotificationAuditStore` bean, or set `notification.redis.audit.enabled: false` to keep audit in memory.
+A `NotificationAuditService` bean of your own still replaces all of this.
 
 ```yaml
 notification:
   audit:
     enabled: true
-    store-request-payload: true
-    store-response-payload: true
-    retention-days: 90
-    async: true
+    retention-days: 90     # lifetime of a record in the shipped stores
+    max-entries: 10000     # bound of the in-memory store
 ```
+
+The audit records back `GET /api/v1/admin/audit/...` and the status view (`NotificationService.find`).
 
 Audit records passed to the SPI include:
 - Request/response details
@@ -1468,6 +1657,7 @@ services sharing one Redis instance should set distinct prefixes.
 |---------|-----------------|
 | Idempotency record | `String` at `<prefix>:idempotency:<tenant>:<caller>:<key>` (JSON, TTL via `EX`) |
 | Rate-limit bucket | bucket4j-redis CAS state at `<prefix>:ratelimit:<tenant>:<caller>:<channel>` |
+| Shared rate-limit bucket (`scope: channel`, DD-30) | bucket4j-redis CAS state at `<prefix>:ratelimit-shared:<ruleId>:<channel>`, where `ruleId` is `default`, `by-channel:<channel>` or `override:<index>` |
 | Dead-letter list | `LIST` at `<prefix>:dlq` (LPUSH + LTRIM-bounded) |
 
 Operators can read DLQ entries with `redis-cli LRANGE
@@ -1477,7 +1667,7 @@ Operators can read DLQ entries with `redis-cli LRANGE
 
 ## JDBC store
 
-`notification-store-jdbc` provides PostgreSQL-backed `IdempotencyStore`, `DeadLetterStore` and `DeliveryEventStore` implementations, written as plain SQL over Spring's `JdbcClient`.
+`notification-store-jdbc` provides PostgreSQL-backed `IdempotencyStore`, `DeadLetterStore`, `DeliveryEventStore` and (since 1.3.0) `NotificationAuditStore` implementations, written as plain SQL over Spring's `JdbcClient`.
 There is no ORM and no migration tool, and the library never runs DDL.
 Full details are in the [module README](notification-store-jdbc/README.md).
 
@@ -1525,6 +1715,9 @@ The host application supplies the `DataSource` and the JDBC driver.
 - **Row-level security:** every table has a nullable `tenant_id` column, the application role needs only `SELECT, INSERT, UPDATE, DELETE`, and `JdbcStoreRlsIT` runs every store as a non-owner role under a tenant-isolation policy.
 - **Dead-letter replay:** claims are leased with `FOR UPDATE SKIP LOCKED`, so replicas replaying the same tenant never send one entry twice.
 - **No rate limiter:** rate limiting stays on the in-memory Bucket4j limiter, or on Redis with `notification.redis.rate-limit.enabled=true`.
+- **Audit (since 1.3.0):** with `notification.audit.enabled=true` the audit records go to `<prefix>audit`; without it that table is not needed.
+- **Upgrading a 1.2.x schema:** the idempotency table gains an optional `fingerprint` column (DD-32).
+  Without it the store logs one WARN at startup with the `ALTER TABLE` statement and keeps working without fingerprints; with `notification.idempotency.reject-key-reuse=true` startup fails with that statement instead.
 
 ---
 
@@ -1560,7 +1753,7 @@ This project uses libraries from [all-about-persistence](https://github.com/iFru
 
 | Library | Usage |
 |---------|-------|
-| `persistence-utils` | `TemplateEngine`, `TenantContext`, `ClassUtils`, `ReflectionUtils` |
+| `persistence-utils` | `TenantContext`, `ClassUtils`, `ReflectionUtils`; the legacy template helpers (`eval`, `file`, `js`, `serde_*`) |
 | `persistence-api` | Audit persistence interfaces |
 | `app-building-commons` | `RequestContext`, `BasicRequestFilter`, `RESTException`, exception handling |
 

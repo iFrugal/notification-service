@@ -5,6 +5,7 @@ import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.delivery.DeliveryStatus;
+import com.lazydevs.notification.api.exception.TemplateRenderException;
 import com.lazydevs.notification.api.model.FailureType;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
@@ -41,6 +42,7 @@ import java.util.Optional;
  *   <li>{@code notification.delivery-events.size} — gauge</li>
  *   <li>{@code notification.delivery-events.emitted.total{provider, status}} - counter (since 1.2.0)</li>
  *   <li>{@code notification.webhook.signature.failed.total{provider}} — counter</li>
+ *   <li>{@code notification.template.validation.failed.total{channel, reason}} - counter (since 1.3.0)</li>
  * </ul>
  *
  * <p>Tag cardinality is deliberate: {@code tenant} only on
@@ -62,6 +64,7 @@ public class NotificationMetrics {
     private static final String M_DELIVERY_SIZE = "notification.delivery-events.size";
     private static final String M_WEBHOOK_SIG_FAILED = "notification.webhook.signature.failed.total";
     private static final String M_DELIVERY_EMITTED = "notification.delivery-events.emitted.total";
+    private static final String M_TEMPLATE_VALIDATION_FAILED = "notification.template.validation.failed.total";
 
     // Common tag keys / values reused across multiple meters. Pulled out
     // as constants so a rename is one place, and to silence S1192.
@@ -168,6 +171,18 @@ public class NotificationMetrics {
     public void recordWebhookSignatureFailed(String providerName) {
         registry.counter(M_WEBHOOK_SIG_FAILED,
                 "provider", providerName == null ? UNKNOWN_LOWER : providerName)
+                .increment();
+    }
+
+    /**
+     * Record a request refused because its template did not render
+     * (DD-27, {@code notification.template.validate-before-dispatch}).
+     * No send is recorded for it. Tags: {@code channel}, {@code reason}.
+     */
+    public void recordTemplateValidationFailed(Channel channel, TemplateRenderException.Reason reason) {
+        registry.counter(M_TEMPLATE_VALIDATION_FAILED,
+                TAG_CHANNEL, channelTag(channel),
+                "reason", reason == null ? UNKNOWN_UPPER : reason.name())
                 .increment();
     }
 

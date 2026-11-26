@@ -62,6 +62,15 @@ public record JdbcStoreTables(String schema, String tablePrefix) {
     }
 
     /**
+     * Qualified name of the audit table (DD-33).
+     *
+     * @since 1.3.0
+     */
+    public String audit() {
+        return qualified("audit");
+    }
+
+    /**
      * Unqualified name for a constraint or index. PostgreSQL creates
      * indexes in the schema of their table, so these never carry the
      * schema.

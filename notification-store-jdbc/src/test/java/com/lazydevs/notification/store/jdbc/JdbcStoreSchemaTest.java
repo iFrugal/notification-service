@@ -36,14 +36,17 @@ class JdbcStoreSchemaTest {
     void customPrefixAndSchemaQualifyTablesButNotIndexNames() {
         JdbcStoreSchema schema = JdbcStoreSchema.postgresql("ns_", "notify");
 
-        assertThat(schema.statements()).hasSize(10);
+        assertThat(schema.statements()).hasSize(14);
         assertThat(schema.ddl())
                 .contains("CREATE TABLE IF NOT EXISTS notify.ns_idempotency (")
                 .contains("CREATE TABLE IF NOT EXISTS notify.ns_dead_letter (")
                 .contains("CREATE TABLE IF NOT EXISTS notify.ns_delivery_event (")
+                .contains("CREATE TABLE IF NOT EXISTS notify.ns_audit (")
+                .contains("CREATE INDEX IF NOT EXISTS ns_audit_idem_key_idx ON notify.ns_audit")
+                .contains("CONSTRAINT ns_audit_request_uq UNIQUE (tenant_key, request_id)")
                 .contains("CREATE INDEX IF NOT EXISTS ns_dead_letter_expires_at_idx ON notify.ns_dead_letter (expires_at)")
                 .contains("CONSTRAINT ns_idempotency_pk PRIMARY KEY")
-                .doesNotContainPattern("notification_(idempotency|dead_letter|delivery_event)")
+                .doesNotContainPattern("notification_(idempotency|dead_letter|delivery_event|audit)")
                 .doesNotContain("notify.ns_dead_letter_expires_at_idx");
     }
 

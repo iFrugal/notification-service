@@ -1,0 +1,1 @@
+<#function shout s><#return s?upper_case + "!"></#function>

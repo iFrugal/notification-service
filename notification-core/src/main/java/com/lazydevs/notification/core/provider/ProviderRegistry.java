@@ -9,6 +9,7 @@ import com.lazydevs.notification.api.channel.PushProvider;
 import com.lazydevs.notification.api.delivery.DeliveryEventEmitter;
 import com.lazydevs.notification.api.delivery.DeliveryEventPublisher;
 import com.lazydevs.notification.api.exception.ChannelDisabledException;
+import com.lazydevs.notification.api.exception.ProviderConfigurationException;
 import com.lazydevs.notification.api.exception.ProviderNotFoundException;
 import com.lazydevs.notification.api.exception.ProviderRequiredException;
 import com.lazydevs.notification.api.exception.TenantNotFoundException;
@@ -20,15 +21,54 @@ import lombok.extern.slf4j.Slf4j;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import java.util.*;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Registry for notification providers.
  * Manages provider lifecycle and lookup by tenant/channel/provider.
+ *
+ * <p>By default every provider of every enabled channel is configured and
+ * initialised at startup, and any failure stops the application. With
+ * {@code notification.providers.lazy-init=true} (DD-29) a provider is built on
+ * the first lookup that needs it instead; with
+ * {@code notification.tenant-fallback.enabled=true} (DD-28) a tenant that has
+ * no configuration uses the providers of {@code notification.default-tenant}.
  */
 @Slf4j
 public class ProviderRegistry {
+
+    /**
+     * Error code of the send failure reported while a lazily initialised
+     * provider cannot be built (DD-29).
+     *
+     * @since 1.3.0
+     */
+    public static final String PROVIDER_NOT_CONFIGURED = "PROVIDER_NOT_CONFIGURED";
+
+    /**
+     * State of a configured provider that has no instance yet (DD-29).
+     *
+     * @since 1.3.0
+     */
+    public enum PendingState {
+        /** Lazy initialisation is on and no send has needed the provider yet. */
+        NOT_INITIALIZED,
+        /** The last attempt to build the provider failed; the next send retries. */
+        INIT_FAILED
+    }
+
+    private record ProviderKey(String tenantId, Channel channel, String providerName) {
+        String display() {
+            return tenantId + ":" + channel.name().toLowerCase(Locale.ROOT) + ":" + providerName;
+        }
+    }
 
     private final NotificationProperties properties;
     private final ProviderResolver resolver;
@@ -41,9 +81,20 @@ public class ProviderRegistry {
             new ConcurrentHashMap<>();
 
     /**
-     * All instantiated providers (for lifecycle management)
+     * All instantiated providers (for lifecycle management). Thread-safe
+     * because lazy initialisation adds to it while sends run.
      */
-    private final List<NotificationProvider> allProviders = new ArrayList<>();
+    private final List<NotificationProvider> allProviders = new CopyOnWriteArrayList<>();
+
+    /**
+     * Lazy builds in progress, so concurrent first sends share one build.
+     * An entry is removed as soon as its build finishes, success or failure.
+     */
+    private final Map<ProviderKey, CompletableFuture<NotificationProvider>> buildsInFlight =
+            new ConcurrentHashMap<>();
+
+    /** Message of the last failed lazy build per provider, until one succeeds. */
+    private final Map<ProviderKey, String> failedBuilds = new ConcurrentHashMap<>();
 
     /**
      * Built-in providers need no registration here: each provider module's
@@ -76,9 +127,11 @@ public class ProviderRegistry {
      */
     @PostConstruct
     public void initializeProviders() {
-        log.info("Initializing notification providers...");
+        boolean lazy = isLazyInit();
+        log.info(lazy ? "Validating notification providers (lazy-init: built on first use)..."
+                : "Initializing notification providers...");
 
-        properties.getTenants().forEach((tenantId, tenantConfig) -> {
+        properties.getTenants().forEach((tenantId, tenantConfig) ->
             tenantConfig.getChannels().forEach((channelName, channelConfig) -> {
                 if (channelConfig.isEnabled()) {
                     Channel channel = Channel.valueOf(channelName.toUpperCase());
@@ -86,13 +139,23 @@ public class ProviderRegistry {
                     // Validate default provider configuration
                     validateDefaultProviderConfig(tenantId, channel, channelConfig);
 
-                    // Initialize providers
-                    initializeChannelProviders(tenantId, channel, channelConfig);
+                    // Initialize providers, unless they are built on first use (DD-29)
+                    if (!lazy) {
+                        initializeChannelProviders(tenantId, channel, channelConfig);
+                    }
                 }
-            });
-        });
+            }));
 
-        log.info("Initialized {} notification providers", allProviders.size());
+        if (lazy) {
+            log.info("{} notification provider(s) will be initialized on first use",
+                    getUninitializedProviders().size());
+        } else {
+            log.info("Initialized {} notification providers", allProviders.size());
+        }
+    }
+
+    private boolean isLazyInit() {
+        return properties.getProviders() != null && properties.getProviders().isLazyInit();
     }
 
     /**
@@ -150,7 +213,7 @@ public class ProviderRegistry {
                 log.info("Initialized provider: tenant={}, channel={}, provider={}{}",
                         tenantId, channel, providerName, defaultMarker);
             } catch (Exception e) {
-                throw new com.lazydevs.notification.api.exception.ProviderConfigurationException(
+                throw new ProviderConfigurationException(
                         String.format("Failed to initialize provider '%s' for channel '%s' in tenant '%s': %s",
                                 providerName, channel, tenantId, e.getMessage()), e);
             }
@@ -216,6 +279,13 @@ public class ProviderRegistry {
      * 3. If multiple providers and one has default=true -> use that
      * 4. If multiple providers and none has default=true -> throw ProviderRequiredException
      *
+     * A tenant with no configuration uses the default tenant's providers when
+     * {@code notification.tenant-fallback.enabled=true} (DD-28). With
+     * {@code notification.providers.lazy-init=true} (DD-29) the first lookup of
+     * a provider builds it; when the build fails the returned provider's
+     * {@code send} fails with {@link #PROVIDER_NOT_CONFIGURED}
+     * ({@code TRANSIENT}) and a later lookup tries again.
+     *
      * @param tenantId     The tenant ID
      * @param channel      The notification channel
      * @param providerName Optional provider name (can be null)
@@ -226,11 +296,12 @@ public class ProviderRegistry {
      * @throws ProviderNotFoundException    if specified provider doesn't exist
      */
     public NotificationProvider getProvider(String tenantId, Channel channel, String providerName) {
-        // Validate tenant exists
-        TenantConfig tenantConfig = properties.getTenants().get(tenantId);
-        if (tenantConfig == null) {
+        // Validate tenant exists (or falls back to the default tenant, DD-28)
+        String configTenantId = providerTenantId(tenantId);
+        if (configTenantId == null) {
             throw new TenantNotFoundException(tenantId);
         }
+        TenantConfig tenantConfig = properties.getTenants().get(configTenantId);
 
         // Validate channel is enabled
         ChannelConfig channelConfig = tenantConfig.getChannels().get(channel.name().toLowerCase());
@@ -250,35 +321,124 @@ public class ProviderRegistry {
             }
         }
 
-        // Get from cache
-        Map<Channel, Map<String, NotificationProvider>> tenantProviders = providerCache.get(tenantId);
+        ProviderKey key = new ProviderKey(configTenantId, channel, resolvedProviderName);
+        NotificationProvider provider = cached(key);
+        if (provider != null) {
+            return provider;
+        }
+
+        // Not built yet: only lazy initialisation builds providers after startup (DD-29)
+        ProviderConfig providerConfig = channelConfig.getProviders().get(resolvedProviderName);
+        if (!isLazyInit() || providerConfig == null) {
+            throw new ProviderNotFoundException(resolvedProviderName, channel.name());
+        }
+        return buildOnFirstUse(key, providerConfig);
+    }
+
+    /**
+     * The tenant whose provider configuration serves {@code tenantId}: the
+     * tenant itself when it is configured, otherwise the default tenant when
+     * the fallback is on and the default tenant is configured (DD-28),
+     * otherwise {@code null}.
+     */
+    private String providerTenantId(String tenantId) {
+        Map<String, TenantConfig> tenants = properties.getTenants();
+        if (tenants.get(tenantId) != null) {
+            return tenantId;
+        }
+        String defaultTenant = properties.getDefaultTenant();
+        boolean fallback = properties.getTenantFallback() != null && properties.getTenantFallback().isEnabled();
+        if (fallback && defaultTenant != null && tenants.get(defaultTenant) != null) {
+            // The requested tenant id is caller-controlled, so it is not logged.
+            log.debug("Unconfigured tenant uses the providers of default tenant '{}'", defaultTenant);
+            return defaultTenant;
+        }
+        return null;
+    }
+
+    private NotificationProvider cached(ProviderKey key) {
+        Map<Channel, Map<String, NotificationProvider>> tenantProviders = providerCache.get(key.tenantId());
         if (tenantProviders == null) {
-            throw new ProviderNotFoundException(resolvedProviderName, channel.name());
+            return null;
         }
+        Map<String, NotificationProvider> channelProviders = tenantProviders.get(key.channel());
+        return channelProviders == null ? null : channelProviders.get(key.providerName());
+    }
 
-        Map<String, NotificationProvider> channelProviders = tenantProviders.get(channel);
-        if (channelProviders == null) {
-            throw new ProviderNotFoundException(resolvedProviderName, channel.name());
+    /**
+     * Build a provider on its first use (DD-29). Concurrent callers for the
+     * same provider share one build. A successful build is cached like an
+     * eager one; a failed build is not, and the caller gets an
+     * {@link UnavailableProvider} whose send fails with
+     * {@link #PROVIDER_NOT_CONFIGURED} as a {@code TRANSIENT} failure.
+     */
+    private NotificationProvider buildOnFirstUse(ProviderKey key, ProviderConfig providerConfig) {
+        CompletableFuture<NotificationProvider> mine = new CompletableFuture<>();
+        CompletableFuture<NotificationProvider> running = buildsInFlight.putIfAbsent(key, mine);
+        if (running == null) {
+            running = mine;
+            try {
+                // A build that finished between our cache miss and putIfAbsent is reused.
+                NotificationProvider provider = cached(key);
+                mine.complete(provider != null ? provider : build(key, providerConfig));
+            } catch (RuntimeException e) {
+                recordFailedBuild(key, e);
+                mine.completeExceptionally(e);
+            } finally {
+                buildsInFlight.remove(key, mine);
+            }
         }
-
-        NotificationProvider provider = channelProviders.get(resolvedProviderName);
-        if (provider == null) {
-            throw new ProviderNotFoundException(resolvedProviderName, channel.name());
+        try {
+            return running.join();
+        } catch (CompletionException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            String reason = String.format("Provider '%s' for channel %s is not configured: %s",
+                    key.providerName(), key.channel(), cause.getMessage());
+            return new UnavailableProvider(key.channel(), key.providerName(), reason,
+                    () -> buildOnFirstUse(key, providerConfig));
         }
+    }
 
+    private NotificationProvider build(ProviderKey key, ProviderConfig providerConfig) {
+        NotificationProvider provider = resolveAndInitialize(
+                key.tenantId(), key.channel(), key.providerName(), providerConfig);
+        cacheProvider(key.tenantId(), key.channel(), key.providerName(), provider);
+        allProviders.add(provider);
+        failedBuilds.remove(key);
+        log.info("Initialized provider on first use: tenant={}, channel={}, provider={}",
+                sanitize(key.tenantId()), key.channel(), sanitize(key.providerName()));
         return provider;
     }
 
     /**
+     * Log a failed lazy build at WARN when its message is new, and at DEBUG
+     * when it repeats the last one, so a misconfigured provider does not log
+     * a warning per send.
+     */
+    private void recordFailedBuild(ProviderKey key, RuntimeException e) {
+        String message = String.valueOf(e.getMessage());
+        String previous = failedBuilds.put(key, message);
+        if (message.equals(previous)) {
+            log.debug("Provider {} still cannot be initialized: {}", sanitize(key.display()), sanitize(message));
+        } else {
+            log.warn("Provider {} could not be initialized; its sends fail with {} until it can: {}",
+                    sanitize(key.display()), PROVIDER_NOT_CONFIGURED, sanitize(message));
+        }
+    }
+
+    /**
      * Check if provider is required in request for a specific tenant/channel.
+     * A tenant that falls back to the default tenant (DD-28) answers for the
+     * default tenant's channel.
      */
     public boolean isProviderRequiredInRequest(String tenantId, Channel channel) {
-        TenantConfig tenantConfig = properties.getTenants().get(tenantId);
-        if (tenantConfig == null) {
+        String configTenantId = providerTenantId(tenantId);
+        if (configTenantId == null) {
             return true;
         }
 
-        ChannelConfig channelConfig = tenantConfig.getChannels().get(channel.name().toLowerCase());
+        ChannelConfig channelConfig = properties.getTenants().get(configTenantId)
+                .getChannels().get(channel.name().toLowerCase());
         if (channelConfig == null) {
             return true;
         }
@@ -287,19 +447,44 @@ public class ProviderRegistry {
     }
 
     /**
-     * Get all providers for health checks.
+     * Get all providers for health checks: the initialised instances, keyed
+     * {@code tenant:channel:provider} by the configured tenant that owns them.
+     * Tenants served by the default-tenant fallback never appear.
      */
     public Map<String, NotificationProvider> getAllProviders() {
         Map<String, NotificationProvider> result = new LinkedHashMap<>();
-        providerCache.forEach((tenantId, channels) -> {
-            channels.forEach((channel, providers) -> {
-                providers.forEach((name, provider) -> {
-                    String key = tenantId + ":" + channel.name().toLowerCase() + ":" + name;
-                    result.put(key, provider);
-                });
-            });
-        });
+        providerCache.forEach((tenantId, channels) ->
+            channels.forEach((channel, providers) ->
+                providers.forEach((name, provider) ->
+                    result.put(new ProviderKey(tenantId, channel, name).display(), provider))));
         return result;
+    }
+
+    /**
+     * Providers configured on an enabled channel that have no instance yet,
+     * keyed like {@link #getAllProviders()}. Always empty unless
+     * {@code notification.providers.lazy-init=true} (DD-29).
+     *
+     * @since 1.3.0
+     */
+    public Map<String, PendingState> getUninitializedProviders() {
+        Map<String, PendingState> result = new LinkedHashMap<>();
+        properties.getTenants().forEach((tenantId, tenantConfig) ->
+            tenantConfig.getChannels().forEach((channelName, channelConfig) -> {
+                if (channelConfig.isEnabled()) {
+                    Channel channel = Channel.valueOf(channelName.toUpperCase());
+                    channelConfig.getProviders().keySet().forEach(name ->
+                        addIfPending(result, new ProviderKey(tenantId, channel, name)));
+                }
+            }));
+        return result;
+    }
+
+    private void addIfPending(Map<String, PendingState> result, ProviderKey key) {
+        if (cached(key) == null) {
+            result.put(key.display(),
+                    failedBuilds.containsKey(key) ? PendingState.INIT_FAILED : PendingState.NOT_INITIALIZED);
+        }
     }
 
     /**
@@ -318,6 +503,7 @@ public class ProviderRegistry {
         }
         providerCache.clear();
         allProviders.clear();
+        failedBuilds.clear();
     }
 
     private Class<? extends NotificationProvider> getProviderInterface(Channel channel) {
@@ -327,5 +513,13 @@ public class ProviderRegistry {
             case WHATSAPP -> WhatsAppProvider.class;
             case PUSH -> PushProvider.class;
         };
+    }
+
+    /**
+     * The value with control characters and line breaks replaced by {@code _}, so a
+     * caller- or provider-supplied value cannot forge log lines; {@code "null"} for null.
+     */
+    private static String sanitize(String s) {
+        return s == null ? "null" : s.replaceAll("\\p{Cntrl}", "_").replaceAll("\\R", "_");
     }
 }

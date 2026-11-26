@@ -1,5 +1,7 @@
 package com.lazydevs.notification.api.idempotency;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.lazydevs.notification.api.model.NotificationResponse;
 
 import java.time.Instant;
@@ -17,11 +19,32 @@ import java.time.Instant;
  *                       {@code status == COMPLETE}; {@code null} when
  *                       {@code status == IN_PROGRESS}.
  * @param recordedAt     wall-clock timestamp of the most recent state
- *                       transition. Used to drive TTL eviction.
+ *                       transition. Used to drive TTL eviction and the
+ *                       in-progress timeout (DD-32).
+ * @param fingerprint    SHA-256 hex fingerprint of the request that claimed
+ *                       the key (DD-32), used to detect a key reused for a
+ *                       different request. {@code null} means unknown: a
+ *                       record written by 1.2.0 or earlier, or by a store
+ *                       that does not keep fingerprints. Since 1.3.0.
  */
 public record IdempotencyRecord(
         String notificationId,
         IdempotencyStatus status,
         NotificationResponse response,
-        Instant recordedAt) {
+        Instant recordedAt,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String fingerprint) {
+
+    /** Canonical constructor, the one JSON readers use. */
+    @JsonCreator
+    public IdempotencyRecord {
+        // no normalisation; declared so Jackson picks this constructor
+    }
+
+    /**
+     * The 1.2.0 constructor, without a fingerprint.
+     */
+    public IdempotencyRecord(String notificationId, IdempotencyStatus status,
+                             NotificationResponse response, Instant recordedAt) {
+        this(notificationId, status, response, recordedAt, null);
+    }
 }

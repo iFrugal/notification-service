@@ -25,7 +25,18 @@ public enum StoreFeature {
     IDEMPOTENCY("idempotency", true),
     RATE_LIMIT("rate-limit", false),
     DEAD_LETTER("dead-letter", false),
-    DELIVERY_EVENTS("delivery-events", false);
+    DELIVERY_EVENTS("delivery-events", false),
+
+    /**
+     * Audit records behind the status view (DD-33). Only the memory and JDBC
+     * families have an audit store; with the Redis family the application
+     * supplies its own {@code NotificationAuditStore} (or
+     * {@code NotificationAuditService}), or sets
+     * {@code notification.redis.audit.enabled=false} to keep audit in memory.
+     *
+     * @since 1.3.0
+     */
+    AUDIT("audit", false);
 
     /** The global store family property. */
     public static final String STORE_TYPE_PROPERTY = "notification.store.type";

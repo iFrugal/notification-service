@@ -1,5 +1,6 @@
 package com.lazydevs.notification.core.config;
 
+import com.lazydevs.notification.core.idempotency.IdempotencyFailurePolicy;
 import com.lazydevs.notification.core.store.StoreType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
@@ -8,6 +9,8 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
@@ -30,6 +33,21 @@ public class NotificationProperties {
     private String defaultTenant = "default";
 
     /**
+     * Provider fallback to {@link #defaultTenant} for tenants that have no
+     * entry under {@code notification.tenants} (DD-28).
+     *
+     * @since 1.3.0
+     */
+    private TenantFallbackProperties tenantFallback = new TenantFallbackProperties();
+
+    /**
+     * Provider lifecycle settings shared by every tenant (DD-29).
+     *
+     * @since 1.3.0
+     */
+    private ProvidersProperties providers = new ProvidersProperties();
+
+    /**
      * REST API configuration
      */
     private RestProperties rest = new RestProperties();
@@ -42,6 +60,7 @@ public class NotificationProperties {
     /**
      * Audit configuration
      */
+    @Valid
     private AuditProperties audit = new AuditProperties();
 
     /**
@@ -52,6 +71,7 @@ public class NotificationProperties {
     /**
      * Idempotency configuration (see DD-10).
      */
+    @Valid
     private IdempotencyProperties idempotency = new IdempotencyProperties();
 
     /**
@@ -131,6 +151,11 @@ public class NotificationProperties {
     private HealthProperties health = new HealthProperties();
 
     /**
+     * Recipient guard (DD-34). Off by default.
+     */
+    private RecipientGuardProperties recipientGuard = new RecipientGuardProperties();
+
+    /**
      * Tenant-specific configurations
      */
     private Map<String, TenantConfig> tenants = new LinkedHashMap<>();
@@ -159,11 +184,29 @@ public class NotificationProperties {
 
     @Data
     public static class AuditProperties {
+        /**
+         * Keep an audit record per send, the data behind
+         * {@code NotificationService.find} (DD-33). The record lives in the
+         * store family of {@code notification.store.type} (memory or jdbc).
+         */
         private boolean enabled = false;
+        /** Not implemented; the request payload is never stored. */
         private boolean storeRequestPayload = false;
+        /** Not implemented; the provider response is never stored. */
         private boolean storeResponsePayload = false;
+        /** Days an audit record is kept before it expires and becomes purgeable. */
+        @Min(value = 1, message = "audit retention-days must be at least 1")
         private int retentionDays = 90;
+        /** Not implemented; audit writes are synchronous and never fail a send. */
         private boolean async = true;
+        /**
+         * Bound of the in-memory audit store ({@code notification.store.type=memory});
+         * least recently written records are evicted first.
+         *
+         * @since 1.3.0
+         */
+        @Min(value = 1, message = "audit max-entries must be at least 1")
+        private long maxEntries = 10_000L;
     }
 
     @Data
@@ -189,12 +232,36 @@ public class NotificationProperties {
          * {@code ?no_esc} prints trusted markup as is.
          */
         private boolean autoEscape = false;
+        /**
+         * Put the persistence-utils helpers {@code eval}, {@code file}, {@code js},
+         * {@code serde_deserializeToMap} and {@code serde_serialize} into every template model
+         * and leave FreeMarker's {@code ?new} unrestricted, as up to 1.2.
+         * {@code file} reads any path the process can read and {@code js} runs script functions,
+         * so {@code true} is deprecated: it logs a WARN at startup and the default becomes
+         * {@code false} in 2.0. {@code uuid}, {@code trim} and the notification helpers are
+         * available either way (DD-26).
+         *
+         * @since 1.3.0
+         */
+        private boolean legacyHelpers = true;
+        /**
+         * Render the template before the idempotency check, rate limit, audit and dispatch, and
+         * throw {@code TemplateRenderException} to the caller (HTTP 422 over REST) when it is
+         * missing, invalid, does not fit the data or renders an empty email; nothing is stored
+         * for such a request. {@code false} keeps the 1.2 flow, where a render failure is a
+         * stored {@code FAILED} attempt. Planned to default to {@code true} in 2.0 (DD-27).
+         *
+         * @since 1.3.0
+         */
+        private boolean validateBeforeDispatch = false;
     }
 
     /**
      * Idempotency-key handling. See {@code docs/design-decisions/10-idempotency.md}.
      */
     @Data
+    @EqualsAndHashCode(doNotUseGetters = true) // the generated methods must not call the deprecated getters
+    @ToString(doNotUseGetters = true)
     public static class IdempotencyProperties {
         /** Master switch — false disables dedup entirely (the request field is silently ignored). */
         private boolean enabled = true;
@@ -210,18 +277,116 @@ public class NotificationProperties {
         private long maxEntries = 100_000L;
 
         /**
-         * Whether a request may retry under the same idempotency key after
-         * the previous attempt ended {@code FAILED} or {@code REJECTED}.
-         * When {@code true} (the default) the failed record is released so
-         * the retry dispatches again (DD-10 "FAILED is fresh"); when
-         * {@code false} the failed record is kept and a retry under the same
-         * key gets HTTP 409 until the TTL elapses, as in 1.1.0 and 1.1.1.
-         * Has no effect with a custom store that does not implement
-         * {@code IdempotencyStore.release}.
+         * Deprecated alias of {@link #failurePolicy}: {@code true} is
+         * {@code RELEASE_ALL}, {@code false} is {@code KEEP}. Unset
+         * ({@code null}) behaves as {@code true}, the default since 1.1.2.
+         * When both are set and disagree, {@code failure-policy} wins and a
+         * WARN is logged at startup. Has no effect with a custom store that
+         * does not implement {@code IdempotencyStore.release}.
          *
          * @since 1.1.2
+         * @deprecated since 1.3.0, use {@code notification.idempotency.failure-policy}
          */
-        private boolean retryAfterFailure = true;
+        @Deprecated(since = "1.3.0")
+        @SuppressWarnings("java:S1133") // kept for source compatibility until the next major version
+        private Boolean retryAfterFailure;
+
+        /**
+         * What happens to a key after a send under it failed (DD-32):
+         * {@code RELEASE_ALL} (retry dispatches again), {@code KEEP} (retry
+         * gets 409 until the TTL) or {@code RELEASE_TRANSIENT} (release only
+         * after a TRANSIENT failure; other failures are replayed). Unset
+         * follows {@link #retryAfterFailure}, which gives {@code RELEASE_ALL}.
+         *
+         * @since 1.3.0
+         */
+        private IdempotencyFailurePolicy failurePolicy;
+
+        /**
+         * Refuse a request whose key was already used for a different request
+         * (different fingerprint, DD-32) with HTTP 409
+         * ({@code IdempotencyKeyReusedException}). Off by default: the first
+         * response is replayed, as in 1.2.0. A record without a fingerprint
+         * (written by 1.2.0 or earlier) is never compared.
+         *
+         * @since 1.3.0
+         */
+        private boolean rejectKeyReuse = false;
+
+        /**
+         * How long a send may hold a key {@code IN_PROGRESS} before a request
+         * under the same key settles it (DD-32): the record becomes a
+         * {@code FAILED} outcome with error code {@code IN_PROGRESS_TIMEOUT}
+         * and failure type {@code AMBIGUOUS}, which is replayed and never
+         * released, because the first attempt may have been delivered. Unset
+         * (the default) answers with HTTP 409 until the TTL, as in 1.2.0.
+         * Must be positive when set.
+         *
+         * @since 1.3.0
+         */
+        private java.time.Duration inProgressTimeout;
+
+        /**
+         * Keep the error message of a stored {@code FAILED} or {@code REJECTED}
+         * response, scrubbed by the {@code MessageScrubber} (email addresses
+         * and phone numbers become placeholders), so a replayed failure says
+         * what went wrong (DD-32). Off by default: the stored copy has no
+         * error message, as in 1.1.2 to 1.2.0.
+         *
+         * @since 1.3.0
+         */
+        private boolean storeScrubbedErrorMessage = false;
+
+        /**
+         * Whether a failed key is released for a retry, the 1.1.2 view of
+         * {@link #resolvedFailurePolicy()}.
+         *
+         * @return {@code false} only when {@code retry-after-failure} is
+         *         explicitly {@code false}
+         * @deprecated since 1.3.0, use {@link #resolvedFailurePolicy()}
+         */
+        @Deprecated(since = "1.3.0")
+        @SuppressWarnings("java:S1133") // kept for source compatibility until the next major version
+        public boolean isRetryAfterFailure() {
+            return !Boolean.FALSE.equals(retryAfterFailure);
+        }
+
+        /**
+         * The effective failure policy: {@link #failurePolicy} when set,
+         * otherwise {@code KEEP} for {@code retry-after-failure=false} and
+         * {@code RELEASE_ALL} for anything else.
+         *
+         * @return the policy, never {@code null}
+         * @since 1.3.0
+         */
+        public IdempotencyFailurePolicy resolvedFailurePolicy() {
+            if (failurePolicy != null) {
+                return failurePolicy;
+            }
+            return Boolean.FALSE.equals(retryAfterFailure)
+                    ? IdempotencyFailurePolicy.KEEP
+                    : IdempotencyFailurePolicy.RELEASE_ALL;
+        }
+
+        /**
+         * @return {@code true} when {@code failure-policy} and the deprecated
+         *         {@code retry-after-failure} are both set and disagree
+         * @since 1.3.0
+         */
+        public boolean hasConflictingFailurePolicy() {
+            if (failurePolicy == null || retryAfterFailure == null) {
+                return false;
+            }
+            IdempotencyFailurePolicy alias = Boolean.TRUE.equals(retryAfterFailure)
+                    ? IdempotencyFailurePolicy.RELEASE_ALL
+                    : IdempotencyFailurePolicy.KEEP;
+            return alias != failurePolicy;
+        }
+
+        @AssertTrue(message = "idempotency in-progress-timeout must be positive")
+        public boolean isInProgressTimeoutValid() {
+            return inProgressTimeout == null || inProgressTimeout.isPositive();
+        }
 
         /**
          * Backing store. Deprecated: select the store family with
@@ -282,6 +447,67 @@ public class NotificationProperties {
     }
 
     /**
+     * Recipient guard (DD-34): an allow-list per channel, with redirect or
+     * drop for everything else. Off by default.
+     *
+     * <pre>
+     * notification:
+     *   recipient-guard:
+     *     enabled: true
+     *     channels:
+     *       email:
+     *         allowed: ["@example.com", "qa.lead@example.org"]
+     *         redirect-to: qa-inbox@example.com
+     *       sms:
+     *         allowed: ["+15550100"]
+     * </pre>
+     *
+     * @since 1.3.0
+     */
+    @Data
+    public static class RecipientGuardProperties {
+        /** Master switch for the configuration-driven guard. */
+        private boolean enabled = false;
+
+        /**
+         * Rules per channel name ({@code email}, {@code sms},
+         * {@code whatsapp}; case-insensitive). A channel without rules is not
+         * guarded. Push recipients are never guarded.
+         */
+        private Map<String, RecipientGuardChannel> channels = new LinkedHashMap<>();
+    }
+
+    /**
+     * Recipient guard rules for one channel (DD-34).
+     *
+     * @since 1.3.0
+     */
+    @Data
+    public static class RecipientGuardChannel {
+        /**
+         * Allowed recipients. {@code @example.com} allows every email address
+         * in exactly that domain (case-insensitive, subdomains excluded);
+         * anything else is one address (case-insensitive) or phone number
+         * (compared on its digits only).
+         */
+        private List<String> allowed = new ArrayList<>();
+
+        /**
+         * Address or number that takes the place of each recipient that is
+         * not allowed. Must itself be allowed. Unset drops those recipients;
+         * when none is left the send fails with {@code RECIPIENT_BLOCKED}.
+         */
+        private String redirectTo;
+
+        /**
+         * Email only: put in front of the subject when something was
+         * redirected; {@code {originals}} becomes the comma-separated original
+         * addresses. An empty value disables the prefix.
+         */
+        private String subjectPrefix = "[redirected: {originals}] ";
+    }
+
+    /**
      * Rate-limit handling. See {@code docs/design-decisions/12-rate-limiting.md}.
      *
      * <p>Off by default. When enabled, every request through
@@ -334,6 +560,35 @@ public class NotificationProperties {
          */
         @Valid
         private Map<String, RateLimitRule> byChannel = new LinkedHashMap<>();
+
+        /**
+         * Whether a send that was admitted by the limiter but never reached
+         * a provider gives its token back (DD-30), through
+         * {@link com.lazydevs.notification.api.ratelimit.RateLimiter#refund}.
+         * {@code false} (the default) keeps the 1.2.0 behaviour: every
+         * admitted request costs one token.
+         *
+         * @since 1.3.0
+         */
+        private boolean refundUnsent = false;
+    }
+
+    /**
+     * Which requests share one token bucket (DD-30).
+     *
+     * @since 1.3.0
+     */
+    public enum RateLimitScope {
+        /**
+         * One bucket per {@code (tenant, caller, channel)}; the 1.2.0 key.
+         */
+        TENANT_CALLER,
+
+        /**
+         * One bucket per channel, shared by every tenant and caller whose
+         * request resolves to the rule, for example a provider account quota.
+         */
+        CHANNEL
     }
 
     /**
@@ -342,10 +597,15 @@ public class NotificationProperties {
      * {@link #capacity} tokens; every {@link #refillPeriod}, up to
      * {@link #refillTokens} are added (greedy refill — they're not held
      * back for a fixed-window boundary).
+     *
+     * <p>Since 1.3.0 a rule can instead list several {@link #bandwidths}, all
+     * of which must allow a send (for example 2 per minute and 5 per hour),
+     * and can choose its bucket {@link #scope}. Setting {@link #bandwidths}
+     * together with any of {@code capacity}, {@code refill-tokens} or
+     * {@code refill-period} is a configuration error.
      */
     @Data
     @lombok.NoArgsConstructor
-    @lombok.AllArgsConstructor
     public static class RateLimitRule {
         /** Maximum tokens in the bucket — the burst tolerance. */
         @Min(value = 1, message = "rate-limit capacity must be at least 1")
@@ -358,6 +618,87 @@ public class NotificationProperties {
         /** How often the refill happens. ISO-8601 duration. Non-zero, positive. */
         @NotNull
         private java.time.Duration refillPeriod = java.time.Duration.ofSeconds(1);
+
+        /**
+         * Several limits enforced together; a send is allowed only when every
+         * band has a token. Empty (the default) means the single band given
+         * by {@link #capacity}, {@link #refillTokens} and {@link #refillPeriod}.
+         *
+         * @since 1.3.0
+         */
+        @Valid
+        private List<RateLimitBandwidth> bandwidths = new ArrayList<>();
+
+        /**
+         * Which requests share the bucket this rule builds.
+         * {@link RateLimitScope#TENANT_CALLER} (the default) is the 1.2.0 key.
+         *
+         * @since 1.3.0
+         */
+        @NotNull(message = "rate-limit scope must not be null")
+        private RateLimitScope scope = RateLimitScope.TENANT_CALLER;
+
+        /**
+         * Whether a single-band field was set through its setter, which is
+         * what configuration binding calls. Field defaults and the
+         * three-argument constructor do not count, so a rule built from
+         * {@code new RateLimitRule(...)} can still be given bandwidths by
+         * configuration.
+         */
+        @lombok.Getter(lombok.AccessLevel.NONE)
+        @lombok.Setter(lombok.AccessLevel.NONE)
+        @lombok.EqualsAndHashCode.Exclude
+        @lombok.ToString.Exclude
+        private boolean singleBandSet;
+
+        /**
+         * A single-band rule with the default {@link RateLimitScope#TENANT_CALLER} scope.
+         */
+        public RateLimitRule(long capacity, long refillTokens, java.time.Duration refillPeriod) {
+            this.capacity = capacity;
+            this.refillTokens = refillTokens;
+            this.refillPeriod = refillPeriod;
+        }
+
+        public void setCapacity(long capacity) {
+            this.capacity = capacity;
+            this.singleBandSet = true;
+        }
+
+        public void setRefillTokens(long refillTokens) {
+            this.refillTokens = refillTokens;
+            this.singleBandSet = true;
+        }
+
+        public void setRefillPeriod(java.time.Duration refillPeriod) {
+            this.refillPeriod = refillPeriod;
+            this.singleBandSet = true;
+        }
+
+        /**
+         * The bands this rule enforces: {@link #bandwidths} when set,
+         * otherwise the single band from {@link #capacity},
+         * {@link #refillTokens} and {@link #refillPeriod}.
+         *
+         * @since 1.3.0
+         */
+        public List<RateLimitBandwidth> effectiveBandwidths() {
+            if (bandwidths != null && !bandwidths.isEmpty()) {
+                return List.copyOf(bandwidths);
+            }
+            return List.of(new RateLimitBandwidth(capacity, refillTokens, refillPeriod));
+        }
+
+        /**
+         * Bean-validation predicate rejecting a rule that sets both
+         * {@link #bandwidths} and a single-band field, because it is not
+         * clear which one the operator meant.
+         */
+        @AssertTrue(message = "rate-limit rule sets both 'bandwidths' and 'capacity'/'refill-tokens'/"
+                + "'refill-period'; use one or the other")
+        public boolean isBandwidthsExclusive() {
+            return bandwidths == null || bandwidths.isEmpty() || !singleBandSet;
+        }
 
         /**
          * Bean-validation predicate enforcing
@@ -378,9 +719,43 @@ public class NotificationProperties {
          */
         @AssertTrue(message = "rate-limit refillPeriod must be positive")
         public boolean isRefillPeriodPositive() {
-            return refillPeriod != null
-                    && !refillPeriod.isZero()
-                    && !refillPeriod.isNegative();
+            return refillPeriod != null && refillPeriod.isPositive();
+        }
+    }
+
+    /**
+     * One band of a multi-band {@link RateLimitRule} (DD-30): at most
+     * {@link #capacity} tokens, refilled greedily by {@link #refillTokens}
+     * every {@link #refillPeriod}. Every field is required.
+     *
+     * @since 1.3.0
+     */
+    @Data
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class RateLimitBandwidth {
+        /** Maximum tokens in this band. */
+        @Min(value = 1, message = "rate-limit bandwidth capacity must be at least 1")
+        private long capacity;
+
+        /** Tokens added each refill period (must be {@code <= capacity}). */
+        @Min(value = 1, message = "rate-limit bandwidth refillTokens must be at least 1")
+        private long refillTokens;
+
+        /** How often the refill happens. ISO-8601 duration, positive. */
+        @NotNull(message = "rate-limit bandwidth refillPeriod is required")
+        private java.time.Duration refillPeriod;
+
+        /** Same invariant as {@link RateLimitRule#isRefillTokensWithinCapacity()}. */
+        @AssertTrue(message = "rate-limit bandwidth refillTokens must not exceed capacity")
+        public boolean isRefillTokensWithinCapacity() {
+            return refillTokens <= capacity;
+        }
+
+        /** A missing period is reported by {@code @NotNull}, not here. */
+        @AssertTrue(message = "rate-limit bandwidth refillPeriod must be positive")
+        public boolean isRefillPeriodPositive() {
+            return refillPeriod == null || refillPeriod.isPositive();
         }
     }
 
@@ -878,6 +1253,43 @@ public class NotificationProperties {
              */
             private boolean signatureVerification = true;
         }
+    }
+
+    /**
+     * Tenant provider fallback (DD-28).
+     *
+     * @since 1.3.0
+     */
+    @Data
+    public static class TenantFallbackProperties {
+        /**
+         * When {@code true}, a tenant with no entry under
+         * {@code notification.tenants} sends through the providers of
+         * {@code notification.default-tenant}. Only provider resolution falls
+         * back; the request keeps its own tenant id for idempotency, rate
+         * limits, templates and audit. {@code false} (the default) keeps the
+         * 1.2.0 behaviour: such a tenant fails with {@code TENANT_NOT_FOUND}.
+         */
+        private boolean enabled = false;
+    }
+
+    /**
+     * Provider lifecycle settings (DD-29).
+     *
+     * @since 1.3.0
+     */
+    @Data
+    public static class ProvidersProperties {
+        /**
+         * When {@code true}, providers are configured and initialised on the
+         * first send that needs them instead of at startup, so the
+         * application boots even when a provider's settings are missing.
+         * A failed build is not cached; the send fails with
+         * {@code PROVIDER_NOT_CONFIGURED} ({@code TRANSIENT}) and the next
+         * send tries again. {@code false} (the default) keeps the 1.2.0
+         * fail-fast startup.
+         */
+        private boolean lazyInit = false;
     }
 
     @Data

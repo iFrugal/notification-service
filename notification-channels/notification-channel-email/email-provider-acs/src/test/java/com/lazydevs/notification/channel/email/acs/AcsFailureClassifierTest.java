@@ -10,6 +10,10 @@ import reactor.core.Exceptions;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.time.Instant;
@@ -20,9 +24,18 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link AcsEmailProvider#classifyAcs(Throwable)}.
+ * Unit tests for {@link AcsEmailProvider#classifyAcs(Throwable, FailureType)}.
  */
 class AcsFailureClassifierTest {
+
+    /** The default {@code timeout-failure-type}, the DD-25 classification. */
+    private static FailureType classify(Throwable t) {
+        return AcsEmailProvider.classifyAcs(t, FailureType.TRANSIENT);
+    }
+
+    private static FailureType classifyTimeoutsAsAmbiguous(Throwable t) {
+        return AcsEmailProvider.classifyAcs(t, FailureType.AMBIGUOUS);
+    }
 
     private static HttpResponseException httpError(int status) {
         HttpResponse response = mock(HttpResponse.class);
@@ -62,58 +75,94 @@ class AcsFailureClassifierTest {
 
     @Test
     void throttled429_isTransient() {
-        assertThat(AcsEmailProvider.classifyAcs(httpError(429))).isEqualTo(FailureType.TRANSIENT);
+        assertThat(classify(httpError(429))).isEqualTo(FailureType.TRANSIENT);
     }
 
     @Test
     void serviceUnavailable503_isTransient() {
-        assertThat(AcsEmailProvider.classifyAcs(httpError(503))).isEqualTo(FailureType.TRANSIENT);
-        assertThat(AcsEmailProvider.classifyAcs(httpError(500))).isEqualTo(FailureType.TRANSIENT);
+        assertThat(classify(httpError(503))).isEqualTo(FailureType.TRANSIENT);
+        assertThat(classify(httpError(500))).isEqualTo(FailureType.TRANSIENT);
     }
 
     @Test
     void requestTimeout408_isTransient() {
-        assertThat(AcsEmailProvider.classifyAcs(httpError(408))).isEqualTo(FailureType.TRANSIENT);
+        assertThat(classify(httpError(408))).isEqualTo(FailureType.TRANSIENT);
     }
 
     @Test
     void badRequest400_isPermanent() {
-        assertThat(AcsEmailProvider.classifyAcs(httpError(400))).isEqualTo(FailureType.PERMANENT);
+        assertThat(classify(httpError(400))).isEqualTo(FailureType.PERMANENT);
     }
 
     @Test
     void unauthorized401_andForbidden403_arePermanent_withCredentialHint() {
-        assertThat(AcsEmailProvider.classifyAcs(httpError(401))).isEqualTo(FailureType.PERMANENT);
-        assertThat(AcsEmailProvider.classifyAcs(httpError(403))).isEqualTo(FailureType.PERMANENT);
+        assertThat(classify(httpError(401))).isEqualTo(FailureType.PERMANENT);
+        assertThat(classify(httpError(403))).isEqualTo(FailureType.PERMANENT);
         assertThat(AcsEmailProvider.describe(httpError(401))).contains("check the ACS credentials");
         assertThat(AcsEmailProvider.describe(httpError(400))).doesNotContain("credentials");
     }
 
     @Test
     void timeoutException_isTransient_alsoWhenWrappedByReactor() {
-        assertThat(AcsEmailProvider.classifyAcs(new TimeoutException("slow")))
+        assertThat(classify(new TimeoutException("slow")))
                 .isEqualTo(FailureType.TRANSIENT);
-        assertThat(AcsEmailProvider.classifyAcs(Exceptions.propagate(new TimeoutException("slow"))))
+        assertThat(classify(Exceptions.propagate(new TimeoutException("slow"))))
                 .isEqualTo(FailureType.TRANSIENT);
     }
 
     @Test
     void httpTimeoutAndIoExceptions_areTransient() {
-        assertThat(AcsEmailProvider.classifyAcs(new HttpTimeoutException("request timed out")))
+        assertThat(classify(new HttpTimeoutException("request timed out")))
                 .isEqualTo(FailureType.TRANSIENT);
-        assertThat(AcsEmailProvider.classifyAcs(new UncheckedIOException(new IOException("reset"))))
+        assertThat(classify(new UncheckedIOException(new IOException("reset"))))
                 .isEqualTo(FailureType.TRANSIENT);
     }
 
     @Test
     void unrelatedException_isUnknown() {
-        assertThat(AcsEmailProvider.classifyAcs(new IllegalArgumentException("weird")))
+        assertThat(classify(new IllegalArgumentException("weird")))
                 .isEqualTo(FailureType.UNKNOWN);
     }
 
     @Test
     void httpResponseExceptionWithoutResponse_isUnknown() {
-        assertThat(AcsEmailProvider.classifyAcs(new HttpResponseException("no response", null)))
+        assertThat(classify(new HttpResponseException("no response", null)))
                 .isEqualTo(FailureType.UNKNOWN);
+    }
+
+    @Test
+    void timeoutFailureTypeAmbiguous_readTimeoutsResetsAndTimeouts_areAmbiguous() {
+        assertThat(classifyTimeoutsAsAmbiguous(new TimeoutException("slow"))).isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(classifyTimeoutsAsAmbiguous(Exceptions.propagate(new TimeoutException("slow"))))
+                .isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(classifyTimeoutsAsAmbiguous(new HttpTimeoutException("request timed out")))
+                .isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(classifyTimeoutsAsAmbiguous(new UncheckedIOException(new IOException("Connection reset"))))
+                .isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(classifyTimeoutsAsAmbiguous(new UncheckedIOException(new SocketTimeoutException("Read timed out"))))
+                .isEqualTo(FailureType.AMBIGUOUS);
+    }
+
+    @Test
+    void timeoutFailureTypeAmbiguous_connectFailuresStayTransient() {
+        assertThat(classifyTimeoutsAsAmbiguous(new UncheckedIOException(new ConnectException("refused"))))
+                .isEqualTo(FailureType.TRANSIENT);
+        assertThat(classifyTimeoutsAsAmbiguous(new UncheckedIOException(new UnknownHostException("acs.invalid"))))
+                .isEqualTo(FailureType.TRANSIENT);
+        assertThat(classifyTimeoutsAsAmbiguous(new HttpConnectTimeoutException("connect timed out")))
+                .isEqualTo(FailureType.TRANSIENT);
+    }
+
+    @Test
+    void timeoutFailureTypeAmbiguous_leavesHttpStatusesAndOtherErrorsAlone() {
+        assertThat(classifyTimeoutsAsAmbiguous(httpError(503))).isEqualTo(FailureType.TRANSIENT);
+        assertThat(classifyTimeoutsAsAmbiguous(httpError(401))).isEqualTo(FailureType.PERMANENT);
+        assertThat(classifyTimeoutsAsAmbiguous(new IllegalArgumentException("weird"))).isEqualTo(FailureType.UNKNOWN);
+    }
+
+    @Test
+    void connectFailures_areTransient_byDefault() {
+        assertThat(classify(new UncheckedIOException(new ConnectException("refused"))))
+                .isEqualTo(FailureType.TRANSIENT);
     }
 }

@@ -28,6 +28,15 @@
             <artifactId>persistence-utils</artifactId>
         </dependency>
 
+        <!-- FreeMarker: NotificationTemplateEngine owns its Configuration (DD-26).
+             Declared directly rather than reached through persistence-utils; the
+             version is managed by the Spring Boot BOM imported in the parent and is
+             the one persistence-utils is built against. -->
+        <dependency>
+            <groupId>org.freemarker</groupId>
+            <artifactId>freemarker</artifactId>
+        </dependency>
+
         <!-- Spring Context for ApplicationContext, bean lookup -->
         <dependency>
             <groupId>org.springframework</groupId>

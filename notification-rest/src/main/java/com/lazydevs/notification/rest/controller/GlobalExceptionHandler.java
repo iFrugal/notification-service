@@ -1,7 +1,9 @@
 package com.lazydevs.notification.rest.controller;
 
 import com.lazydevs.notification.api.exception.IdempotencyInProgressException;
+import com.lazydevs.notification.api.exception.IdempotencyKeyReusedException;
 import com.lazydevs.notification.api.exception.RateLimitExceededException;
+import com.lazydevs.notification.api.exception.TemplateRenderException;
 import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
 import com.lazydevs.notification.rest.webhook.WebhookController;
 import lazydevs.services.basic.handler.RESTExceptionHandler;
@@ -62,6 +64,34 @@ public class GlobalExceptionHandler extends RESTExceptionHandler {
     }
 
     /**
+     * Render an idempotency key reused for a different request (DD-32), in
+     * the same shape as the in-progress conflict:
+     * <pre>
+     * HTTP/1.1 409 Conflict
+     * Content-Type: application/json
+     *
+     * { "notificationId": "...", "status": "KEY_REUSED", "error": "IDEMPOTENCY_KEY_REUSED" }
+     * </pre>
+     * {@code notificationId} is the request id that first used the key.
+     */
+    @ExceptionHandler(IdempotencyKeyReusedException.class)
+    public ResponseEntity<Map<String, Object>> handleIdempotencyKeyReused(IdempotencyKeyReusedException e) {
+        log.debug("Idempotency key reused for a different request; first notificationId={}",
+                e.getExistingNotificationId());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("notificationId", e.getExistingNotificationId());
+        body.put("status", KEY_REUSED);
+        body.put(ERROR, IdempotencyKeyReusedException.ERROR_CODE);
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    /** {@code status} of the DD-32 key-reuse conflict body. */
+    static final String KEY_REUSED = "KEY_REUSED";
+
+    /** Key of the error code in every error body. */
+    private static final String ERROR = "error";
+
+    /**
      * Render a rate-limit denial per DD-12:
      * <pre>
      * HTTP/1.1 429 Too Many Requests
@@ -81,11 +111,45 @@ public class GlobalExceptionHandler extends RESTExceptionHandler {
         long retryAfterSeconds = e.getRetryAfterSeconds();
         log.warn("Rate limit exceeded: {}", e.getMessage());
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("error", "RATE_LIMIT_EXCEEDED");
+        body.put(ERROR, "RATE_LIMIT_EXCEEDED");
         body.put("retryAfterSeconds", retryAfterSeconds);
         body.put("message", e.getMessage());
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                 .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
                 .body(body);
+    }
+
+    /**
+     * Render a template that could not be turned into sendable content per DD-27
+     * ({@code notification.template.validate-before-dispatch=true}):
+     * <pre>
+     * HTTP/1.1 422 Unprocessable Content
+     * Content-Type: application/json
+     *
+     * { "error": "TEMPLATE_MODEL_INVALID", "reason": "MODEL_INVALID", "templateId": "WELCOME",
+     *   "path": "user.name", "message": "..." }
+     * </pre>
+     *
+     * <p>Every reason, {@code NOT_FOUND} included, is a 422: the endpoint exists and the
+     * request is well formed, but it names a template that cannot be rendered with its data.
+     * {@code path} is the data-model path of the missing or invalid value, or {@code null}.
+     * Logged once at WARN without a stack trace; the message already names the template,
+     * the line and the failing expression.
+     */
+    @ExceptionHandler(TemplateRenderException.class)
+    public ResponseEntity<Map<String, Object>> handleTemplateRender(TemplateRenderException e) {
+        log.warn("Template render failed: {}", sanitize(e.getMessage()));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put(ERROR, e.getErrorCode());
+        body.put("reason", e.getReason().name());
+        body.put("templateId", e.getTemplateId());
+        body.put("path", e.getVariablePath());
+        body.put("message", e.getMessage());
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_CONTENT).body(body);
+    }
+
+    /** Strip control characters so a request-derived value cannot forge log lines. */
+    private static String sanitize(String s) {
+        return s == null ? "null" : s.replaceAll("[\\p{Cntrl}]", "_");
     }
 }

@@ -197,6 +197,22 @@ class AcsEmailProviderTest {
     }
 
     @Test
+    void timeoutFailureTypeAmbiguous_connectionReset_isAmbiguous_andCarriesTheOperationId() {
+        AcsEmailProvider ambiguous = new AcsEmailProvider(new AcsEmailProperties(null,
+                "endpoint=https://x.communication.azure.com/;accesskey=a2V5", null, SENDER, List.of(),
+                SendMode.WAIT, Duration.ofSeconds(60), 0, null, FailureType.AMBIGUOUS), gateway);
+        when(gateway.send(any(), any())).thenThrow(new UncheckedIOException(new IOException("Connection reset")));
+        NotificationRequest request = request(to("user@example.com"));
+        request.setTenantId("acme");
+        request.setRequestId("req-io");
+
+        SendResult result = ambiguous.send(request, htmlAndText());
+
+        assertThat(result.failureType()).isEqualTo(FailureType.AMBIGUOUS);
+        assertThat(result.messageId()).isNotNull();
+    }
+
+    @Test
     void preSubmissionIoError_isTransient_andCarriesTheOperationId() {
         when(gateway.send(any(), any())).thenThrow(new UncheckedIOException(new IOException("Connection reset")));
         NotificationRequest request = request(to("user@example.com"));

@@ -1,6 +1,7 @@
 package com.lazydevs.notification.channel.email.acs;
 
 import com.lazydevs.notification.api.exception.ProviderConfigurationException;
+import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.util.PiiMasking;
 
 import java.time.Duration;
@@ -32,6 +33,9 @@ import java.util.TreeMap;
  *   <li>{@code wait-timeout} - ISO-8601 duration, default {@code PT60S}.</li>
  *   <li>{@code sdk-retries} - retries inside the Azure SDK, default {@code 0}.</li>
  *   <li>{@code user-engagement-tracking-disabled} - optional boolean.</li>
+ *   <li>{@code timeout-failure-type} - {@code transient} (default) or
+ *       {@code ambiguous}: how a timeout or I/O error after the send request may
+ *       have reached ACS is classified (since 1.3.0, DD-31).</li>
  * </ul>
  *
  * @param endpoint                       ACS endpoint, may be {@code null}
@@ -43,6 +47,8 @@ import java.util.TreeMap;
  * @param waitTimeout                    upper bound for {@link SendMode#WAIT}
  * @param sdkRetries                     retries performed by the Azure SDK itself
  * @param userEngagementTrackingDisabled {@code null} keeps the ACS resource default
+ * @param timeoutFailureType             {@link FailureType#TRANSIENT} (default) or
+ *                                       {@link FailureType#AMBIGUOUS}; since 1.3.0
  */
 public record AcsEmailProperties(
         String endpoint,
@@ -53,7 +59,8 @@ public record AcsEmailProperties(
         SendMode sendMode,
         Duration waitTimeout,
         int sdkRetries,
-        Boolean userEngagementTrackingDisabled) {
+        Boolean userEngagementTrackingDisabled,
+        FailureType timeoutFailureType) {
 
     static final String PROVIDER_NAME = "acs";
     static final String CHANNEL = "EMAIL";
@@ -69,6 +76,8 @@ public record AcsEmailProperties(
     public static final String WAIT_TIMEOUT = "wait-timeout";
     public static final String SDK_RETRIES = "sdk-retries";
     public static final String USER_ENGAGEMENT_TRACKING_DISABLED = "user-engagement-tracking-disabled";
+    /** @since 1.3.0 */
+    public static final String TIMEOUT_FAILURE_TYPE = "timeout-failure-type";
 
     /** Default upper bound for {@link SendMode#WAIT}. */
     public static final Duration DEFAULT_WAIT_TIMEOUT = Duration.ofSeconds(60);
@@ -84,10 +93,27 @@ public record AcsEmailProperties(
     }
 
     /**
-     * Canonical constructor: normalises the reply-to list.
+     * Canonical constructor: normalises the reply-to list; a {@code null}
+     * timeout failure type is {@link FailureType#TRANSIENT}.
      */
     public AcsEmailProperties {
         replyTo = replyTo == null ? List.of() : List.copyOf(replyTo);
+        timeoutFailureType = timeoutFailureType == null ? FailureType.TRANSIENT : timeoutFailureType;
+        if (timeoutFailureType != FailureType.TRANSIENT && timeoutFailureType != FailureType.AMBIGUOUS) {
+            throw invalid("'" + TIMEOUT_FAILURE_TYPE + "' must be 'transient' or 'ambiguous', got '"
+                    + timeoutFailureType + "'");
+        }
+    }
+
+    /**
+     * The 1.2.0 constructor: timeouts are {@link FailureType#TRANSIENT}.
+     */
+    @SuppressWarnings("java:S107") // mirrors the record components
+    public AcsEmailProperties(String endpoint, String connectionString, String credential, String sender,
+                              List<String> replyTo, SendMode sendMode, Duration waitTimeout, int sdkRetries,
+                              Boolean userEngagementTrackingDisabled) {
+        this(endpoint, connectionString, credential, sender, replyTo, sendMode, waitTimeout, sdkRetries,
+                userEngagementTrackingDisabled, FailureType.TRANSIENT);
     }
 
     /**
@@ -133,7 +159,8 @@ public record AcsEmailProperties(
                 sendMode(props.get(SEND_MODE)),
                 waitTimeout(props.get(WAIT_TIMEOUT)),
                 sdkRetries(props.get(SDK_RETRIES)),
-                optionalBoolean(props.get(USER_ENGAGEMENT_TRACKING_DISABLED)));
+                optionalBoolean(props.get(USER_ENGAGEMENT_TRACKING_DISABLED)),
+                timeoutFailureType(props.get(TIMEOUT_FAILURE_TYPE)));
     }
 
     /**
@@ -150,7 +177,8 @@ public record AcsEmailProperties(
                 + ", sendMode=" + sendMode
                 + ", waitTimeout=" + waitTimeout
                 + ", sdkRetries=" + sdkRetries
-                + ", userEngagementTrackingDisabled=" + userEngagementTrackingDisabled + "]";
+                + ", userEngagementTrackingDisabled=" + userEngagementTrackingDisabled
+                + ", timeoutFailureType=" + timeoutFailureType + "]";
     }
 
     static ProviderConfigurationException invalid(String reason) {
@@ -242,6 +270,20 @@ public record AcsEmailProperties(
             throw invalid("'" + WAIT_TIMEOUT + "' must be positive, got '" + value + "'");
         }
         return timeout;
+    }
+
+    private static FailureType timeoutFailureType(Object value) {
+        if (isBlank(value)) {
+            return FailureType.TRANSIENT;
+        }
+        String s = String.valueOf(value).trim();
+        if ("transient".equalsIgnoreCase(s)) {
+            return FailureType.TRANSIENT;
+        }
+        if ("ambiguous".equalsIgnoreCase(s)) {
+            return FailureType.AMBIGUOUS;
+        }
+        throw invalid("'" + TIMEOUT_FAILURE_TYPE + "' must be 'transient' or 'ambiguous', got '" + value + "'");
     }
 
     private static int sdkRetries(Object value) {

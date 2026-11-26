@@ -1,6 +1,7 @@
 package com.lazydevs.notification.channel.email.acs;
 
 import com.lazydevs.notification.api.exception.ProviderConfigurationException;
+import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.channel.email.acs.AcsEmailProperties.SendMode;
 import org.junit.jupiter.api.Test;
 
@@ -39,6 +40,28 @@ class AcsEmailPropertiesTest {
         assertThat(p.sdkRetries()).isZero();
         assertThat(p.userEngagementTrackingDisabled()).isNull();
         assertThat(p.credential()).isNull();
+        assertThat(p.timeoutFailureType()).isEqualTo(FailureType.TRANSIENT);
+    }
+
+    @Test
+    void timeoutFailureType_acceptsTransientAndAmbiguous_inAnyCase() {
+        Map<String, Object> map = minimal();
+        map.put("timeout-failure-type", "Ambiguous");
+        assertThat(AcsEmailProperties.fromMap(map).timeoutFailureType()).isEqualTo(FailureType.AMBIGUOUS);
+        map.put("timeout-failure-type", "TRANSIENT");
+        assertThat(AcsEmailProperties.fromMap(map).timeoutFailureType()).isEqualTo(FailureType.TRANSIENT);
+    }
+
+    @Test
+    void theOneDotTwoConstructor_keepsTimeoutsTransient_andOtherTypesAreRefused() {
+        AcsEmailProperties legacy = new AcsEmailProperties(null, "endpoint=https://x/;accesskey=a2V5", null,
+                "a@example.com", null, SendMode.WAIT, Duration.ofSeconds(60), 0, null);
+        assertThat(legacy.timeoutFailureType()).isEqualTo(FailureType.TRANSIENT);
+        Duration timeout = Duration.ofSeconds(60);
+        assertThatThrownBy(() -> new AcsEmailProperties(null, "endpoint=https://x/;accesskey=a2V5", null,
+                "a@example.com", null, SendMode.WAIT, timeout, 0, null, FailureType.PERMANENT))
+                .isInstanceOf(ProviderConfigurationException.class)
+                .hasMessageContaining("'timeout-failure-type' must be 'transient' or 'ambiguous'");
     }
 
     @Test
@@ -131,6 +154,7 @@ class AcsEmailPropertiesTest {
         assertInvalid("sdk-retries", "two", "whole number");
         assertInvalid("sdk-retries", "-1", "must not be negative");
         assertInvalid("user-engagement-tracking-disabled", "yes", "true or false");
+        assertInvalid("timeout-failure-type", "permanent", "'timeout-failure-type' must be 'transient' or 'ambiguous'");
     }
 
     @Test

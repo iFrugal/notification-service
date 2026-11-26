@@ -72,14 +72,31 @@ class DefaultNotificationServiceRedactionTest {
         NotificationResponse response = service(Optional.empty()).send(request("idem-redact"));
 
         assertRedacted(response, "ACS_400");
-        ArgumentCaptor<String> audited = ArgumentCaptor.forClass(String.class);
-        verify(auditService).updateStatus(eq(response.requestId()), eq(NotificationStatus.FAILED),
-                any(), eq("ACS_400"), audited.capture());
-        assertThat(audited.getValue()).isEqualTo(response.errorMessage());
+        ArgumentCaptor<NotificationResponse> audited = ArgumentCaptor.forClass(NotificationResponse.class);
+        verify(auditService).recordOutcome(audited.capture());
+        assertThat(audited.getValue().status()).isEqualTo(NotificationStatus.FAILED);
+        assertThat(audited.getValue().errorCode()).isEqualTo("ACS_400");
+        assertThat(audited.getValue().errorMessage()).isEqualTo(response.errorMessage());
         IdempotencyRecord stored = store.findExisting(new IdempotencyKey("acme", null, "idem-redact")).orElseThrow();
+        // As in 1.1.2 to 1.2.0 the stored copy has no message by default (DD-32).
         assertThat(stored.response().errorMessage()).isNull();
         assertThat(stored.response().errorCode()).isEqualTo("ACS_400");
         assertThat(stored.response().status()).isEqualTo(NotificationStatus.FAILED);
+    }
+
+    @Test
+    void storeScrubbedErrorMessage_keepsTheScrubbedMessageInTheStoredCopy() {
+        properties.getIdempotency().setStoreScrubbedErrorMessage(true);
+        when(provider.send(any(), any()))
+                .thenReturn(SendResult.failure("ACS_400", ADDRESS_TEXT, FailureType.PERMANENT));
+
+        NotificationResponse response = service(Optional.empty()).send(request("idem-scrubbed"));
+
+        IdempotencyRecord stored = store.findExisting(new IdempotencyKey("acme", null, "idem-scrubbed")).orElseThrow();
+        assertThat(stored.response().errorMessage())
+                .isEqualTo(response.errorMessage())
+                .doesNotContain("john.doe@example.com")
+                .doesNotContain("15551234590");
     }
 
     @Test

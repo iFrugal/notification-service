@@ -4,6 +4,7 @@ import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
 import com.lazydevs.notification.api.model.NotificationAudit;
 import com.lazydevs.notification.api.model.NotificationRequest;
+import com.lazydevs.notification.api.model.NotificationResponse;
 
 import java.util.List;
 import java.util.Optional;
@@ -43,12 +44,62 @@ public interface NotificationAuditService {
                                     String providerMessageId, String errorCode, String errorMessage);
 
     /**
+     * Record the outcome of a send: its final status, provider, provider
+     * message id, error and failure classification. The response's
+     * {@code errorMessage} has already been through the configured
+     * {@code MessageScrubber}.
+     *
+     * <p>Called by {@code DefaultNotificationService} once per send, and for
+     * an idempotency record settled by the in-progress timeout (DD-32), whose
+     * {@code requestId} is the original request's. The default delegates to
+     * {@link #updateStatus}, so implementations written for 1.2.0 keep
+     * working; override it to keep the fields {@code updateStatus} cannot
+     * carry.
+     *
+     * @param response the outcome, never {@code null}
+     * @since 1.3.0
+     */
+    default void recordOutcome(NotificationResponse response) {
+        updateStatus(response.requestId(), response.status(), response.providerMessageId(),
+                response.errorCode(), response.errorMessage());
+    }
+
+    /**
      * Find audit record by request ID.
      *
      * @param requestId the request ID
      * @return the audit record if found
      */
     Optional<NotificationAudit> findByRequestId(String requestId);
+
+    /**
+     * Find the audit record of {@code requestId} in {@code tenantId}
+     * (DD-33). The default narrows {@link #findByRequestId(String)} to the
+     * tenant; implementations backed by a store override it.
+     *
+     * @param tenantId  the tenant
+     * @param requestId the request ID
+     * @return the audit record if found
+     * @since 1.3.0
+     */
+    default Optional<NotificationAudit> findByRequestId(String tenantId, String requestId) {
+        return findByRequestId(requestId).filter(a -> java.util.Objects.equals(tenantId, a.getTenantId()));
+    }
+
+    /**
+     * Find the most recent audit record sent under an idempotency key
+     * (DD-33). The default returns empty.
+     *
+     * @param tenantId       the tenant
+     * @param callerId       the calling service, may be {@code null}
+     * @param idempotencyKey the key
+     * @return the audit record if found
+     * @since 1.3.0
+     */
+    default Optional<NotificationAudit> findByIdempotencyKey(String tenantId, String callerId,
+                                                             String idempotencyKey) {
+        return Optional.empty();
+    }
 
     /**
      * Check if audit is enabled.

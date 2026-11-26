@@ -1,0 +1,1 @@
+Hello <#include "parts/greeting.ftl"> <#import "/shared/lib.ftl" as lib>${lib.shout(name)}

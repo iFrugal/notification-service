@@ -1,12 +1,13 @@
 # notification-store-jdbc
 
-PostgreSQL-backed implementations of three notification-service SPIs, written as plain SQL over Spring's `JdbcClient`:
+PostgreSQL-backed implementations of four notification-service SPIs, written as plain SQL over Spring's `JdbcClient`:
 
 | SPI | Implementation |
 |---|---|
 | `IdempotencyStore` | `JdbcIdempotencyStore` |
 | `DeadLetterStore` | `JdbcDeadLetterStore` |
 | `DeliveryEventStore` (also a `DeliveryEventListener`) | `JdbcDeliveryEventStore` |
+| `NotificationAuditStore` (since 1.3.0, the status view) | `JdbcNotificationAuditStore` |
 
 There is no ORM, no JPA or Hibernate, and no migration tool.
 The library never executes DDL and never needs a superuser, a table owner, or `BYPASSRLS`: every statement is plain DML on the configured tables.
@@ -45,10 +46,13 @@ notification:
   delivery-events:
     enabled: true
     max-entries: 5000      # default; bound of snapshot() and findByProviderMessageId()
+  audit:
+    enabled: true          # since 1.3.0: audit rows behind NotificationService.find(...)
+    retention-days: 90     # default; drives expires_at of audit rows
 ```
 
 `JdbcStoreAutoConfiguration` activates only with `notification.store.type=jdbc` and `JdbcClient` on the classpath.
-Each store also requires its usual feature flag (`notification.idempotency.enabled`, which defaults to on; `notification.dead-letter.enabled`; `notification.delivery-events.enabled`) and backs off when the application defines its own bean of that SPI.
+Each store also requires its usual feature flag (`notification.idempotency.enabled`, which defaults to on; `notification.dead-letter.enabled`; `notification.delivery-events.enabled`; `notification.audit.enabled`) and backs off when the application defines its own bean of that SPI.
 The auto-configuration runs before the core in-memory defaults, so those back off when a JDBC store is registered.
 
 ## Properties
@@ -94,6 +98,7 @@ CREATE TABLE IF NOT EXISTS notification_idempotency (
     notification_id VARCHAR(255) NOT NULL,
     status          VARCHAR(16)  NOT NULL,
     response        TEXT,
+    fingerprint     VARCHAR(64),
     created_at      TIMESTAMPTZ  NOT NULL,
     recorded_at     TIMESTAMPTZ  NOT NULL,
     expires_at      TIMESTAMPTZ  NOT NULL,
@@ -149,6 +154,46 @@ CREATE INDEX IF NOT EXISTS notification_delivery_event_message_idx ON notificati
 CREATE INDEX IF NOT EXISTS notification_delivery_event_created_at_idx ON notification_delivery_event (created_at);
 
 CREATE INDEX IF NOT EXISTS notification_delivery_event_expires_at_idx ON notification_delivery_event (expires_at);
+
+CREATE TABLE IF NOT EXISTS notification_audit (
+    id                  BIGINT       GENERATED ALWAYS AS IDENTITY,
+    tenant_id           VARCHAR(255),
+    tenant_key          VARCHAR(255) GENERATED ALWAYS AS (COALESCE(tenant_id, '')) STORED,
+    request_id          VARCHAR(255) NOT NULL,
+    correlation_id      VARCHAR(255),
+    caller_id           VARCHAR(255),
+    caller_key          VARCHAR(255) GENERATED ALWAYS AS (COALESCE(caller_id, '')) STORED,
+    idem_key            VARCHAR(255),
+    replay_of           VARCHAR(255),
+    notification_type   VARCHAR(255),
+    channel             VARCHAR(32),
+    provider            VARCHAR(128),
+    template_id         VARCHAR(255),
+    recipient_summary   TEXT,
+    recipient_count     INTEGER,
+    status              VARCHAR(32)  NOT NULL,
+    failure_type        VARCHAR(32),
+    provider_message_id VARCHAR(512),
+    error_code          VARCHAR(255),
+    error_message       TEXT,
+    metadata            TEXT,
+    received_at         TIMESTAMPTZ  NOT NULL,
+    processed_at        TIMESTAMPTZ,
+    sent_at             TIMESTAMPTZ,
+    delivered_at        TIMESTAMPTZ,
+    failed_at           TIMESTAMPTZ,
+    updated_at          TIMESTAMPTZ  NOT NULL,
+    created_at          TIMESTAMPTZ  NOT NULL,
+    expires_at          TIMESTAMPTZ  NOT NULL,
+    CONSTRAINT notification_audit_pk PRIMARY KEY (id),
+    CONSTRAINT notification_audit_request_uq UNIQUE (tenant_key, request_id)
+);
+
+CREATE INDEX IF NOT EXISTS notification_audit_idem_key_idx ON notification_audit (tenant_key, caller_key, idem_key, received_at) WHERE idem_key IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS notification_audit_tenant_received_idx ON notification_audit (tenant_key, received_at);
+
+CREATE INDEX IF NOT EXISTS notification_audit_expires_at_idx ON notification_audit (expires_at);
 ```
 
 The tables are:
@@ -156,6 +201,8 @@ The tables are:
 - `idempotency`: one row per `(tenant, caller, idempotency key)`, with the cached `NotificationResponse` as JSON.
 - `dead_letter`: one row per `(tenant, request id)`, with the request and the response as JSON and a `claimed_until` lease column.
 - `delivery_event`: one row per webhook event, de-duplicated on `(tenant, provider, provider event id)`, with the provider attributes as JSON.
+- `audit` (since 1.3.0): one row per `(tenant, request id)` with the send's lifecycle (status, failure type, error code, scrubbed error message, provider message id, timestamps), the caller's metadata as JSON, a masked recipient summary and a recipient count; never a recipient address.
+  It is indexed for lookups by request id and by `(tenant, caller, idempotency key)`; `status` and `failure_type` are plain text without a check constraint, so later statuses need no migration.
 
 Fields that are queried (tenant, request id, idempotency key, provider name, provider message id, status, attempts, timestamps, lease) are real, indexed columns.
 Payloads are JSON in `TEXT` columns.
@@ -165,8 +212,26 @@ Payloads are JSON in `TEXT` columns.
 The stores always serialise with their own module-owned Jackson `ObjectMapper`, never the application's bean.
 It registers `JavaTimeModule`, writes dates as ISO-8601 strings, and ignores unknown properties on read.
 Since 1.1.2 an unknown `FailureType` or `DeliveryStatus` constant, in a JSON payload or in the `failure_type` and `status` columns, reads as `UNKNOWN`.
-The idempotency table stores a `FAILED` or `REJECTED` response without its `errorMessage`, because such a response is never replayed.
+The idempotency table never stores the raw `errorMessage` of a `FAILED` or `REJECTED` response.
+By default it stores no message, as in 1.2.x; with `notification.idempotency.store-scrubbed-error-message=true` (since 1.3.0) it stores the message after `MessageScrubber` (by default email addresses become `[email]` and phone numbers `[phone]`), so a failure kept and replayed under `failure-policy=RELEASE_TRANSIENT` still says what went wrong.
 This keeps the stored JSON stable when the host changes its own Jackson configuration, and lets rows written by a newer library version still be read.
+
+### Upgrading from 1.2.x
+
+1.3.0 adds one optional, nullable column to the idempotency table: `fingerprint`, the SHA-256 of the request that claimed the key (DD-32).
+A 1.2.x table without it keeps working: the store probes for the column at startup (with the configured schema and prefix), logs one WARN with the statement below and stores no fingerprints.
+With `notification.idempotency.reject-key-reuse=true` a missing column fails startup with the same statement, because the check could never fire.
+Add it when convenient, adjusting the table name to your prefix and schema:
+
+```sql
+ALTER TABLE notification_idempotency ADD COLUMN IF NOT EXISTS fingerprint VARCHAR(64);
+```
+
+With `notification.audit.enabled=true`, also create the new `notification_audit` table and its three indexes, as in the reference schema above (the statements are `CREATE ... IF NOT EXISTS`, so re-running the whole reference script is safe).
+Without it, the audit table is not used and need not exist.
+
+The statement is additive and safe while 1.2.x is still running: 1.2.x neither reads nor writes the column.
+Rows written before the upgrade have no fingerprint, and the service never compares a missing fingerprint, so `reject-key-reuse` cannot refuse them.
 
 ## Grants and row-level security
 
@@ -174,7 +239,7 @@ The application role needs only these grants:
 
 ```sql
 GRANT SELECT, INSERT, UPDATE, DELETE
-  ON notification_idempotency, notification_dead_letter, notification_delivery_event
+  ON notification_idempotency, notification_dead_letter, notification_delivery_event, notification_audit
   TO notification_app;
 ```
 
@@ -191,7 +256,7 @@ CREATE POLICY tenant_isolation ON notification_dead_letter
   WITH CHECK (tenant_id = current_setting('app.tenant', true));
 ```
 
-`JdbcStoreRlsIT` runs every store as a non-owner role without `BYPASSRLS` under exactly this policy, on all three tables.
+`JdbcStoreRlsIT` runs every store as a non-owner role without `BYPASSRLS` under exactly this policy, on all four tables.
 Each tenant sees and changes only its own rows, and a write for another tenant is refused by the policy.
 
 How `tenant_id` is filled:
@@ -199,9 +264,10 @@ How `tenant_id` is filled:
 - Idempotency rows use `IdempotencyKey.tenantId()`.
 - Dead-letter rows use the request's tenant when it has one, else the current `TenantContext` tenant, else `NULL`.
 - Delivery-event rows use the current `TenantContext` tenant, else `NULL`, because delivery events carry no tenant of their own.
+- Audit rows use the request's tenant (after the service has applied its default tenant).
 
 Under row-level security the session tenant must match the tenant written, otherwise the insert is refused.
-The dead-letter and delivery-event stores log and swallow that failure, as their SPIs require; the idempotency store lets it propagate.
+The dead-letter and delivery-event stores log and swallow that failure, as their SPIs require; the idempotency store lets it propagate; the audit store lets it propagate to the core audit service, which logs and swallows it so the send itself never fails.
 
 ## Dead-letter replay across replicas
 
@@ -217,7 +283,7 @@ The REST replay endpoints follow this cycle, with the lease from `notification.d
 
 ## Expiry and purge
 
-Each row has an `expires_at`, from `notification.idempotency.ttl` for idempotency rows and from the two retention properties for the other tables.
+Each row has an `expires_at`, from `notification.idempotency.ttl` for idempotency rows, from `notification.audit.retention-days` (default 90) for audit rows, and from the two retention properties for the other tables.
 Expired rows are invisible to every read immediately; purging only reclaims the space.
 
 - `purgeExpired(batchSize)` on each store deletes at most one batch of expired rows and returns the count.

@@ -18,7 +18,7 @@ import java.util.Map;
  * Notification request payload.
  */
 @Data
-@Builder
+@Builder(toBuilder = true)
 @NoArgsConstructor
 @AllArgsConstructor
 public class NotificationRequest {

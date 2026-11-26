@@ -211,7 +211,7 @@ public class AcsEmailProvider implements EmailProvider {
             // The id travels with the failure so the attempt can be reconciled; a retry
             // derives the same id again. A transient HTTP error may say how long to
             // wait; the retry executor honours that hint.
-            FailureType type = classifyAcs(e);
+            FailureType type = classifyAcs(e, settings.timeoutFailureType());
             Map<String, Object> metadata = type == FailureType.TRANSIENT
                     ? retryAfter(e, Instant.now())
                             .<Map<String, Object>>map(d -> Map.of(SendResult.RETRY_AFTER_METADATA_KEY, d.toString()))
@@ -441,7 +441,8 @@ public class AcsEmailProvider implements EmailProvider {
     }
 
     /**
-     * Map an ACS SDK exception to a {@link FailureType} for retry decisions (DD-13).
+     * Map an ACS SDK exception to a {@link FailureType} for retry and
+     * idempotency decisions (DD-13, DD-25, DD-31).
      *
      * <ul>
      *   <li>{@link HttpResponseException} - the HTTP status decides via
@@ -450,26 +451,45 @@ public class AcsEmailProvider implements EmailProvider {
      *       problems, are {@link FailureType#PERMANENT}.</li>
      *   <li>{@link TimeoutException} or any {@code IOException} (including
      *       {@code HttpTimeoutException}) in the cause chain -
-     *       {@link FailureType#TRANSIENT}.</li>
+     *       {@link FailureType#TRANSIENT} by default: ACS de-duplicates a resend
+     *       on its {@code Operation-Id}, so a retry cannot deliver twice (DD-25).
+     *       With {@code timeoutFailureType} {@link FailureType#AMBIGUOUS}, only a
+     *       failure to connect (nothing was sent) stays {@code TRANSIENT}; a read
+     *       timeout, a reset or another I/O error, which may follow an accepted
+     *       request, is {@code AMBIGUOUS}.</li>
      *   <li>Anything else - {@link FailureType#UNKNOWN}, defer to the retry predicate.</li>
      * </ul>
      *
      * <p>ACS sends {@code Retry-After} with 429; {@link #retryAfter} reads it
      * so the retry executor can wait at least that long.
+     *
+     * @param timeoutFailureType {@code timeout-failure-type}: {@link FailureType#TRANSIENT}
+     *                           or {@link FailureType#AMBIGUOUS}
      */
-    static FailureType classifyAcs(Throwable t) {
+    static FailureType classifyAcs(Throwable t, FailureType timeoutFailureType) {
         if (t instanceof HttpResponseException hre && hre.getResponse() != null) {
             return FailureTypes.fromHttpStatus(hre.getResponse().getStatusCode());
         }
-        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
-            if (cur instanceof TimeoutException) {
-                return FailureType.TRANSIENT;
+        if (timeoutFailureType == FailureType.AMBIGUOUS) {
+            FailureType io = FailureTypes.fromExceptionAfterSubmit(t);
+            if (io != FailureType.UNKNOWN) {
+                return io;
             }
+            return hasTimeout(t) ? FailureType.AMBIGUOUS : FailureType.UNKNOWN;
         }
-        if (FailureTypes.fromException(t) == FailureType.TRANSIENT) {
+        if (hasTimeout(t) || FailureTypes.fromException(t) == FailureType.TRANSIENT) {
             return FailureType.TRANSIENT;
         }
         return FailureType.UNKNOWN;
+    }
+
+    private static boolean hasTimeout(Throwable t) {
+        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
+            if (cur instanceof TimeoutException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.lazydevs.notification.store.jdbc;
 
+import com.lazydevs.notification.api.audit.NotificationAuditStore;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.delivery.DeliveryEventListener;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
@@ -83,6 +84,37 @@ class JdbcStoreAutoConfigurationTest {
         runner.withUserConfiguration(SingleDataSource.class)
                 .withPropertyValues("notification.store.type=jdbc", "notification.idempotency.enabled=false")
                 .run(context -> assertThat(context).doesNotHaveBean(IdempotencyStore.class));
+    }
+
+    @Test
+    void auditEnabledRegistersTheJdbcAuditStore_inThePurger() {
+        runner.withUserConfiguration(SingleDataSource.class)
+                .withPropertyValues("notification.store.type=jdbc", "notification.audit.enabled=true",
+                        "notification.audit.retention-days=30")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).getBean(NotificationAuditStore.class)
+                            .isInstanceOf(JdbcNotificationAuditStore.class);
+                    assertThat(context.getBean(JdbcStorePurger.class).stores()).hasSize(2);
+                });
+        runner.withUserConfiguration(SingleDataSource.class)
+                .withPropertyValues("notification.store.type=jdbc")
+                .run(context -> assertThat(context).doesNotHaveBean(NotificationAuditStore.class));
+    }
+
+    @Test
+    void auditStoreBacksOffTheInMemoryDefault() {
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        NotificationCoreDefaultsAutoConfiguration.class, JdbcStoreAutoConfiguration.class))
+                .withUserConfiguration(SingleDataSource.class)
+                .withPropertyValues("notification.store.type=jdbc", "notification.audit.enabled=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(NotificationAuditStore.class);
+                    assertThat(context).getBean(NotificationAuditStore.class)
+                            .isInstanceOf(JdbcNotificationAuditStore.class);
+                });
     }
 
     @Test
