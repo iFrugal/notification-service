@@ -26,6 +26,7 @@ import com.lazydevs.notification.core.service.NoOpAuditService;
 import com.lazydevs.notification.core.service.NotificationServiceExtensions;
 import com.lazydevs.notification.core.service.NotificationAuditService;
 import com.lazydevs.notification.core.store.StoreTypeValidator;
+import com.lazydevs.notification.core.template.ChannelContentRenderer;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -175,11 +176,12 @@ public class NotificationCoreAutoConfiguration {
             MessageScrubber messageScrubber,
             Optional<DeliveryEventStore> deliveryEventStore,
             Optional<RecipientGuard> recipientGuard,
-            Optional<IdempotencyReleasePolicy> releasePolicy) {
+            Optional<IdempotencyReleasePolicy> releasePolicy,
+            ObjectProvider<ChannelContentRenderer> renderers) {
         return new DefaultNotificationService(properties, providerRegistry, templateEngine, auditService,
                 idempotencyStore, rateLimiter, retryExecutor, deadLetterStore, metrics,
                 new NotificationServiceExtensions(messageScrubber, Clock.systemUTC(),
                         deliveryEventStore.orElse(null), recipientGuard.orElse(null),
-                        releasePolicy.orElse(null)));
+                        releasePolicy.orElse(null), renderers.orderedStream().toList()));
     }
 }
