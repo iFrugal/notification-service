@@ -324,10 +324,12 @@ public class JdbcPushDeviceRegistry implements PushDeviceRegistry, JdbcPurgeable
         }
     }
 
-    private static void logRemovals(List<String> tokenHashes, String reason) {
-        String safeReason = reason == null ? "unspecified" : reason.replaceAll("\\p{Cntrl}", "_");
-        for (String tokenHash : tokenHashes) {
-            log.info("Removed push device {} ({})", tokenHash, safeReason);
+    /** One INFO line per removal batch: the count and the reason, never a token or anything derived from it. */
+    private static void logRemovals(List<String> removed, String reason) {
+        if (removed.isEmpty()) {
+            return;
         }
+        String safeReason = reason == null ? "unspecified" : reason.replaceAll("\\p{Cntrl}", "_");
+        log.info("Removed {} push device(s) ({})", removed.size(), safeReason);
     }
 }

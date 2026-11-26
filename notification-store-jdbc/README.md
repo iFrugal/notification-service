@@ -310,7 +310,7 @@ The dead-letter and delivery-event stores log and swallow that failure, as their
   Advisory locks need no grant.
 - `last_seen_at` is database time; `activeDevices` leaves out devices not seen within `stale-after`.
 - `expires_at` is `last_seen_at + purge-after` (default 270 days), so `JdbcStorePurger` deletes long-gone devices with the other stores; `purgeStale(olderThan)` deletes by last-seen time in the current scope.
-- Every removal is logged at INFO with the token hash and the reason, never the token.
+- Every removal is logged at INFO with the count and the reason, never the token or its hash.
 
 To add the table to a 1.3 schema, run its `CREATE TABLE` and `CREATE INDEX` statements from the reference DDL; nothing else changes.
 

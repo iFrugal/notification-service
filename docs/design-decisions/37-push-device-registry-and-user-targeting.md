@@ -34,7 +34,7 @@ Semantics every implementation shares, pinned by `PushDeviceRegistryContractTest
   The device just registered always stays.
 - **Active devices** are those seen within `stale-after`, most recently seen first.
 - **Unregister** operations are idempotent.
-- **Every removal** is logged at INFO with the token hash and the reason, never the token.
+- **Every removal** is logged at INFO with the reason only, never the token or its hash (a hash is still a stable identifier of a person's device).
 
 Two implementations:
 

@@ -55,10 +55,9 @@ public class PushDeviceCleanupListener implements DeliveryEventListener {
         }
         try {
             int removed = registry.removeByTokenHash(tokenHash, PushDeviceRemovalReasons.INVALID_TARGET);
-            log.debug("Invalid push target {}: {} device(s) removed", tokenHash, removed);
+            log.debug("Invalid push target: {} device(s) removed", removed);
         } catch (RuntimeException e) {
-            log.warn("Removing the push device of invalid target {} failed: {}", tokenHash,
-                    e.getClass().getSimpleName());
+            log.warn("Removing the push device of an invalid target failed: {}", e.getClass().getSimpleName());
         }
     }
 

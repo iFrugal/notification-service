@@ -155,7 +155,7 @@ public class InMemoryPushDeviceRegistry implements PushDeviceRegistry {
         for (int i = maxDevicesPerUser - 1; i < others.size(); i++) {
             PushDevice evicted = others.get(i);
             devices.remove(key(evicted));
-            logRemoval(evicted.tokenHash(), PushDeviceRemovalReasons.EVICTED);
+            logRemoval(PushDeviceRemovalReasons.EVICTED);
         }
     }
 
@@ -170,14 +170,14 @@ public class InMemoryPushDeviceRegistry implements PushDeviceRegistry {
         List<PushDevice> removed = devices.values().stream().filter(match).toList();
         removed.forEach(d -> {
             devices.remove(key(d));
-            logRemoval(d.tokenHash(), reason);
+            logRemoval(reason);
         });
         return removed.size();
     }
 
-    /** One INFO line per removal: the token hash and the reason, never the token. */
-    private static void logRemoval(String tokenHash, String reason) {
-        log.info("Removed push device {} ({})", tokenHash, sanitize(reason));
+    /** One INFO line per removal: the reason only, never the token or anything derived from it. */
+    private static void logRemoval(String reason) {
+        log.info("Removed a push device ({})", sanitize(reason));
     }
 
     /** The reason may come from a caller; control characters would forge log lines. */
