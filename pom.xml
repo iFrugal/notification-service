@@ -207,6 +207,16 @@
                 <artifactId>push-provider-fcm-google-auth</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>notification-channel-whatsapp</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>whatsapp-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
             <!-- all-about-persistence -->
             <dependency>
