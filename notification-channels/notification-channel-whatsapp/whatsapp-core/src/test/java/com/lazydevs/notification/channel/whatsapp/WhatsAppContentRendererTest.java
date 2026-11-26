@@ -3,7 +3,8 @@ package com.lazydevs.notification.channel.whatsapp;
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.channel.RenderedContent;
 import com.lazydevs.notification.api.exception.TemplateNotFoundException;
-import com.lazydevs.notification.api.exception.TemplateValidationException;
+import com.lazydevs.notification.api.exception.TemplateRenderException;
+import com.lazydevs.notification.api.exception.TemplateRenderException.Reason;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.WhatsAppRecipient;
 import com.lazydevs.notification.channel.whatsapp.WhatsAppTemplateMessage.ButtonParameter;
@@ -80,23 +81,35 @@ class WhatsAppContentRendererTest {
     }
 
     @Test
-    void missingOrBadVariable_isTemplateValidationException() {
+    void missingOrBadVariable_isTemplateRenderException_namingTheVariable() {
         Map<String, Object> data = orderData();
         data.remove("orderNumber");
         WhatsAppContentRenderer renderer = new WhatsAppContentRenderer(registry, null);
         NotificationRequest missing = request(plain(), "order-shipped", data);
 
         assertThatThrownBy(() -> renderer.render(missing))
-                .isInstanceOf(TemplateValidationException.class)
+                .isInstanceOfSatisfying(TemplateRenderException.class, e -> {
+                    assertThat(e.getReason()).isEqualTo(Reason.MODEL_INVALID);
+                    assertThat(e.getVariablePath()).isEqualTo("orderNumber");
+                    assertThat(e.getTemplateId()).isEqualTo("order-shipped");
+                })
                 .hasMessageContaining("orderNumber");
 
         Map<String, Object> multiline = orderData();
         multiline.put("customerName", "Jane\nDoe");
         NotificationRequest bad = request(plain(), "order-shipped", multiline);
-        assertThatThrownBy(() -> renderer.render(bad)).isInstanceOf(TemplateValidationException.class);
+        assertThatThrownBy(() -> renderer.render(bad))
+                .isInstanceOfSatisfying(TemplateRenderException.class, e -> {
+                    assertThat(e.getReason()).isEqualTo(Reason.PARAMETER_INVALID);
+                    assertThat(e.getErrorCode()).isEqualTo("TEMPLATE_PARAMETER_INVALID");
+                    assertThat(e.getVariablePath()).isEqualTo("customerName");
+                    assertThat(e.getMessage()).doesNotContain("Jane");
+                });
 
         NotificationRequest noData = request(plain(), "order-shipped", null);
-        assertThatThrownBy(() -> renderer.render(noData)).isInstanceOf(TemplateValidationException.class);
+        assertThatThrownBy(() -> renderer.render(noData))
+                .isInstanceOfSatisfying(TemplateRenderException.class,
+                        e -> assertThat(e.getReason()).isEqualTo(Reason.MODEL_INVALID));
     }
 
     @Test
@@ -135,10 +148,22 @@ class WhatsAppContentRendererTest {
         WhatsAppRecipient noValue = new WhatsAppRecipient(null, PHONE, "t", "en", null, null,
                 List.of(Map.of("index", "0")));
 
-        for (WhatsAppRecipient recipient : List.of(noLanguage, badBody, badIndex, outOfRange, noValue)) {
+        Map<WhatsAppRecipient, List<Object>> expected = Map.of(
+                noLanguage, List.of(Reason.MODEL_INVALID, "recipient.languageCode"),
+                badBody, List.of(Reason.PARAMETER_INVALID, "recipient.bodyParameters[0]"),
+                badIndex, List.of(Reason.PARAMETER_INVALID, "recipient.buttonParameters[0].index"),
+                outOfRange, List.of(Reason.PARAMETER_INVALID, "recipient.buttonParameters[0].index"),
+                noValue, List.of(Reason.MODEL_INVALID, "recipient.buttonParameters[0]"));
+
+        expected.forEach((recipient, reasonAndPath) -> {
             NotificationRequest request = request(recipient, "x", Map.of());
-            assertThatThrownBy(() -> renderer.render(request)).isInstanceOf(TemplateValidationException.class);
-        }
+            assertThatThrownBy(() -> renderer.render(request))
+                    .isInstanceOfSatisfying(TemplateRenderException.class, e -> {
+                        assertThat(e.getReason()).isEqualTo(reasonAndPath.get(0));
+                        assertThat(e.getVariablePath()).isEqualTo(reasonAndPath.get(1));
+                        assertThat(e.getTemplateId()).isEqualTo("t");
+                    });
+        });
     }
 
     @Test

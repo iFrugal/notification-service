@@ -37,9 +37,10 @@ A second vendor is a sibling module, for example `whatsapp-provider-msg91`, that
   The tenant's entry wins, then the `default` tenant's, like the `.ftl` lookup.
   The default implementation binds `notification.whatsapp.templates.<tenant>.<templateId>` and fails the startup on an incomplete entry.
 - The renderer reads each named variable, applies `WhatsAppParameterRules` (present and not blank; no new line, carriage return or tab; no run of 5 or more spaces; at most 1024 characters) and returns the `WhatsAppTemplateMessage` as the payload.
-  A bad value is a `TemplateValidationException` (`TEMPLATE_VALIDATION_FAILED`, HTTP 400, a client error); the message names the template and the variable, never the value.
+  A bad value is a 1.3.0 `TemplateRenderException` (DD-27): `MODEL_INVALID` when it is missing or not text, and the new reason `PARAMETER_INVALID` (`TEMPLATE_PARAMETER_INVALID`, HTTP 422) when it breaks a rule.
+  Its `variablePath` is the `templateData` key, or the recipient field (`recipient.languageCode`, `recipient.bodyParameters[0]`, `recipient.buttonParameters[1].index`), so a caller can point at the field; the message names the template and the variable, never the value.
   A missing binding falls through to the template engine, which raises `TemplateNotFoundException` when there is no `.ftl` either.
-  With `validate-before-dispatch` on, both are thrown to the caller with nothing claimed, counted or stored (REST 400 and 422); with it off they are a `FAILED` response, like every template failure.
+  With `validate-before-dispatch` on, both are thrown to the caller with nothing claimed, counted or stored (REST 422, or 404 for `TemplateNotFoundException`; Kafka one WARN and a commit); with it off they are a `FAILED` response, like every template failure.
 - Backward compatible: a `WhatsAppRecipient` whose `whatsappTemplateName` is set bypasses the registry and is sent with its own language and parameter lists, as the record always promised.
 
 ### `whatsapp-provider-meta`
@@ -126,6 +127,12 @@ No POJO is serialised by reflection.
 
 Resolving the binding inside the provider would validate the request only after the idempotency claim and the rate-limit token were taken, and every vendor module would have to repeat the registry lookup and the parameter rules.
 As a renderer, the resolution runs where FreeMarker runs, once for all vendors, and before the claim when `validate-before-dispatch` (DD-27) is on.
+
+### Why rule violations are TemplateRenderExceptions
+
+1.3.0 already answers a value that does not fit a template: `TemplateRenderException` carries a reason, the template id and the variable path, REST maps it to 422 with that body, the Kafka listener rejects it with one WARN, and a metric counts it by reason.
+A separate WhatsApp exception would need its own REST mapping, Kafka handling and metric, and callers would handle two shapes of the same client error.
+`MODEL_INVALID` already means "a missing or wrongly typed value"; a present value that breaks a channel's rule is a different fix for the caller, so it gets its own reason, `PARAMETER_INVALID`, which any later channel with parameter rules can reuse.
 
 ### Why errorCodes are a contract
 

@@ -1,6 +1,7 @@
 package com.lazydevs.notification.channel.whatsapp;
 
-import com.lazydevs.notification.api.exception.TemplateValidationException;
+import com.lazydevs.notification.api.exception.TemplateRenderException;
+import com.lazydevs.notification.api.exception.TemplateRenderException.Reason;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -31,7 +32,13 @@ class WhatsAppParameterRulesTest {
     @ValueSource(strings = {"", "   ", "line\nbreak", "carriage\rreturn", "tab\there", "five     spaces"})
     void rejectsBlankControlCharactersAndSpaceRuns(String value) {
         assertThatThrownBy(() -> WhatsAppParameterRules.check("order-shipped", "customerName", value))
-                .isInstanceOf(TemplateValidationException.class)
+                .isInstanceOfSatisfying(TemplateRenderException.class, e -> {
+                    assertThat(e.getReason()).isEqualTo(Reason.PARAMETER_INVALID);
+                    assertThat(e.getErrorCode()).isEqualTo("TEMPLATE_PARAMETER_INVALID");
+                    assertThat(e.getVariablePath()).isEqualTo("customerName");
+                    assertThat(e.getTemplateId()).isEqualTo("order-shipped");
+                    assertThat(e.getStatusCode()).isEqualTo(422);
+                })
                 .hasMessageContaining("order-shipped")
                 .hasMessageContaining("customerName");
     }
@@ -39,15 +46,20 @@ class WhatsAppParameterRulesTest {
     @Test
     void rejectsMissingTooLongAndNonTextValues_withoutEchoingTheValue() {
         assertThatThrownBy(() -> WhatsAppParameterRules.check("t", "v", null))
-                .isInstanceOf(TemplateValidationException.class).hasMessageContaining("missing");
+                .isInstanceOfSatisfying(TemplateRenderException.class,
+                        e -> assertThat(e.getReason()).isEqualTo(Reason.MODEL_INVALID))
+                .hasMessageContaining("missing");
         String secret = "s".repeat(1025);
         assertThatThrownBy(() -> WhatsAppParameterRules.check("t", "v", secret))
-                .isInstanceOf(TemplateValidationException.class)
+                .isInstanceOfSatisfying(TemplateRenderException.class,
+                        e -> assertThat(e.getReason()).isEqualTo(Reason.PARAMETER_INVALID))
                 .hasMessageContaining("1024")
                 .satisfies(e -> assertThat(e.getMessage()).doesNotContain(secret));
         List<String> notText = List.of("a");
         assertThatThrownBy(() -> WhatsAppParameterRules.check("t", "v", notText))
-                .isInstanceOf(TemplateValidationException.class).hasMessageContaining("not a text value");
+                .isInstanceOfSatisfying(TemplateRenderException.class,
+                        e -> assertThat(e.getReason()).isEqualTo(Reason.MODEL_INVALID))
+                .hasMessageContaining("not a text value");
         assertThatThrownBy(() -> WhatsAppParameterRules.check("t", "v", "private value\n"))
                 .satisfies(e -> assertThat(e.getMessage()).doesNotContain("private value"));
     }

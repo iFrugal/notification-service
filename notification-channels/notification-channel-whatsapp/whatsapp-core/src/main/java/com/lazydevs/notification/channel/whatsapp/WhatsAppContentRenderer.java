@@ -3,7 +3,8 @@ package com.lazydevs.notification.channel.whatsapp;
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.channel.RenderedContent;
 import com.lazydevs.notification.api.exception.TemplateNotFoundException;
-import com.lazydevs.notification.api.exception.TemplateValidationException;
+import com.lazydevs.notification.api.exception.TemplateRenderException;
+import com.lazydevs.notification.api.exception.TemplateRenderException.Reason;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.WhatsAppRecipient;
 import com.lazydevs.notification.channel.whatsapp.WhatsAppTemplateMessage.ButtonParameter;
@@ -39,7 +40,10 @@ import java.util.function.Function;
  *       {@link TemplateNotFoundException}.</li>
  * </ol>
  * Every parameter passes {@link WhatsAppParameterRules}; a bad one is a
- * {@link TemplateValidationException} and the provider is never called.
+ * {@link TemplateRenderException} ({@link Reason#MODEL_INVALID} when missing,
+ * {@link Reason#PARAMETER_INVALID} when it breaks a rule) whose variable path is
+ * the {@code templateData} key, or the recipient field such as
+ * {@code recipient.bodyParameters[0]}, and the provider is never called.
  *
  * @since 1.4.0
  */
@@ -51,6 +55,8 @@ public class WhatsAppContentRenderer implements ChannelContentRenderer {
     private static final List<String> BUTTON_VALUE_KEYS = List.of("text", "payload", "coupon_code", "value");
     private static final List<String> BUTTON_SUB_TYPE_KEYS = List.of("sub_type", "subType", "sub-type");
     private static final String BUTTON_INDEX_KEY = "index";
+    /** Prefix of the variable path of a value the recipient carries. */
+    private static final String RECIPIENT = "recipient.";
 
     private final WhatsAppTemplateRegistry registry;
     private final Function<NotificationRequest, RenderedContent> fallback;
@@ -114,11 +120,11 @@ public class WhatsAppContentRenderer implements ChannelContentRenderer {
     static WhatsAppTemplateMessage fromRecipient(WhatsAppRecipient recipient) {
         String name = recipient.whatsappTemplateName().strip();
         if (!hasText(recipient.languageCode())) {
-            throw new TemplateValidationException("WhatsApp template '" + name
-                    + "': languageCode is required with whatsappTemplateName");
+            throw WhatsAppParameterRules.invalid(Reason.MODEL_INVALID, name, RECIPIENT + "languageCode",
+                    "is required with whatsappTemplateName");
         }
-        List<String> header = positional(name, "header", recipient.headerParameters());
-        List<String> body = positional(name, "body", recipient.bodyParameters());
+        List<String> header = positional(name, RECIPIENT + "headerParameters", recipient.headerParameters());
+        List<String> body = positional(name, RECIPIENT + "bodyParameters", recipient.bodyParameters());
         List<ButtonParameter> buttons = new ArrayList<>();
         List<Map<String, String>> entries = recipient.buttonParameters() == null
                 ? List.of() : recipient.buttonParameters();
@@ -140,7 +146,7 @@ public class WhatsAppContentRenderer implements ChannelContentRenderer {
     }
 
     private static ButtonParameter button(String name, int position, Map<String, String> entry) {
-        String variable = "button[" + position + "]";
+        String variable = RECIPIENT + "buttonParameters[" + position + "]";
         Map<String, String> fields = entry == null ? Map.of() : entry;
         int index = position;
         String rawIndex = fields.get(BUTTON_INDEX_KEY);
@@ -148,13 +154,13 @@ public class WhatsAppContentRenderer implements ChannelContentRenderer {
             try {
                 index = Integer.parseInt(rawIndex.strip());
             } catch (NumberFormatException _) {
-                throw new TemplateValidationException("WhatsApp template '" + name + "': " + variable
-                        + " index is not a number");
+                throw WhatsAppParameterRules.invalid(Reason.PARAMETER_INVALID, name, variable + ".index",
+                        "is not a number");
             }
         }
         if (index < 0 || index > WhatsAppTemplateBinding.Button.MAX_INDEX) {
-            throw new TemplateValidationException("WhatsApp template '" + name + "': " + variable
-                    + " index must be 0 to " + WhatsAppTemplateBinding.Button.MAX_INDEX);
+            throw WhatsAppParameterRules.invalid(Reason.PARAMETER_INVALID, name, variable + ".index",
+                    "must be 0 to " + WhatsAppTemplateBinding.Button.MAX_INDEX);
         }
         String subType = firstText(fields, BUTTON_SUB_TYPE_KEYS);
         String value = WhatsAppParameterRules.check(name, variable, firstText(fields, BUTTON_VALUE_KEYS));

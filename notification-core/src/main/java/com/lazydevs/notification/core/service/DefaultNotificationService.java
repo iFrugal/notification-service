@@ -382,8 +382,8 @@ public class DefaultNotificationService implements NotificationService {
      * {@code notification.template.validate-before-dispatch} is on (DD-27), so a
      * {@link TemplateRenderException} reaches the caller with no idempotency claim, rate
      * token, audit row or DLQ entry. A channel with a {@link ChannelContentRenderer}
-     * (DD-35) is rendered by it here, so its own exceptions (a
-     * {@code TemplateValidationException}, a {@code TemplateNotFoundException}) reach the
+     * (DD-35) is rendered by it here, so its {@link TemplateRenderException}, for example
+     * a WhatsApp parameter that breaks a rule ({@code PARAMETER_INVALID}), reaches the
      * caller the same way. {@code null} when the flag is off: the engine is not
      * touched and the dispatch path renders as in 1.2. A request without a channel also
      * gets {@code null}, so it fails on the dispatch path exactly as before.

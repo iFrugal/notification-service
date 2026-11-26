@@ -2,7 +2,6 @@ package com.lazydevs.notification.api.webhook;
 
 import com.lazydevs.notification.api.delivery.DeliveryEvent;
 import com.lazydevs.notification.api.delivery.DeliveryStatus;
-import com.lazydevs.notification.api.exception.TemplateValidationException;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -71,12 +70,5 @@ class WebhookRequestResponseTest {
         assertThat(rejected.status()).isEqualTo(403);
         assertThat(rejected.signatureRejected()).isTrue();
         assertThat(new WebhookResponse(200, null, null, null, false).events()).isEmpty();
-    }
-
-    @Test
-    void templateValidationException_isAClientError() {
-        TemplateValidationException e = new TemplateValidationException("bad");
-        assertThat(e.getErrorCode()).isEqualTo(TemplateValidationException.ERROR_CODE);
-        assertThat(e.getStatusCode()).isEqualTo(400);
     }
 }

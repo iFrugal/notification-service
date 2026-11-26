@@ -401,7 +401,7 @@ The template is rendered before the idempotency check, the rate limit and the au
 A request whose template is missing, invalid, does not fit its data, or renders an email with a blank subject or an empty body is refused with `TemplateRenderException`: HTTP 422 over REST (`error`, `reason`, `templateId`, `path`, `message`), one WARN and an offset commit on Kafka.
 Nothing is stored, no rate-limit token is taken and nothing goes to the dead-letter store.
 The rendered content is reused for the send, so the template is rendered once.
-A channel with its own renderer (WhatsApp, DD-35) is rendered by it at this point instead, so a WhatsApp `TemplateValidationException` is refused the same way, as HTTP 400.
+A channel with its own renderer (WhatsApp, DD-35) is rendered by it at this point instead; a WhatsApp value that breaks a parameter rule is refused the same way, with reason `PARAMETER_INVALID` (`TEMPLATE_PARAMETER_INVALID`) and the variable as `path`.
 
 ### 3b. Rate limiting (DD-12 + DD-23)
 

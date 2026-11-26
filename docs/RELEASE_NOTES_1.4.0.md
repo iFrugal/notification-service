@@ -43,7 +43,8 @@ The upgrade is additive: without the new modules on the classpath and without ne
   The 1.2 controller mixed query-string parameters into the parameters it verified, so a status callback URL with a query string always failed Twilio's signature scheme.
   The handler now verifies the URL (query included) plus the POST parameters, as Twilio signs them, and builds the event from the POST parameters.
 - With `whatsapp-core` on the classpath, a `WHATSAPP` request whose recipient names a template (`whatsappTemplateName`) or whose template id has a binding is no longer rendered with FreeMarker; anything else still is.
-  With `validate-before-dispatch` on, a `TemplateValidationException` is thrown to the caller before the idempotency claim, the rate limit and the audit (REST 400), like a `TemplateRenderException` (422); with it off, both are a `FAILED` response.
+  A WhatsApp template value that is missing or breaks WhatsApp's parameter rules is a 1.3.0 `TemplateRenderException` with the new reason `PARAMETER_INVALID` (`TEMPLATE_PARAMETER_INVALID`, HTTP 422) when a value breaks a rule, or `MODEL_INVALID` (`TEMPLATE_MODEL_INVALID`) when it is missing or not text; its `variablePath` names the `templateData` key, or the recipient field such as `recipient.bodyParameters[0]`.
+  With `validate-before-dispatch` on it is thrown to the caller before the idempotency claim, the rate limit and the audit: REST answers 422 with `error`, `reason`, `templateId` and `path`, and Kafka logs one WARN and commits, as for any template render failure; with it off it is a `FAILED` response.
 - **New delivery statuses** `SENT` and `READ` can reach your listeners and delivery event store from the Meta webhook.
   `READ` can arrive before `DELIVERED`: a listener that projects a current status must never move it backwards.
   The status view (`NotificationService.find`, 1.3.0) does so: its `deliveryStatus` is the latest event by timestamp, except that a `SENT` or `DELIVERED` never replaces a further step, and a `READ` sets `deliveredAt` (to the `DELIVERED` event's time when one arrived, else the read time).
@@ -51,7 +52,7 @@ The upgrade is additive: without the new modules on the classpath and without ne
 ## API additions and compatibility
 
 Every change to the public API is additive: no type, method or constructor was removed or changed its signature.
-Three additions can still break source code:
+Four additions can still break source code:
 
 - **`DeliveryStatus.SENT` and `DeliveryStatus.READ`** are appended after `UNKNOWN` (the ordinals of the earlier constants do not change).
   A `switch` expression or pattern `switch` over `DeliveryStatus` without a `default` no longer compiles, and code compiled against 1.2 fails at runtime when it meets a new constant.
@@ -61,6 +62,8 @@ Three additions can still break source code:
   A record pattern that deconstructs `RenderedContent(...)` with 4 components no longer compiles; add the component or use the accessors.
 - **`NotificationServiceExtensions`** (1.3.0) gains a sixth component, `List<ChannelContentRenderer> renderers`.
   The 1.3.0 5-argument constructor, `defaults()` and `of(...)` are kept and mean "no renderers"; a 5-component record pattern no longer compiles.
+- **`TemplateRenderException.Reason.PARAMETER_INVALID`** (error code `TEMPLATE_PARAMETER_INVALID`) is appended after `EMPTY_OUTPUT`: a value is present but breaks the channel's rules for a template parameter.
+  A `switch` over `Reason` without a `default` no longer compiles; metrics tag it as `reason=PARAMETER_INVALID`.
 
 Other additions:
 
@@ -69,7 +72,6 @@ Other additions:
 - `com.lazydevs.notification.core.template.ChannelContentRenderer`, passed to `DefaultNotificationService` through `NotificationServiceExtensions.renderers` (or `withRenderers(List)`); the auto-configuration collects every renderer bean.
   Two renderers for one channel fail the startup, naming the channel and both classes.
 - `RenderedContent.payload(Class)` returns the payload when it has that type.
-- `TemplateValidationException` (`TEMPLATE_VALIDATION_FAILED`, HTTP 400).
 - `TwilioWebhookHandler` and `SesWebhookHandler` in `notification-rest`; `WebhookController` now takes a `WebhookDispatcher`.
   Its 1.2 constructor `(NotificationProperties, List<DeliveryEventListener>, Optional<NotificationMetrics>)` is kept, deprecated for removal, and serves Twilio and SES as before.
 - `BuiltInProviders` lists `WHATSAPP:meta` as implemented.

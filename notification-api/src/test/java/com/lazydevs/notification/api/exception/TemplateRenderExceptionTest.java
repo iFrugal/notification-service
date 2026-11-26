@@ -30,6 +30,15 @@ class TemplateRenderExceptionTest {
         assertThat(Reason.INVALID_TEMPLATE.errorCode()).isEqualTo("TEMPLATE_INVALID");
         assertThat(Reason.MODEL_INVALID.errorCode()).isEqualTo("TEMPLATE_MODEL_INVALID");
         assertThat(Reason.EMPTY_OUTPUT.errorCode()).isEqualTo("TEMPLATE_EMPTY_OUTPUT");
+        assertThat(Reason.PARAMETER_INVALID.errorCode()).isEqualTo("TEMPLATE_PARAMETER_INVALID");
+    }
+
+    @Test
+    void parameterInvalid_isAppended_soTheEarlierOrdinalsDoNotMove() {
+        assertThat(Reason.values()).containsExactly(Reason.NOT_FOUND, Reason.INVALID_TEMPLATE, Reason.MODEL_INVALID,
+                Reason.EMPTY_OUTPUT, Reason.PARAMETER_INVALID);
+        assertThat(new TemplateRenderException(Reason.PARAMETER_INVALID, null, "order-shipped", "customerName",
+                "bad", null).getStatusCode()).isEqualTo(422);
     }
 
     @Test

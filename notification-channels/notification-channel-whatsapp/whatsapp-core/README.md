@@ -76,9 +76,17 @@ Every parameter value must satisfy WhatsApp's rules, checked before the provider
 - at most 1024 characters;
 - text, a number, a boolean, an enum or a date/time (not a list or a map).
 
-A violation fails the send with `TEMPLATE_VALIDATION_FAILED` (HTTP 400 semantics, a client error).
-With `notification.template.validate-before-dispatch: true` the `TemplateValidationException` is thrown to the caller before the idempotency claim, the rate limit and the audit record, so nothing is stored (REST answers 400); with it off the send returns a `FAILED` response.
+A violation is a `TemplateRenderException`, the exception the template engine throws since 1.3.0:
+
+| Problem | `reason` | `errorCode` |
+|---------|----------|-------------|
+| The value is missing, or not text (a list or a map) | `MODEL_INVALID` | `TEMPLATE_MODEL_INVALID` |
+| The value is blank, has a new line or a tab, a run of spaces, too many characters, or a button index is not 0 to 9 | `PARAMETER_INVALID` | `TEMPLATE_PARAMETER_INVALID` |
+
+Its `variablePath` names the field to fix: the `templateData` key (`customerName`) for a binding, or the recipient field (`recipient.languageCode`, `recipient.bodyParameters[0]`, `recipient.buttonParameters[1].index`) for a recipient that names its template.
 The message names the template and the variable, never the value.
+With `notification.template.validate-before-dispatch: true` the exception is thrown to the caller before the idempotency claim, the rate limit and the audit record, so nothing is stored: REST answers 422 with `error`, `reason`, `templateId` and `path`, and the Kafka listener logs one WARN and commits the offset.
+With it off the send returns a `FAILED` response with that `errorCode`.
 
 ## What providers receive
 

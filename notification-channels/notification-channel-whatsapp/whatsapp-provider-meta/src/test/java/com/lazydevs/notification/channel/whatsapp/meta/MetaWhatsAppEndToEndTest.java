@@ -7,7 +7,7 @@ import com.lazydevs.notification.api.delivery.DeliveryEvent;
 import com.lazydevs.notification.api.delivery.DeliveryEventListener;
 import com.lazydevs.notification.api.delivery.DeliveryStatus;
 import com.lazydevs.notification.api.exception.TemplateNotFoundException;
-import com.lazydevs.notification.api.exception.TemplateValidationException;
+import com.lazydevs.notification.api.exception.TemplateRenderException;
 import com.lazydevs.notification.api.guard.RecipientGuard;
 import com.lazydevs.notification.api.idempotency.IdempotencyReleasePolicy;
 import com.lazydevs.notification.api.model.FailureType;
@@ -139,7 +139,7 @@ class MetaWhatsAppEndToEndTest {
             NotificationResponse response = context.getBean(NotificationService.class).send(request);
 
             assertThat(response.status()).isEqualTo(NotificationStatus.FAILED);
-            assertThat(response.errorCode()).isEqualTo("TEMPLATE_VALIDATION_FAILED");
+            assertThat(response.errorCode()).isEqualTo("TEMPLATE_PARAMETER_INVALID");
             assertThat(stub.requests()).isEmpty();
         });
     }
@@ -237,7 +237,10 @@ class MetaWhatsAppEndToEndTest {
                     bad.getTemplateData().put("customerName", "Jane\nDoe");
 
                     assertThatThrownBy(() -> service.send(bad))
-                            .isInstanceOf(TemplateValidationException.class)
+                            .isInstanceOfSatisfying(TemplateRenderException.class, e -> {
+                                assertThat(e.getReason()).isEqualTo(TemplateRenderException.Reason.PARAMETER_INVALID);
+                                assertThat(e.getVariablePath()).isEqualTo("customerName");
+                            })
                             .hasMessageContaining("customerName")
                             .hasMessageNotContaining("Jane");
                     assertThat(stub.requests()).isEmpty();
