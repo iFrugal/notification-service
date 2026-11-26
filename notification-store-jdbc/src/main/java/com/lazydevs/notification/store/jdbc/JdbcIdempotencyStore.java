@@ -8,6 +8,7 @@ import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.sql.ResultSet;
@@ -40,62 +41,63 @@ import static com.lazydevs.notification.store.jdbc.JdbcStoreSupport.nowPlusMilli
  *
  * <p>The row's {@code tenant_id} is {@link IdempotencyKey#tenantId()},
  * which is the SPI's dedup scope and is always set.
+ *
+ * <p>The {@code fingerprint} column (DD-32, since 1.3.0) is optional: a
+ * 1.2.0 table without it keeps working. The store probes for the column
+ * once ({@link #detectFingerprintColumn()}, called at startup by the
+ * auto-configuration, otherwise on first use); when it is missing it logs
+ * one WARN with the {@code ALTER TABLE} statement and stores no
+ * fingerprints, so {@code notification.idempotency.reject-key-reuse} cannot
+ * compare them.
  */
 @Slf4j
 public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStore {
 
-    private static final String COLUMNS =
-            "tenant_id, caller_id, idem_key, notification_id, status, response, fingerprint,"
-                    + " created_at, recorded_at, expires_at";
+    /** PostgreSQL SQLSTATE {@code undefined_column}. */
+    private static final String UNDEFINED_COLUMN = "42703";
 
     private final JdbcClient jdbc;
     private final ObjectMapper json;
     private final long ttlMillis;
     private final int purgeBatchSize;
+    private final String table;
+    private final boolean requireFingerprint;
 
-    private final String findSql;
-    private final String markInProgressSql;
-    private final String markCompleteSql;
+    private final Statements withFingerprint;
+    private final Statements withoutFingerprint;
+    /** {@code null} until the fingerprint column has been detected. */
+    private volatile Statements statements;
     private final String releaseSql;
     private final String settleSql;
     private final String purgeSql;
 
+    /**
+     * The 1.2.0 constructor: the fingerprint column is detected on first use
+     * and its absence never fails.
+     */
     public JdbcIdempotencyStore(JdbcClient jdbc, ObjectMapper json, JdbcStoreTables tables,
                                 Duration ttl, int purgeBatchSize) {
+        this(jdbc, json, tables, ttl, purgeBatchSize, false);
+    }
+
+    /**
+     * @param requireFingerprint {@code notification.idempotency.reject-key-reuse}:
+     *                           {@link #detectFingerprintColumn()} fails when the
+     *                           {@code fingerprint} column is missing
+     * @since 1.3.0
+     */
+    public JdbcIdempotencyStore(JdbcClient jdbc, ObjectMapper json, JdbcStoreTables tables,
+                                Duration ttl, int purgeBatchSize, boolean requireFingerprint) {
         this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
         this.json = Objects.requireNonNull(json, "json");
         this.ttlMillis = JdbcStoreSupport.millis(JdbcStoreSupport.requirePositive(ttl, "notification.idempotency.ttl"));
         this.purgeBatchSize = JdbcStoreSupport.requirePositive(purgeBatchSize, "notification.store.jdbc.purge.batch-size");
+        this.requireFingerprint = requireFingerprint;
         String t = tables.idempotency();
+        this.table = t;
         String keyMatch = "tenant_key = COALESCE(:tenant, '') AND caller_key = COALESCE(:caller, '') AND idem_key = :key";
-
-        this.findSql = "SELECT notification_id, status, response, fingerprint, recorded_at FROM " + t
-                + " WHERE " + keyMatch + " AND expires_at > now()";
-
-        this.markInProgressSql = "INSERT INTO " + t + " AS t (" + COLUMNS + ")"
-                + " VALUES (:tenant, :caller, :key, :notificationId, 'IN_PROGRESS', NULL, :fingerprint, now(), now(), "
-                + nowPlusMillis("ttl") + ")"
-                + " ON CONFLICT (tenant_key, caller_key, idem_key) DO UPDATE SET"
-                + " tenant_id = EXCLUDED.tenant_id, caller_id = EXCLUDED.caller_id,"
-                + " notification_id = EXCLUDED.notification_id, status = EXCLUDED.status, response = NULL,"
-                + " fingerprint = EXCLUDED.fingerprint,"
-                + " created_at = EXCLUDED.created_at, recorded_at = EXCLUDED.recorded_at,"
-                + " expires_at = EXCLUDED.expires_at"
-                + " WHERE t.expires_at <= now()";
-
-        // Upsert so a completion whose IN_PROGRESS row was already purged is
-        // still cached (same as the Redis store's unconditional SET). The
-        // original notification id and fingerprint are kept unless the old row had expired.
-        this.markCompleteSql = "INSERT INTO " + t + " AS t (" + COLUMNS + ")"
-                + " VALUES (:tenant, :caller, :key, :notificationId, 'COMPLETE', :response, NULL, now(), now(), "
-                + nowPlusMillis("ttl") + ")"
-                + " ON CONFLICT (tenant_key, caller_key, idem_key) DO UPDATE SET"
-                + " notification_id = CASE WHEN t.expires_at <= now()"
-                + " THEN EXCLUDED.notification_id ELSE t.notification_id END,"
-                + " fingerprint = CASE WHEN t.expires_at <= now() THEN NULL ELSE t.fingerprint END,"
-                + " created_at = CASE WHEN t.expires_at <= now() THEN EXCLUDED.created_at ELSE t.created_at END,"
-                + " status = EXCLUDED.status, response = EXCLUDED.response,"
-                + " recorded_at = EXCLUDED.recorded_at, expires_at = EXCLUDED.expires_at";
+        this.withFingerprint = Statements.of(t, keyMatch, true);
+        this.withoutFingerprint = Statements.of(t, keyMatch, false);
 
         // Compare-and-delete in one statement: only a COMPLETE row that still
         // belongs to the given notification id goes; a re-claimed
@@ -115,9 +117,92 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
                 + " WHERE expires_at <= now() LIMIT :limit FOR UPDATE SKIP LOCKED)";
     }
 
+    /**
+     * Probe the table for the {@code fingerprint} column (DD-32) and remember
+     * the answer. Missing: one WARN with the {@code ALTER TABLE} statement,
+     * and the store keeps no fingerprints. When the probe cannot tell (the
+     * database is unreachable, the table does not exist yet) nothing is
+     * remembered and the next use probes again.
+     *
+     * @return whether the column exists; empty when the probe could not tell
+     * @throws IllegalStateException when the column is missing and the store
+     *                               was built with {@code requireFingerprint}
+     * @since 1.3.0
+     */
+    public Optional<Boolean> detectFingerprintColumn() {
+        Optional<Boolean> present = probeFingerprintColumn();
+        present.ifPresent(p -> {
+            if (!p) {
+                String message = missingFingerprintMessage();
+                if (requireFingerprint) {
+                    throw new IllegalStateException(message);
+                }
+                log.warn(message);
+            }
+            statements = p ? withFingerprint : withoutFingerprint;
+        });
+        return present;
+    }
+
+    private Optional<Boolean> probeFingerprintColumn() {
+        try {
+            jdbc.sql("SELECT fingerprint FROM " + table + " WHERE 1 = 0").query().listOfRows();
+            return Optional.of(Boolean.TRUE);
+        } catch (DataAccessException e) {
+            if (isUndefinedColumn(e)) {
+                return Optional.of(Boolean.FALSE);
+            }
+            log.debug("Could not probe {} for the fingerprint column; probing again on next use: {}",
+                    table, e.toString());
+            return Optional.empty();
+        }
+    }
+
+    private static boolean isUndefinedColumn(Throwable e) {
+        for (Throwable cur = e; cur != null; cur = cur.getCause()) {
+            if (cur instanceof SQLException sql && UNDEFINED_COLUMN.equals(sql.getSQLState())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String missingFingerprintMessage() {
+        return "Idempotency table " + table + " has no fingerprint column (added in 1.3.0, DD-32);"
+                + " idempotency keeps working without request fingerprints, so"
+                + " notification.idempotency.reject-key-reuse cannot detect a reused key."
+                + " Add the column with: ALTER TABLE " + table + " ADD COLUMN IF NOT EXISTS fingerprint VARCHAR(64)";
+    }
+
+    /**
+     * The statements for the detected schema. Until the column has been
+     * detected, the startup probe is retried here; a lazily detected missing
+     * column never throws, even with {@code requireFingerprint}, because the
+     * send path must keep working: it logs the WARN instead.
+     */
+    private Statements statements() {
+        Statements current = statements;
+        if (current != null) {
+            return current;
+        }
+        Optional<Boolean> present = probeFingerprintColumn();
+        if (present.isEmpty()) {
+            return withFingerprint;
+        }
+        synchronized (this) {
+            if (statements == null) {
+                if (!present.get()) {
+                    log.warn(missingFingerprintMessage());
+                }
+                statements = present.get() ? withFingerprint : withoutFingerprint;
+            }
+            return statements;
+        }
+    }
+
     @Override
     public Optional<IdempotencyRecord> findExisting(IdempotencyKey key) {
-        return keyParams(jdbc.sql(findSql), key)
+        return keyParams(jdbc.sql(statements().find()), key)
                 .query(this::mapRecord)
                 .list()
                 .stream()
@@ -132,7 +217,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
 
     @Override
     public boolean markInProgress(IdempotencyKey key, String notificationId, String fingerprint) {
-        int rows = keyParams(jdbc.sql(markInProgressSql), key)
+        int rows = keyParams(jdbc.sql(statements().markInProgress()), key)
                 .param("notificationId", Objects.requireNonNull(notificationId, "notificationId"), Types.VARCHAR)
                 .param("fingerprint", fingerprint, Types.VARCHAR)
                 .param("ttl", ttlMillis)
@@ -142,7 +227,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
 
     @Override
     public void markComplete(IdempotencyKey key, NotificationResponse response) {
-        keyParams(jdbc.sql(markCompleteSql), key)
+        keyParams(jdbc.sql(statements().markComplete()), key)
                 .param("notificationId", Objects.requireNonNullElse(response.requestId(), ""), Types.VARCHAR)
                 .param("response", storedJson(response), Types.VARCHAR)
                 .param("ttl", ttlMillis)
@@ -224,5 +309,47 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
                 response,
                 JdbcStoreSupport.instant(rs, "recorded_at"),
                 rs.getString("fingerprint"));
+    }
+
+    /**
+     * The statements that touch the {@code fingerprint} column, in the form
+     * with or without it.
+     */
+    private record Statements(String find, String markInProgress, String markComplete) {
+
+        static Statements of(String t, String keyMatch, boolean fingerprint) {
+            String columns = "tenant_id, caller_id, idem_key, notification_id, status, response,"
+                    + (fingerprint ? " fingerprint," : "") + " created_at, recorded_at, expires_at";
+            String find = "SELECT notification_id, status, response, "
+                    + (fingerprint ? "fingerprint" : "NULL AS fingerprint") + ", recorded_at FROM " + t
+                    + " WHERE " + keyMatch + " AND expires_at > now()";
+
+            String markInProgress = "INSERT INTO " + t + " AS t (" + columns + ")"
+                    + " VALUES (:tenant, :caller, :key, :notificationId, 'IN_PROGRESS', NULL,"
+                    + (fingerprint ? " :fingerprint," : "") + " now(), now(), " + nowPlusMillis("ttl") + ")"
+                    + " ON CONFLICT (tenant_key, caller_key, idem_key) DO UPDATE SET"
+                    + " tenant_id = EXCLUDED.tenant_id, caller_id = EXCLUDED.caller_id,"
+                    + " notification_id = EXCLUDED.notification_id, status = EXCLUDED.status, response = NULL,"
+                    + (fingerprint ? " fingerprint = EXCLUDED.fingerprint," : "")
+                    + " created_at = EXCLUDED.created_at, recorded_at = EXCLUDED.recorded_at,"
+                    + " expires_at = EXCLUDED.expires_at"
+                    + " WHERE t.expires_at <= now()";
+
+            // Upsert so a completion whose IN_PROGRESS row was already purged is
+            // still cached (same as the Redis store's unconditional SET). The
+            // original notification id and fingerprint are kept unless the old row had expired.
+            String markComplete = "INSERT INTO " + t + " AS t (" + columns + ")"
+                    + " VALUES (:tenant, :caller, :key, :notificationId, 'COMPLETE', :response,"
+                    + (fingerprint ? " NULL," : "") + " now(), now(), " + nowPlusMillis("ttl") + ")"
+                    + " ON CONFLICT (tenant_key, caller_key, idem_key) DO UPDATE SET"
+                    + " notification_id = CASE WHEN t.expires_at <= now()"
+                    + " THEN EXCLUDED.notification_id ELSE t.notification_id END,"
+                    + (fingerprint ? " fingerprint = CASE WHEN t.expires_at <= now() THEN NULL ELSE t.fingerprint END,"
+                            : "")
+                    + " created_at = CASE WHEN t.expires_at <= now() THEN EXCLUDED.created_at ELSE t.created_at END,"
+                    + " status = EXCLUDED.status, response = EXCLUDED.response,"
+                    + " recorded_at = EXCLUDED.recorded_at, expires_at = EXCLUDED.expires_at";
+            return new Statements(find, markInProgress, markComplete);
+        }
     }
 }

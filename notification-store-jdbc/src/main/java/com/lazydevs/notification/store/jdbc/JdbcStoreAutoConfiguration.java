@@ -62,11 +62,18 @@ public class JdbcStoreAutoConfiguration {
     public JdbcIdempotencyStore jdbcIdempotencyStore(JdbcStoreProperties properties,
                                                      JdbcStoreDataSourceResolver dataSources,
                                                      Environment environment) {
-        Duration ttl = Binder.get(environment)
-                .bind("notification.idempotency.ttl", Duration.class)
+        Binder binder = Binder.get(environment);
+        Duration ttl = binder.bind("notification.idempotency.ttl", Duration.class)
                 .orElse(DEFAULT_IDEMPOTENCY_TTL);
-        return new JdbcIdempotencyStore(jdbcClient(properties, dataSources), JdbcStoreJson.create(),
-                JdbcStoreTables.of(properties), ttl, properties.getPurge().getBatchSize());
+        boolean rejectKeyReuse = binder.bind("notification.idempotency.reject-key-reuse", Boolean.class)
+                .orElse(false);
+        JdbcIdempotencyStore store = new JdbcIdempotencyStore(jdbcClient(properties, dataSources),
+                JdbcStoreJson.create(), JdbcStoreTables.of(properties), ttl, properties.getPurge().getBatchSize(),
+                rejectKeyReuse);
+        // A 1.2.0 table without the fingerprint column keeps working (DD-32); with
+        // reject-key-reuse the missing column fails startup with the ALTER statement.
+        store.detectFingerprintColumn();
+        return store;
     }
 
     @Bean
