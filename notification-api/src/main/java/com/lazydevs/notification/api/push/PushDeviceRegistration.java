@@ -12,9 +12,10 @@ import java.util.Objects;
  *
  * @param tenantId       tenant scope of the device; {@code null} uses the current
  *                       {@code TenantContext} tenant, and without one the pool (no tenant) scope
- * @param userId         the user the device belongs to, required, at most 255 characters
+ * @param userId         the user the device belongs to, required, at most 255 characters,
+ *                       no control characters
  * @param installationId the app installation, stable across token rotation, required,
- *                       at most 255 characters
+ *                       at most 255 characters, no control characters
  * @param appId          the app, such as a bundle id, for an account with several apps; may be {@code null}
  * @param platform       the platform, required
  * @param token          the push token (FCM registration token), required, at most 4096 characters
@@ -36,8 +37,8 @@ public record PushDeviceRegistration(
 
     public PushDeviceRegistration {
         tenantId = PushFields.optional("tenantId", tenantId, PushFields.MAX_ID_LENGTH);
-        userId = PushFields.required("userId", userId, PushFields.MAX_ID_LENGTH);
-        installationId = PushFields.required("installationId", installationId, PushFields.MAX_ID_LENGTH);
+        userId = PushFields.identifier("userId", userId, PushFields.MAX_ID_LENGTH);
+        installationId = PushFields.identifier("installationId", installationId, PushFields.MAX_ID_LENGTH);
         appId = PushFields.optional("appId", appId, PushFields.MAX_ID_LENGTH);
         Objects.requireNonNull(platform, "platform");
         token = PushFields.required("token", token, PushFields.MAX_TOKEN_LENGTH);

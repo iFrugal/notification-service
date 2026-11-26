@@ -141,6 +141,8 @@ Set exactly one of these on the `PushRecipient`; anything else fails with `FCM_I
 
 For the `PUSH` channel a template without sections renders plain text, so the rendered text becomes the body and `PushRecipient.title` the title.
 Since 1.4.0 a push template may carry `[TITLE]`, `[BODY]` and `[DATA key="..."]` sections (DD-37): the `[TITLE]` section becomes the title, before `PushRecipient.title`, and the data sections are merged under the recipient's `data`.
+Sections are supported only in the top-level template: a marker in a file pulled in with `<#include>` or `<#import>` is not parsed, and the render fails with `TemplateRenderException` reason `INVALID_TEMPLATE` instead of sending the marker as text.
+In a template that includes or imports a file, a marker that arrives in template data fails the same way.
 
 Data keys that FCM reserves (`from`, `message_type`, `google.*`, `gcm.*`) fail with `FCM_INVALID_DATA_KEY`, whether the caller or the template set them.
 

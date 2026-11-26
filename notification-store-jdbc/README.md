@@ -308,7 +308,8 @@ The dead-letter and delivery-event stores log and swallow that failure, as their
 - One row per `(tenant_key, user_id, installation_id)` and per `(tenant_key, token_sha256)`; `token_sha256` is the full SHA-256 of the token, so the token itself is never indexed.
 - `register` runs in one transaction under two advisory locks (`pg_advisory_xact_lock`, first on the scope and user, then on the scope and token): it removes the token from any other user or installation, upserts the device, and evicts the user's least recently seen devices beyond `max-devices-per-user`.
   Advisory locks need no grant.
-- `last_seen_at` is database time; `activeDevices` leaves out devices not seen within `stale-after`.
+  A deadlock or serialization failure (two registrations swapping tokens between two devices) or a unique key collision re-runs the whole transaction, up to three attempts.
+- `last_seen_at` is database time, one `clock_timestamp()` reading taken after both locks are held; `activeDevices` leaves out devices not seen within `stale-after`.
 - `expires_at` is `last_seen_at + purge-after` (default 270 days), so `JdbcStorePurger` deletes long-gone devices with the other stores; `purgeStale(olderThan)` deletes by last-seen time in the current scope.
 - Every removal is logged at INFO with the count and the reason, never the token or its hash.
 

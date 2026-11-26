@@ -47,6 +47,13 @@ import java.util.regex.Pattern;
  *       repeated section or data key, or a data key that is not 1-128 letters, digits,
  *       {@code .}, {@code _} or {@code -} fails with
  *       {@link Reason#INVALID_TEMPLATE}: the template source is at fault.</li>
+ *   <li>Sections are supported only in the top-level template. Markers in a file it pulls in
+ *       with {@code <#include>} or {@code <#import>} are not swapped for tokens, so when the
+ *       top-level template includes or imports anything, output that still contains a literal
+ *       marker ({@code [TITLE]}, {@code [/TITLE]}, {@code [BODY]}, {@code [/BODY]},
+ *       {@code [DATA ...]}, {@code [/DATA]}) fails with {@link Reason#INVALID_TEMPLATE} instead
+ *       of being sent as text. In such a template a marker that arrives in template data fails
+ *       the same way; the two cannot be told apart after rendering.</li>
  * </ul>
  *
  * <p>Registered for {@link Channel#PUSH} unless
@@ -63,6 +70,11 @@ public class PushContentRenderer implements ChannelContentRenderer {
     private static final String BODY_OPEN = "[BODY]";
     private static final String BODY_CLOSE = "[/BODY]";
     private static final String DATA_CLOSE = "[/DATA]";
+    /** A section marker left as text in the output. */
+    private static final Pattern LITERAL_MARKER =
+            Pattern.compile("\\[(?:/?TITLE|/?BODY|/DATA)]|\\[DATA\\s[^\\]]*]");
+    /** A directive that pulls another file into the template, in either tag syntax. */
+    private static final Pattern PULLS_IN_FILES = Pattern.compile("[<\\[]#\\s*(?:include|import)\\b");
 
     private final NotificationTemplateEngine engine;
 
@@ -88,6 +100,10 @@ public class PushContentRenderer implements ChannelContentRenderer {
                     + "' must be 1-128 letters, digits, '.', '_' or '-'");
         }
         String output = raw.output();
+        if (source.pullsInFiles && LITERAL_MARKER.matcher(output).find()) {
+            throw invalid(raw, "a section marker is left in the output; sections are only supported in the"
+                    + " top-level template, not in a file it includes or imports");
+        }
         if (!output.contains(tokens.prefix)) {
             return RenderedContent.text(output.trim());
         }
@@ -229,12 +245,14 @@ public class PushContentRenderer implements ChannelContentRenderer {
 
         private final Tokens tokens;
         private String invalidKey;
+        private boolean pullsInFiles;
 
         Source(Tokens tokens) {
             this.tokens = tokens;
         }
 
         String tokenize(String source) {
+            pullsInFiles = PULLS_IN_FILES.matcher(source).find();
             String result = source
                     .replace(TITLE_OPEN, tokens.open(Section.TITLE))
                     .replace(TITLE_CLOSE, tokens.close(Section.TITLE))

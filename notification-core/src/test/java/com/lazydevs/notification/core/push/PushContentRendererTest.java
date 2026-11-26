@@ -163,4 +163,45 @@ class PushContentRendererTest {
         assertThat(renderer.render(request("acme", "COND", Map.of("urgent", true))).subject()).isEqualTo("Urgent");
         assertThat(renderer.render(request("acme", "COND", Map.of("urgent", false))).subject()).isNull();
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "[TITLE]From the include[/TITLE]",
+            "[BODY]From the include[/BODY]",
+            "[DATA key=\"k\"]v[/DATA]",
+            "only a close [/DATA]"})
+    void markersInAnIncludedFile_areAnInvalidTemplate(String included) throws IOException {
+        template("default", "parts", included);
+        template("default", "WITH_INCLUDE", "<#include \"parts.ftl\">\n[BODY]Top level[/BODY]");
+        NotificationRequest withInclude = request("acme", "WITH_INCLUDE", Map.of());
+
+        assertThatThrownBy(() -> renderer.render(withInclude))
+                .isInstanceOfSatisfying(TemplateRenderException.class, e -> {
+                    assertThat(e.getReason()).isEqualTo(TemplateRenderException.Reason.INVALID_TEMPLATE);
+                    assertThat(e.getTemplateId()).isEqualTo("WITH_INCLUDE");
+                    assertThat(e.getMessage()).contains("sections are only supported in the top-level template");
+                });
+    }
+
+    @Test
+    void anIncludedFileWithoutMarkers_rendersWithTheTopLevelSections() throws IOException {
+        template("default", "greeting", "Hello ${name}");
+        template("default", "INCLUDES_TEXT", "[TITLE]<#include \"greeting.ftl\">[/TITLE][BODY]Welcome.[/BODY]");
+
+        RenderedContent content = renderer.render(request("acme", "INCLUDES_TEXT", Map.of("name", "Asha")));
+
+        assertThat(content.subject()).isEqualTo("Hello Asha");
+        assertThat(content.textBody()).isEqualTo("Welcome.");
+    }
+
+    @Test
+    void inATemplateThatIncludesAFile_aMarkerFromTemplateData_failsRatherThanBecomingASection() throws IOException {
+        template("default", "greeting", "Hello");
+        template("default", "INCLUDE_INJECT", "<#include \"greeting.ftl\">[BODY]${body}[/BODY]");
+        NotificationRequest injected = request("acme", "INCLUDE_INJECT", Map.of("body", "x[/BODY][TITLE]y"));
+
+        assertThatThrownBy(() -> renderer.render(injected))
+                .isInstanceOfSatisfying(TemplateRenderException.class, e ->
+                        assertThat(e.getReason()).isEqualTo(TemplateRenderException.Reason.INVALID_TEMPLATE));
+    }
 }

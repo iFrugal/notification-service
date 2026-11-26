@@ -16,7 +16,7 @@ Push reuses 1.3.0's per-channel content renderer hook and `RenderedContent.paylo
   When FCM reports a token as unregistered, `PushDeviceCleanupListener` removes the device from the registry, in the tenant scope the send ran in.
 - **Push templates with a title and data.**
   `[TITLE]`, `[BODY]` and `[DATA key="..."]` sections in a push template set the notification title, body and data; a template without sections renders as before.
-  Templates are found through the engine's normal lookup, and a marker that arrives in template data is plain text.
+  Templates are found through the engine's normal lookup, and a marker that arrives in template data never opens or closes a section.
 - **Keyless FCM credentials.**
   `credentials: external-account-supplier:<name>` federates into Google Cloud with a subject token from an `FcmSubjectTokenSupplier` bean (for example an Azure managed identity token), with no key and no credential file.
 - **Native image hints for FCM.**
@@ -34,6 +34,7 @@ The upgrade is additive: without `notification.push.devices.enabled`, without a 
   `PushContentRenderer` is registered for `PUSH` by default (`notification.push.template-sections.enabled`, default `true`).
   A push template that contains the literal text `[TITLE]`, `[/TITLE]`, `[BODY]`, `[/BODY]`, `[/DATA]` or `[DATA key="..."]` is now parsed into sections; any other template renders exactly as before.
   Malformed sections (unclosed, nested, repeated, or a bad data key) fail with `TemplateRenderException` reason `INVALID_TEMPLATE` (`TEMPLATE_INVALID`).
+  Sections are supported only in the top-level template; in a template that includes or imports a file, a marker left in the output (from that file or from template data) fails the same way instead of being sent as text.
   An application that declared its own `ChannelContentRenderer` for `PUSH` in 1.3.0 must set `notification.push.template-sections.enabled=false`, or startup fails with two renderers for one channel.
 
 ## API additions and compatibility

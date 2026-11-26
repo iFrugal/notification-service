@@ -1,6 +1,7 @@
 package com.lazydevs.notification.api.push;
 
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Validation shared by {@link PushDeviceRegistration} and {@link PushDevice}.
@@ -14,6 +15,8 @@ final class PushFields {
     static final int MAX_LOCALE_LENGTH = 35;
     static final int MAX_TIMEZONE_LENGTH = 64;
 
+    private static final Pattern CONTROL = Pattern.compile("\\p{Cntrl}");
+
     private PushFields() {
     }
 
@@ -23,6 +26,19 @@ final class PushFields {
             throw new IllegalArgumentException(name + " must not be blank");
         }
         return optional(name, value, max);
+    }
+
+    /**
+     * A required identifier, such as a user or installation id: {@code value} stripped; blank,
+     * longer than {@code max} or containing a control character fails. Control characters would
+     * make keys and log lines ambiguous.
+     */
+    static String identifier(String name, String value, int max) {
+        String stripped = required(name, value, max);
+        if (CONTROL.matcher(stripped).find()) {
+            throw new IllegalArgumentException(name + " must not contain control characters");
+        }
+        return stripped;
     }
 
     /** {@code value} stripped, {@code null} when blank; longer than {@code max} fails. */

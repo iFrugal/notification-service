@@ -33,16 +33,21 @@ import java.util.function.Predicate;
 @Slf4j
 public class InMemoryPushDeviceRegistry implements PushDeviceRegistry {
 
-    /** Scope key of the pool (no tenant) scope, as the JDBC {@code tenant_key} column maps it. */
-    private static final String POOL_SCOPE = "";
-
     private final int maxDevicesPerUser;
     private final Duration staleAfter;
     private final Clock clock;
     private final Object lock = new Object();
 
-    /** Scope key, then {@code userId + '\0' + installationId}, then the device. */
-    private final Map<String, Map<String, PushDevice>> scopes = new HashMap<>();
+    /** The tenant ({@code null} for the pool scope), then the user and installation, then the device. */
+    private final Map<String, Map<DeviceKey, PushDevice>> scopes = new HashMap<>();
+
+    /** One device within a scope; a record, so no user or installation id can collide with another pair. */
+    private record DeviceKey(String userId, String installationId) {
+
+        static DeviceKey of(PushDevice device) {
+            return new DeviceKey(device.userId(), device.installationId());
+        }
+    }
 
     /**
      * @param maxDevicesPerUser most devices one user keeps, at least 1
@@ -65,11 +70,12 @@ public class InMemoryPushDeviceRegistry implements PushDeviceRegistry {
     public PushDevice register(PushDeviceRegistration registration) {
         Objects.requireNonNull(registration, "registration");
         String tenant = registration.tenantId() != null ? registration.tenantId() : currentTenant();
-        String key = key(registration.userId(), registration.installationId());
-        Instant now = clock.instant();
+        DeviceKey key = new DeviceKey(registration.userId(), registration.installationId());
         synchronized (lock) {
-            Map<String, PushDevice> devices = scopes.computeIfAbsent(scopeKey(tenant), k -> new HashMap<>());
-            removeWhere(devices, d -> d.token().equals(registration.token()) && !key.equals(key(d)),
+            // Read under the lock, so a later registration never gets an earlier timestamp.
+            Instant now = clock.instant();
+            Map<DeviceKey, PushDevice> devices = scopes.computeIfAbsent(tenant, k -> new HashMap<>());
+            removeWhere(devices, d -> d.token().equals(registration.token()) && !key.equals(DeviceKey.of(d)),
                     PushDeviceRemovalReasons.MOVED);
             PushDevice existing = devices.get(key);
             PushDevice fresh = PushDevice.from(registration, tenant, now);
@@ -87,8 +93,8 @@ public class InMemoryPushDeviceRegistry implements PushDeviceRegistry {
         if (userId == null || installationId == null) {
             return false;
         }
-        String key = key(userId.strip(), installationId.strip());
-        return removeInScope(d -> key.equals(key(d)), PushDeviceRemovalReasons.UNREGISTERED) > 0;
+        DeviceKey key = new DeviceKey(userId.strip(), installationId.strip());
+        return removeInScope(d -> key.equals(DeviceKey.of(d)), PushDeviceRemovalReasons.UNREGISTERED) > 0;
     }
 
     @Override
@@ -117,7 +123,7 @@ public class InMemoryPushDeviceRegistry implements PushDeviceRegistry {
         String user = userId.strip();
         Instant activeSince = clock.instant().minus(staleAfter);
         synchronized (lock) {
-            return scopes.getOrDefault(scopeKey(currentTenant()), Map.of()).values().stream()
+            return scopes.getOrDefault(currentTenant(), Map.of()).values().stream()
                     .filter(d -> d.userId().equals(user))
                     .filter(d -> appId == null || appId.strip().equals(d.appId()))
                     .filter(d -> !d.lastSeenAt().isBefore(activeSince))
@@ -146,7 +152,7 @@ public class InMemoryPushDeviceRegistry implements PushDeviceRegistry {
             .comparing(PushDevice::lastSeenAt, Comparator.reverseOrder())
             .thenComparing(PushDevice::createdAt, Comparator.reverseOrder());
 
-    private void evictBeyondLimit(Map<String, PushDevice> devices, PushDevice kept) {
+    private void evictBeyondLimit(Map<DeviceKey, PushDevice> devices, PushDevice kept) {
         List<PushDevice> others = new ArrayList<>(devices.values().stream()
                 .filter(d -> d.userId().equals(kept.userId()) && d != kept)
                 .sorted(MOST_RECENT_FIRST)
@@ -154,22 +160,22 @@ public class InMemoryPushDeviceRegistry implements PushDeviceRegistry {
         // The device just registered always stays.
         for (int i = maxDevicesPerUser - 1; i < others.size(); i++) {
             PushDevice evicted = others.get(i);
-            devices.remove(key(evicted));
+            devices.remove(DeviceKey.of(evicted));
             logRemoval(PushDeviceRemovalReasons.EVICTED);
         }
     }
 
     private int removeInScope(Predicate<PushDevice> match, String reason) {
         synchronized (lock) {
-            Map<String, PushDevice> devices = scopes.get(scopeKey(currentTenant()));
+            Map<DeviceKey, PushDevice> devices = scopes.get(currentTenant());
             return devices == null ? 0 : removeWhere(devices, match, reason);
         }
     }
 
-    private static int removeWhere(Map<String, PushDevice> devices, Predicate<PushDevice> match, String reason) {
+    private static int removeWhere(Map<DeviceKey, PushDevice> devices, Predicate<PushDevice> match, String reason) {
         List<PushDevice> removed = devices.values().stream().filter(match).toList();
         removed.forEach(d -> {
-            devices.remove(key(d));
+            devices.remove(DeviceKey.of(d));
             logRemoval(reason);
         });
         return removed.size();
@@ -188,17 +194,5 @@ public class InMemoryPushDeviceRegistry implements PushDeviceRegistry {
     private static String currentTenant() {
         String tenant = TenantContext.getTenantId();
         return tenant == null || tenant.isBlank() ? null : tenant;
-    }
-
-    private static String scopeKey(String tenant) {
-        return tenant == null ? POOL_SCOPE : tenant;
-    }
-
-    private static String key(PushDevice device) {
-        return key(device.userId(), device.installationId());
-    }
-
-    private static String key(String userId, String installationId) {
-        return userId + '\0' + installationId;
     }
 }

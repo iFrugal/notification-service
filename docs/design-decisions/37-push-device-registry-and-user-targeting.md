@@ -17,7 +17,9 @@ The idempotency record, the audit record and a dead letter then hold device toke
 
 ## Decision
 
-Everything is opt-in and additive: without `notification.push.devices.enabled` and without a registry bean, the only change is that push templates may use sections.
+Device registration and user targeting are opt-in and additive: without `notification.push.devices.enabled` and without a registry bean, nothing about them changes.
+Push template sections are on by default (`notification.push.template-sections.enabled`, default `true`), so push templates may use sections.
+An application that declares its own `ChannelContentRenderer` for `PUSH` must set `notification.push.template-sections.enabled=false`, or startup fails with two renderers for one channel.
 
 ### Device registry SPI (`notification-api`, package `api.push`)
 
@@ -58,6 +60,9 @@ There is no Redis registry: with the Redis store family and `notification.push.d
 - `token_sha256` is the full SHA-256 of the token, so a token of up to 4096 characters is never indexed itself.
 - `expires_at` is `last_seen_at + purge-after` (default 270 days); an expired device is invisible and the purger deletes it.
 - `register` takes two transaction-scoped advisory locks, on the scope and user and then on the scope and token, always in that order.
+  It then reads `clock_timestamp()` once and stamps `created_at`, `last_seen_at` and `expires_at` with that reading, not with `now()`, which is the start of a transaction that may have waited for a lock.
+- Two registrations that swap tokens between two devices (A/X and B/Y becoming A/Y and B/X) hold different locks and delete each other's rows, so PostgreSQL may abort one as a deadlock.
+  `register` re-runs the whole transaction on a deadlock or serialization failure (`40P01`, `40001`), as on a unique key collision, up to three attempts; a registration that joined a caller's transaction is not retried.
   Two registrations of one user cannot both miss each other's eviction, and two users registering the same token cannot both insert it; a unique-key collision that still happens is retried, up to three attempts.
 - The library still runs no DDL; the table is in `JdbcStoreSchema` and `db/postgresql/notification-store.sql`.
   Under row-level security the table behaves like the others; `JdbcStoreRlsIT` covers it.
@@ -104,14 +109,18 @@ The cost of such a collision is one device registering again.
 
 - The template is found and rendered by `NotificationTemplateEngine.renderRaw`: the engine's own lookup (tenant, then default), cache, helpers and FreeMarker configuration.
   The renderer never loads a template itself, so any template source the engine is given, including a future database-backed loader, serves push too.
-- Before rendering, each marker in the template source is swapped for a token built from a fresh random UUID, as the email sections are; the output is split on those tokens only, so a marker inside template data is plain text.
+- Before rendering, each marker in the template source is swapped for a token built from a fresh random UUID, as the email sections are; the output is split on those tokens only, so a marker inside template data never opens or closes a section.
   Stored templates keep the literal markers.
 - No section: the output is the body, exactly as before.
   With sections: title, body (else the text outside the sections) and data, all trimmed, plain text, nothing HTML-escaped.
 - The result is `RenderedContent(subject = title, textBody = body, payload = PushContent(title, body, data))`.
   FCM uses the rendered title before `PushRecipient.title` (as before) and merges the rendered data under the caller's `data` (the caller's key wins; reserved FCM keys are still refused).
 - A section opened inside another, a close without an open, a section left open, a repeated section or data key, or a data key that is not 1-128 letters, digits, `.`, `_` or `-` is a `TemplateRenderException` with reason `INVALID_TEMPLATE`: the template source is at fault.
-- On by default (`notification.push.template-sections.enabled`); an application with its own `PUSH` renderer turns it off.
+- Sections are supported only in the top-level template, not in a file it pulls in with `<#include>` or `<#import>`: only the top-level source is swapped before rendering, so a marker in an included file would reach the output as literal text.
+  When the top-level template includes or imports a file, the renderer refuses output that still contains a literal marker (`[TITLE]`, `[/TITLE]`, `[BODY]`, `[/BODY]`, `[DATA ...]`, `[/DATA]`) with a `TemplateRenderException` reason `INVALID_TEMPLATE`, rather than send it as text.
+  In such a template a marker that arrives in template data fails the same way, since the two cannot be told apart after rendering; it never becomes a section.
+  A template that includes nothing keeps markers from template data as plain text.
+- On by default (`notification.push.template-sections.enabled`, default `true`); an application with its own `PUSH` renderer must set it to `false`.
 
 ### Keyless FCM credentials
 
@@ -172,7 +181,8 @@ The application decides whether devices are per organisation or per person by wh
 ### Why advisory locks in the JDBC registry
 
 `SERIALIZABLE` would make every concurrent registration of one user a retry, and row locks cannot lock rows that do not exist yet.
-Two advisory locks taken in a fixed order serialise exactly the registrations that conflict and cannot deadlock.
+Two advisory locks taken in a fixed order serialise the registrations of one user and of one token, and never deadlock on each other.
+Registrations that swap tokens between two users take disjoint locks and can still deadlock on rows; that case is rare, so a bounded retry of the whole transaction handles it instead of a coarser lock.
 
 ### Why the push renderer goes through the engine
 

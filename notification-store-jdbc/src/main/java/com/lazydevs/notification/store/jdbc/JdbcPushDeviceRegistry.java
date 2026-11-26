@@ -10,7 +10,9 @@ import com.lazydevs.notification.api.push.PushDeviceRemovalReasons;
 import com.lazydevs.notification.api.push.PushPlatform;
 import com.lazydevs.notification.api.push.PushTokens;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -21,11 +23,12 @@ import java.sql.SQLException;
 import java.sql.Types;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
-import static com.lazydevs.notification.store.jdbc.JdbcStoreSupport.nowPlusMillis;
 import static com.lazydevs.notification.store.jdbc.JdbcStoreSupport.timestamp;
 
 /**
@@ -43,12 +46,20 @@ import static com.lazydevs.notification.store.jdbc.JdbcStoreSupport.timestamp;
  *   <li>{@link #register} runs in one transaction that first takes two transaction-scoped
  *       advisory locks, on the scope and user and then on the scope and token, so two
  *       registrations of one user cannot miss each other's eviction and two registrations
- *       of one token cannot both insert it. Should a unique key still collide, the
- *       registration runs again, up to three times in all.</li>
- *   <li>Times are database time ({@code now()}). A device expires {@code purge-after} after it
- *       was last seen; {@link JdbcStorePurger} deletes expired devices in batches and
+ *       of one token cannot both insert it. Two registrations that swap tokens between two
+ *       devices take different locks and can still deadlock on each other's rows. Should a
+ *       unique key collide, or the database abort the transaction as a deadlock or
+ *       serialization failure (SQLState {@code 40P01} or {@code 40001}), the whole
+ *       transaction runs again, up to three times in all. A registration that joined a
+ *       caller's transaction is not retried: the caller's transaction is aborted.</li>
+ *   <li>Times are database time. The registration reads {@code clock_timestamp()} once after
+ *       it holds both locks and uses it for {@code created_at}, {@code last_seen_at} and
+ *       {@code expires_at}, so a registration that waited for a lock is not stamped with the
+ *       earlier start of its transaction. A device expires {@code purge-after} after it was
+ *       last seen; {@link JdbcStorePurger} deletes expired devices in batches and
  *       {@link #purgeStale} deletes by last-seen time in the current scope.</li>
- *   <li>Every removal is logged at INFO with the token hash and the reason, never the token.</li>
+ *   <li>Every removal is logged at INFO with the count and the reason, never the token or
+ *       its hash.</li>
  * </ul>
  *
  * @since 1.4.0
@@ -68,6 +79,8 @@ public class JdbcPushDeviceRegistry implements PushDeviceRegistry, JdbcPurgeable
     private static final String P_INSTALLATION = "installationId";
     private static final String P_SHA = "sha";
     private static final String P_LIMIT = "limit";
+    private static final String P_NOW = "now";
+    private static final Set<String> RETRYABLE_SQL_STATES = Set.of("40P01", "40001");
 
     private final JdbcClient jdbc;
     private final TransactionTemplate transactions;
@@ -122,8 +135,8 @@ public class JdbcPushDeviceRegistry implements PushDeviceRegistry, JdbcPurgeable
         this.moveSql = "DELETE FROM " + t + " WHERE " + SCOPE + " AND token_sha256 = :sha"
                 + " AND NOT (user_id = :userId AND installation_id = :installationId) RETURNING token_hash";
         this.upsertSql = "INSERT INTO " + t + " (" + COLUMNS + ", token_sha256, expires_at) VALUES (:tenant, :userId,"
-                + " :installationId, :appId, :platform, :token, :tokenHash, :locale, :timezone, :attributes, now(),"
-                + " now(), :sha, " + nowPlusMillis("purge") + ")"
+                + " :installationId, :appId, :platform, :token, :tokenHash, :locale, :timezone, :attributes, :now,"
+                + " :now, :sha, CAST(:now AS TIMESTAMPTZ) + (:purge * INTERVAL '1 millisecond'))"
                 + " ON CONFLICT (tenant_key, user_id, installation_id) DO UPDATE SET"
                 + " app_id = EXCLUDED.app_id, platform = EXCLUDED.platform, token = EXCLUDED.token,"
                 + " token_hash = EXCLUDED.token_hash, token_sha256 = EXCLUDED.token_sha256,"
@@ -153,16 +166,41 @@ public class JdbcPushDeviceRegistry implements PushDeviceRegistry, JdbcPurgeable
         Objects.requireNonNull(registration, "registration");
         String tenant = JdbcStoreSupport.tenantFor(registration.tenantId());
         for (int attempt = 1; ; attempt++) {
+            // Whether this attempt began its own transaction; a joined one cannot be re-run.
+            boolean[] ownTransaction = {false};
             try {
-                return Objects.requireNonNull(transactions.execute(_ -> registerInTransaction(registration, tenant)));
-            } catch (DuplicateKeyException e) {
-                if (attempt >= REGISTER_ATTEMPTS) {
+                return Objects.requireNonNull(transactions.execute(status -> {
+                    ownTransaction[0] = status.isNewTransaction();
+                    return registerInTransaction(registration, tenant);
+                }));
+            } catch (DataAccessException e) {
+                if (!ownTransaction[0] || attempt >= REGISTER_ATTEMPTS || !isRetryable(e)) {
                     throw e;
                 }
-                log.debug("Push device registration {} collided with a concurrent one, attempt {}",
-                        registration.tokenHash(), attempt);
+                log.debug("Push device registration {} collided with a concurrent one ({}), attempt {}",
+                        registration.tokenHash(), e.getClass().getSimpleName(), attempt);
             }
         }
+    }
+
+    /**
+     * A unique key collision, or a transaction the database aborted as a deadlock or
+     * serialization failure: running the whole transaction again can succeed.
+     */
+    static boolean isRetryable(DataAccessException e) {
+        if (e instanceof DuplicateKeyException || e instanceof PessimisticLockingFailureException) {
+            return true;
+        }
+        for (Throwable current = e; current != null; current = current.getCause()) {
+            if (current instanceof SQLException sql && sql.getSQLState() != null
+                    && RETRYABLE_SQL_STATES.contains(sql.getSQLState())) {
+                return true;
+            }
+            if (current.getCause() == current) {
+                break;
+            }
+        }
+        return false;
     }
 
     private PushDevice registerInTransaction(PushDeviceRegistration registration, String tenant) {
@@ -177,6 +215,8 @@ public class JdbcPushDeviceRegistry implements PushDeviceRegistry, JdbcPurgeable
                 .param(P_TENANT, tenant, Types.VARCHAR)
                 .param(P_SHA, sha, Types.VARCHAR)
                 .query(Integer.class).single();
+        // One reading of the clock after both locks: the time this registration really happens.
+        OffsetDateTime now = jdbc.sql("SELECT clock_timestamp()").query(OffsetDateTime.class).single();
         logRemovals(jdbc.sql(moveSql)
                 .param(P_TENANT, tenant, Types.VARCHAR)
                 .param(P_SHA, sha, Types.VARCHAR)
@@ -195,6 +235,7 @@ public class JdbcPushDeviceRegistry implements PushDeviceRegistry, JdbcPurgeable
                 .param("timezone", registration.timezone(), Types.VARCHAR)
                 .param("attributes", attributesJson(registration.attributes()), Types.VARCHAR)
                 .param(P_SHA, sha, Types.VARCHAR)
+                .param(P_NOW, now, Types.TIMESTAMP_WITH_TIMEZONE)
                 .param("purge", purgeMillis)
                 .query(this::mapStored)
                 .single();

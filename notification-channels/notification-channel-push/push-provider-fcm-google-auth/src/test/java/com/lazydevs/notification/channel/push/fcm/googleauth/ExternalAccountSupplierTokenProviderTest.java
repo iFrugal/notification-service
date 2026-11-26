@@ -16,6 +16,7 @@ import org.springframework.context.annotation.Configuration;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -119,20 +120,57 @@ class ExternalAccountSupplierTokenProviderTest {
 
     @Test
     void aFailingSupplier_failsTheTokenFetch_withoutItsMessageLeakingATokenAndWithoutHttp() {
+        String sentinel = "SENTINEL-host-text-eyJhbGciOi";
+        String nestedSentinel = "NESTED-SENTINEL-host-cause";
+        IOException hostException = new IOException("managed identity endpoint unreachable " + sentinel,
+                new IllegalStateException("inner " + nestedSentinel));
         FcmSubjectTokenSupplier failing = new StubSupplier("broken", false) {
             @Override
             public String subjectToken() throws IOException {
-                throw new IOException("managed identity endpoint unreachable");
+                throw hostException;
             }
         };
 
         FcmAccessTokenProvider provider = create("external-account-supplier:broken", failing);
 
         assertThatThrownBy(provider::token)
-                .isInstanceOfSatisfying(FcmAuthenticationException.class,
-                        e -> assertThat(e.failureType()).isNotEqualTo(FailureType.PERMANENT))
-                .hasMessageContaining("managed identity endpoint unreachable");
+                .isInstanceOfSatisfying(FcmAuthenticationException.class, e -> {
+                    assertThat(e.failureType()).isNotEqualTo(FailureType.PERMANENT);
+                    assertThat(e.getMessage())
+                            .contains("the subject token supplier 'broken' failed with IOException")
+                            .doesNotContain(sentinel)
+                            .doesNotContain(nestedSentinel)
+                            .doesNotContain("managed identity endpoint unreachable");
+                    assertThat(e).hasRootCauseMessage("inner " + nestedSentinel);
+                    assertThat(causeChain(e)).as("the host's exception is kept as a cause").contains(hostException);
+                });
         assertThat(transport.count()).isZero();
+    }
+
+    @Test
+    void aSupplierThrowingARuntimeException_isWrappedTheSameWay() {
+        String sentinel = "SENTINEL-runtime-host-text";
+        FcmSubjectTokenSupplier failing = new StubSupplier("broken", false) {
+            @Override
+            public String subjectToken() {
+                throw new IllegalStateException(sentinel, new RuntimeException(sentinel + "-nested"));
+            }
+        };
+
+        FcmAccessTokenProvider provider = create("external-account-supplier:broken", failing);
+
+        assertThatThrownBy(provider::token)
+                .isInstanceOf(FcmAuthenticationException.class)
+                .hasMessageContaining("failed with IllegalStateException")
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain(sentinel));
+    }
+
+    private static List<Throwable> causeChain(Throwable t) {
+        List<Throwable> chain = new ArrayList<>();
+        for (Throwable current = t; current != null && !chain.contains(current); current = current.getCause()) {
+            chain.add(current);
+        }
+        return chain;
     }
 
     @Test

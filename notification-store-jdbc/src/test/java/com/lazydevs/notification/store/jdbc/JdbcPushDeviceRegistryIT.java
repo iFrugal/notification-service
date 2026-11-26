@@ -14,6 +14,9 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -21,9 +24,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -137,6 +142,80 @@ class JdbcPushDeviceRegistryIT extends PushDeviceRegistryContractTest {
 
         assertThat(purged).isEqualTo(4);
         assertThat(registry.activeDevices("user-4", null)).hasSize(1);
+    }
+
+    @Test
+    void concurrentTokenSwapsBetweenTwoDevices_endWithEachTokenOwnedOnce() throws Exception {
+        // A/iA/X + B/iB/Y -> A/iA/Y + B/iB/X: the two registrations take different advisory locks
+        // and delete each other's rows, which PostgreSQL may abort as a deadlock; the registry
+        // re-runs the aborted transaction.
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            for (int round = 0; round < 50; round++) {
+                PostgresTestSupport.truncate(jdbc, TABLES);
+                registry.register(PushDeviceRegistration.of("A", "iA", PushPlatform.ANDROID, "X"));
+                registry.register(PushDeviceRegistration.of("B", "iB", PushPlatform.ANDROID, "Y"));
+                CountDownLatch go = new CountDownLatch(1);
+                Future<PushDevice> first = pool.submit(() -> {
+                    go.await();
+                    return registry.register(PushDeviceRegistration.of("A", "iA", PushPlatform.ANDROID, "Y"));
+                });
+                Future<PushDevice> second = pool.submit(() -> {
+                    go.await();
+                    return registry.register(PushDeviceRegistration.of("B", "iB", PushPlatform.ANDROID, "X"));
+                });
+                go.countDown();
+                assertThat(first.get().token()).isEqualTo("Y");
+                assertThat(second.get().token()).isEqualTo("X");
+
+                List<String> rows = jdbc.sql("SELECT user_id || '/' || installation_id || '/' || token FROM "
+                        + TABLES.pushDevice() + " ORDER BY user_id").query(String.class).list();
+                assertThat(rows).as("round %d", round).containsExactly("A/iA/Y", "B/iB/X");
+            }
+        }
+    }
+
+    @Test
+    void aRegistrationThatWaitedForALock_isStampedWithTheTimeItGotTheLock() throws Exception {
+        String userLock = "SELECT 1 FROM pg_advisory_xact_lock(hashtextextended('push-user/' || '' || '/' || 'u-wait', 0))";
+        OffsetDateTime released;
+        Future<PushDevice> waiting;
+        try (ExecutorService pool = Executors.newSingleThreadExecutor();
+             Connection blocker = dataSource.getConnection()) {
+            blocker.setAutoCommit(false);
+            try (Statement statement = blocker.createStatement()) {
+                statement.execute(userLock);
+                waiting = pool.submit(() -> registry.register(
+                        PushDeviceRegistration.of("u-wait", "inst", PushPlatform.IOS, "token-wait")));
+                awaitAdvisoryLockWaiter();
+                // Let the waiting transaction age, so its now() is well before the release.
+                Thread.sleep(300);
+                try (ResultSet rs = statement.executeQuery("SELECT clock_timestamp()")) {
+                    rs.next();
+                    released = rs.getObject(1, OffsetDateTime.class);
+                }
+            }
+            blocker.commit();
+            PushDevice device = waiting.get(30, TimeUnit.SECONDS);
+
+            assertThat(device.createdAt()).isAfterOrEqualTo(released.toInstant());
+            assertThat(device.lastSeenAt()).isEqualTo(device.createdAt());
+            Map<String, Object> row = jdbc.sql("SELECT expires_at = last_seen_at + (:purge * INTERVAL '1 millisecond')"
+                            + " AS one_reading FROM " + TABLES.pushDevice() + " WHERE user_id = 'u-wait'")
+                    .param("purge", PURGE_AFTER.toMillis()).query().singleRow();
+            assertThat(row).containsEntry("one_reading", true);
+        }
+    }
+
+    /** Waits until some session waits for an advisory lock. */
+    private static void awaitAdvisoryLockWaiter() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (jdbc.sql("SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted")
+                .query(Long.class).single() == 0) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("the registration never waited for the advisory lock");
+            }
+            Thread.sleep(20);
+        }
     }
 
     private static void runAll(List<Callable<PushDevice>> tasks) throws Exception {

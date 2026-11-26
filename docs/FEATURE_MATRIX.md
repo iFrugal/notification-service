@@ -6,6 +6,8 @@
 > Every cross-cutting feature is **opt-in by default**. The base starter
 > sends notifications and that's it. Pull the features you want, set their
 > flag to `true`, you're done.
+>
+> One exception since 1.4.0: push template sections (DD-37) are on by default; see [Push to a user](#push-to-a-user-device-registry-dd-37-since-140).
 
 ## Legend
 
@@ -242,6 +244,10 @@ notification:
 | Title and data from a template | `[TITLE]`, `[BODY]` and `[DATA key="..."]` sections; the caller's `data` wins over the template's |
 
 The Redis store family has no registry: declare your own `PushDeviceRegistry` bean or startup fails.
+
+Device registration and user targeting are opt-in, but push template sections are on by default (`notification.push.template-sections.enabled`, default `true`).
+An application with its own `PUSH` `ChannelContentRenderer` must set it to `false`.
+Sections are supported only in the top-level template, not in an `<#include>`d or `<#import>`ed file.
 
 ### 2e. Planned providers
 

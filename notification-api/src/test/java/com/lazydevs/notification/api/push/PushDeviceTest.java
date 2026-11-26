@@ -48,6 +48,22 @@ class PushDeviceTest {
     }
 
     @Test
+    void registrationRejectsControlCharactersInUserAndInstallationIds() {
+        for (String bad : new String[] {"a\u0000b", "a\nb", "a\tb", "a\u001fb", "a\u007fb"}) {
+            assertThatThrownBy(() -> PushDeviceRegistration.of(bad, "i", PushPlatform.IOS, TOKEN))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("userId must not contain control characters");
+            assertThatThrownBy(() -> PushDeviceRegistration.of("u", bad, PushPlatform.IOS, TOKEN))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("installationId must not contain control characters");
+        }
+        // Surrounding whitespace is stripped first, as before.
+        PushDeviceRegistration stripped = PushDeviceRegistration.of(" u\n", "\ti ", PushPlatform.IOS, TOKEN);
+        assertThat(stripped.userId()).isEqualTo("u");
+        assertThat(stripped.installationId()).isEqualTo("i");
+    }
+
+    @Test
     void toStringNeverShowsTheToken() {
         PushDeviceRegistration registration = new PushDeviceRegistration("acme", "u-1", "inst-1", "app",
                 PushPlatform.IOS, TOKEN, null, null, Map.of("appVersion", "1.2"));

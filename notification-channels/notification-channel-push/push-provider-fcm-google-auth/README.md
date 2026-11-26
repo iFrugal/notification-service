@@ -98,7 +98,8 @@ notification.tenants.acme.channels.push.providers.fcm.properties:
 - `subjectTokenType()` defaults to `urn:ietf:params:oauth:token-type:jwt`, `tokenUrl()` to `https://sts.googleapis.com/v1/token`.
 - With `serviceAccountEmail()` the federated token impersonates that service account through IAM Credentials (`serviceAccountImpersonationUrl()` overrides the URL); without it the federated principal is used directly.
 - The library asks the supplier only when it needs a new access token, and may ask more than once per refresh; return a fresh token each time and never log it.
-- An `IOException` from the supplier fails the token fetch; the send fails without calling FCM.
+- An exception from the supplier fails the token fetch; the send fails without calling FCM.
+  The error message names the supplier and the exception's class only, never its message; your exception is kept as the cause, so what its message and causes contain is up to you.
 - Two suppliers with the same name fail startup; a name no supplier has fails the tenant's provider configuration, naming the known ones.
 - Without Spring, construct `new GoogleAuthTokenProviderFactory(List.of(supplier))` and pass it to the `FcmPushProvider` constructor.
 
