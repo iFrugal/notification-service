@@ -296,8 +296,13 @@ public class DefaultNotificationService implements NotificationService {
             return response;
 
         } catch (NotificationException e) {
-            log.error("Notification error: requestId={}, error={}: {}",
-                    request.getRequestId(), e.getErrorCode(), PiiMasking.redact(e.getMessage()));
+            if (PushTargeting.NO_DEVICES.equals(e.getErrorCode())) {
+                // An expected outcome (the person has no app installed), not a fault.
+                log.info("Notification not sent: requestId={}, error={}", request.getRequestId(), e.getErrorCode());
+            } else {
+                log.error("Notification error: requestId={}, error={}: {}",
+                        request.getRequestId(), e.getErrorCode(), PiiMasking.redact(e.getMessage()));
+            }
 
             response = NotificationResponse.failed(
                     request,
