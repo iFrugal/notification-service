@@ -1,5 +1,10 @@
 # notification-service 1.3.0
 
+> **Note on 1.2.1.**
+> The first release run after this work merged was started without `release-version` and published the same code to Maven Central as `1.2.1`.
+> Maven Central releases cannot be withdrawn, so `1.2.1` stays available, but it is a feature release under a patch number.
+> Use `1.3.0`, which has identical code and the correct version; skip `1.2.1`.
+
 ## Highlights
 
 - **Responses say why a send failed.**
