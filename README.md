@@ -9,7 +9,7 @@
 [![Java](https://img.shields.io/badge/Java-25-orange.svg)](https://openjdk.org/projects/jdk/25/)
 
 A multi-tenant notification service with pluggable providers.
-Email (SMTP, AWS SES, Azure Communication Services), SMS (Twilio) and Push (Firebase Cloud Messaging) ship with built-in providers; WhatsApp exists as a provider SPI, and its built-in providers are planned, like Apple APNs for push (see [Planned providers](#planned-providers)).
+Email (SMTP, AWS SES, Azure Communication Services), SMS (Twilio), WhatsApp (Meta WhatsApp Cloud API) and Push (Firebase Cloud Messaging) ship with built-in providers; more WhatsApp vendors and Apple APNs for push are planned (see [Planned providers](#planned-providers)).
 Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone Docker container**.
 
 > ### 📋 **[Feature Matrix → `docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md)**
@@ -59,8 +59,8 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 
 ## Features
 
-- **Multi-Channel Support**: Email, SMS and Push with built-in providers; WhatsApp as an SPI extension point (`WhatsAppProvider`) with built-in providers planned
-- **Multiple Providers per Channel**: SMTP, AWS SES and Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)) for email, Twilio for SMS, Firebase Cloud Messaging ([`push-provider-fcm`](notification-channels/notification-channel-push/push-provider-fcm/README.md), with [`push-provider-fcm-google-auth`](notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) for Application Default Credentials and workload identity federation) for push; AWS SNS, WhatsApp (Twilio, Meta) and APNs providers are planned
+- **Multi-Channel Support**: Email, SMS, WhatsApp and Push with built-in providers
+- **Multiple Providers per Channel**: SMTP, AWS SES and Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)) for email, Twilio for SMS, Firebase Cloud Messaging ([`push-provider-fcm`](notification-channels/notification-channel-push/push-provider-fcm/README.md), with [`push-provider-fcm-google-auth`](notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) for Application Default Credentials and workload identity federation) for push; the Meta WhatsApp Cloud API ([`whatsapp-provider-meta`](notification-channels/notification-channel-whatsapp/whatsapp-provider-meta/README.md), on the vendor-neutral [`whatsapp-core`](notification-channels/notification-channel-whatsapp/whatsapp-core/README.md)) for WhatsApp; AWS SNS, other WhatsApp vendors and APNs providers are planned
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
 - **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10); opt-in key-reuse check, failure policy with a replaceable release policy, and in-progress timeout (DD-32)
@@ -117,7 +117,7 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 ```
 
 `Custom` is any provider you register against a channel SPI (see [Adding Custom Providers](#adding-custom-providers)).
-Push has a built-in FCM provider; WhatsApp has no built-in provider yet, see [Planned providers](#planned-providers).
+Push has a built-in FCM provider and WhatsApp a built-in Meta Cloud API provider, see [WhatsApp providers](#whatsapp-providers).
 
 ---
 
@@ -131,26 +131,25 @@ Push has a built-in FCM provider; WhatsApp has no built-in provider yet, see [Pl
 | `notification-kafka` | Kafka consumer for async notifications |
 | `notification-redis` | Redis-backed stores and rate limiter (`notification.store.type=redis`) |
 | `notification-store-jdbc` | PostgreSQL-backed stores over plain SQL (`notification.store.type=jdbc`) |
-| `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `email-provider-acs`, `sms-provider-twilio`, `push-provider-fcm`, and the FCM credentials adapter `push-provider-fcm-google-auth` |
+| `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `email-provider-acs`, `sms-provider-twilio`, `push-provider-fcm`, the FCM credentials adapter `push-provider-fcm-google-auth`, `whatsapp-core` and `whatsapp-provider-meta` |
 | `notification-spring-boot-starter` | The dependency to add in library mode; every module brings its own auto-configuration |
-| `notification-server` | Standalone application with Dockerfile; bundles every built-in provider (ACS and FCM since 1.2.0) |
+| `notification-server` | Standalone application with Dockerfile; bundles every built-in provider (ACS and FCM since 1.2.0, WhatsApp since 1.4.0) |
 | `notification-service-bom` | Bill of materials: import it once and leave the versions off every other notification-service dependency (since 1.2.0) |
 
 ### Planned providers
 
 The channel SPIs `SmsProvider`, `WhatsAppProvider` and `PushProvider` live in `notification-api` and exist today.
 You can send on any of these channels now by implementing the SPI yourself (see [Adding Custom Providers](#adding-custom-providers)).
-The built-in providers below are planned and have no published artifact (Firebase Cloud Messaging shipped in 1.2.0, see [Push providers](#push-providers)):
+The built-in providers below are planned and have no published artifact (Firebase Cloud Messaging shipped in 1.2.0, see [Push providers](#push-providers), and the Meta WhatsApp Cloud API in 1.4.0, see [WhatsApp providers](#whatsapp-providers)):
 
 | Channel | Provider | Status |
 |---------|----------|--------|
 | SMS | AWS SNS | Planned |
 | WhatsApp | Twilio | Planned |
-| WhatsApp | Meta WhatsApp Cloud API | Planned |
+| WhatsApp | MSG91 | Planned |
 | Push | Apple Push Notification service (APNs) | Planned |
 
-Next planned: the Meta WhatsApp Cloud API with a signed webhook.
-The remaining providers are not scheduled yet.
+None of them is scheduled yet.
 
 ---
 
@@ -488,6 +487,54 @@ class DeadPushTokenListener implements DeliveryEventListener {
 ```
 
 The listener runs on the thread that called `send`, after the send completed, so it can read the current tenant.
+
+### WhatsApp providers
+
+| Provider name | Artifact | Notes |
+|---------------|----------|-------|
+| `meta` | `whatsapp-provider-meta` | Meta WhatsApp Cloud API template messages and the signed status webhook, no Meta SDK; see the [module README](notification-channels/notification-channel-whatsapp/whatsapp-provider-meta/README.md) |
+| (channel) | `whatsapp-core` | Maps your template ids onto approved templates and checks WhatsApp's parameter rules; comes with every WhatsApp provider. See the [module README](notification-channels/notification-channel-whatsapp/whatsapp-core/README.md) |
+
+**WhatsApp quick start.**
+Add the provider:
+
+```xml
+<dependency>
+    <groupId>com.github.ifrugal</groupId>
+    <artifactId>whatsapp-provider-meta</artifactId>
+</dependency>
+```
+
+Configure the tenant and bind your template ids to the templates approved at Meta:
+
+```yaml
+notification:
+  tenants:
+    default:
+      channels:
+        whatsapp:
+          enabled: true
+          providers:
+            meta:
+              properties:
+                phone-number-id: ${WHATSAPP_META_PHONE_NUMBER_ID}   # <phone-number-id>
+                access-token: ${WHATSAPP_META_ACCESS_TOKEN}
+  whatsapp:
+    templates:
+      default:
+        order-shipped:                 # request.templateId, else request.notificationType
+          name: order_shipped          # approved at Meta
+          language: en
+          body: [customerName, orderNumber]
+  webhooks:
+    meta:                              # statuses: sent, delivered, read, failed
+      enabled: true
+      app-secret: ${META_APP_SECRET}
+      verify-token: ${META_VERIFY_TOKEN}
+```
+
+A send then carries only `templateData` (`customerName`, `orderNumber`); each value must be one line, without runs of 5 spaces, at most 1024 characters.
+Failures carry a documented `errorCode` such as `THROTTLED`, `TEMPLATE_REJECTED` or `CREDENTIAL_REJECTED` (DD-35), and statuses arrive as `SENT`, `DELIVERED`, `READ`, `BOUNCED` or `FAILED_AT_PROVIDER` delivery events.
 
 ### Default Provider Selection
 

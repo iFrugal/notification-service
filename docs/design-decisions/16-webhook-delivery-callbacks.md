@@ -48,7 +48,10 @@ configure Twilio's auth token to satisfy startup validation.
 ```
 POST /webhooks/twilio/status
 POST /webhooks/ses/sns
+GET|POST /webhooks/meta          (since 1.4.0, whatsapp-provider-meta)
 ```
+
+Since 1.4.0 every path is served by one generic route, `/webhooks/{handlerId}/**`, that hands the raw request to the `WebhookHandler` registered under `handlerId` through the core `WebhookDispatcher`; the paths, properties and answers above are unchanged (DD-36).
 
 Each handler verifies the provider's signature scheme **before**
 parsing the body. A failed verification returns `403 Forbidden` and
@@ -83,9 +86,30 @@ public enum DeliveryStatus {
     /** Provider gave up after its own retries. */
     FAILED_AT_PROVIDER,
     /** Catchall — provider sent something we couldn't classify. */
-    UNKNOWN
+    UNKNOWN,
+    /** Handed on towards the recipient, delivery not confirmed yet (since 1.4.0). */
+    SENT,
+    /** The recipient opened the message (since 1.4.0). */
+    READ
 }
 ```
+
+`SENT` and `READ` were appended in 1.4.0 for WhatsApp (DD-35); appending keeps the ordinals of the earlier constants, and readers that predate them read `UNKNOWN`.
+
+| Status | Twilio SMS | SES | Meta WhatsApp (since 1.4.0) |
+|--------|------------|-----|------------------------------|
+| `SENT` | - (`sent` maps to `UNKNOWN`) | - | `sent` |
+| `DELIVERED` | `delivered` | `Delivery` | `delivered` |
+| `READ` | - | - | `read` |
+| `BOUNCED` | `undelivered` | `Bounce`, `bounceType=Permanent` | `failed` with error 131026 |
+| `COMPLAINED` | - | `Complaint` | - |
+| `FAILED_AT_PROVIDER` | `failed` | `Bounce`, other `bounceType` | `failed` with any other error |
+| `UNKNOWN` | anything else | anything else | anything else |
+
+**Ordering.**
+Providers do not guarantee that callbacks arrive in the order the states happened; Meta, for example, can deliver `read` before `delivered`.
+A consumer that projects events onto a current status must never move it backwards: progress runs `SENT` < `DELIVERED` < `READ`, and a later `SENT` or `DELIVERED` never replaces a `READ`.
+Keep every event (the store does), but only let a status move forward.
 
 Each callback becomes a `DeliveryEvent`:
 

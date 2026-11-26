@@ -141,13 +141,48 @@ notification:
 
 ### 2c. WhatsApp channel
 
-No built-in WhatsApp provider ships yet.
-The `WhatsAppProvider` SPI in `notification-api` exists today; implement it and register it as a bean or FQCN to send WhatsApp messages now.
+The Meta WhatsApp Cloud API ships as `whatsapp-provider-meta` since 1.4.0, on top of the vendor-neutral `whatsapp-core` (DD-35).
+Messages are templates approved at the provider; `whatsapp-core` maps the request's `templateId` (else `notificationType`) onto the approved template and fills its parameters from `templateData`, instead of rendering a FreeMarker file.
 
 | Provider | Artifact | When to use | Required properties |
 |----------|----------|-------------|---------------------|
+| Meta | `whatsapp-provider-meta` (brings `whatsapp-core`) | Direct Meta WhatsApp Cloud API (Graph API) | `phone-number-id` and `access-token`, unless a `MetaCredentialsProvider` bean supplies them per tenant; optional `api-version` (default `v25.0`, pinned), `base-url`, `timeout`, `pair-rate-limit-retry-after`. See the [module README](../notification-channels/notification-channel-whatsapp/whatsapp-provider-meta/README.md) |
+| Template registry | `whatsapp-core` | Comes with every WhatsApp provider | `notification.whatsapp.templates.<tenant>.<templateId>`: `name`, `language`, `header`, `body`, `buttons`. See the [module README](../notification-channels/notification-channel-whatsapp/whatsapp-core/README.md) |
 | Twilio | Planned (no artifact) | Twilio's WhatsApp Business API | Not defined yet |
-| Meta | Planned (no artifact) | Direct Meta WhatsApp Cloud API | Not defined yet |
+
+```xml
+<dependency>
+    <groupId>com.github.ifrugal</groupId>
+    <artifactId>whatsapp-provider-meta</artifactId>
+    <version>1.4.0</version>
+</dependency>
+```
+
+```yaml
+notification:
+  tenants:
+    default:
+      channels:
+        whatsapp:
+          enabled: true
+          providers:
+            meta:
+              properties:
+                phone-number-id: ${WHATSAPP_META_PHONE_NUMBER_ID}   # <phone-number-id>
+                access-token: ${WHATSAPP_META_ACCESS_TOKEN}
+  whatsapp:
+    templates:
+      default:
+        order-shipped:
+          name: order_shipped
+          language: en
+          body: [customerName, orderNumber]
+```
+
+Failures carry a documented `errorCode` (`THROTTLED`, `PAIR_RATE_LIMITED`, `TEMPLATE_REJECTED`, `CREDENTIAL_REJECTED`, ...) and a `FailureType`; the provider never retries on its own.
+Message statuses (`sent`, `delivered`, `read`, `failed`) arrive through the Meta webhook, see 3d.
+A Retry-After hint reaches the caller as `NotificationResponse.retryAfter`; to release the idempotency key after `CREDENTIAL_REJECTED` too, declare an `IdempotencyReleasePolicy` bean (see the module README).
+The standalone server bundles both modules.
 
 ### 2d. Push channel
 
@@ -181,8 +216,8 @@ A device token that FCM reports as unregistered is published as a `BOUNCED` deli
 
 ### 2e. Planned providers
 
-FCM (HTTP v1 API) shipped in 1.2.0; next is the Meta WhatsApp Cloud API with a signed webhook.
-AWS SNS SMS, Twilio WhatsApp and Apple APNs are planned but not scheduled yet.
+FCM (HTTP v1 API) shipped in 1.2.0 and the Meta WhatsApp Cloud API with a signed webhook in 1.4.0.
+AWS SNS SMS, Twilio or MSG91 WhatsApp and Apple APNs are planned but not scheduled yet.
 The `SmsProvider`, `WhatsAppProvider` and `PushProvider` SPIs are the extension points in the meantime.
 
 ### 2f. Unpublished artifacts
@@ -191,7 +226,7 @@ The artifactIds `sms-provider-sns`, `whatsapp-provider-twilio`, `whatsapp-provid
 They are not published from 1.1.0 on.
 If your build declares any of them, remove the dependency; you lose nothing, because they never contained code.
 The aggregator poms `notification-channel-whatsapp` and `notification-channel-push` are dropped for the same reason.
-The exception is `push-provider-fcm` (and its aggregator `notification-channel-push`), published again from 1.2.0 with the real FCM provider; versions 1.0.0 to 1.0.2 of it are still empty.
+The exceptions are `push-provider-fcm` (and its aggregator `notification-channel-push`), published again from 1.2.0 with the real FCM provider, and `whatsapp-provider-meta` (and its aggregator `notification-channel-whatsapp`), published again from 1.4.0 with the real Meta provider; versions 1.0.0 to 1.0.2 of them are still empty.
 
 ---
 
@@ -208,7 +243,7 @@ All have an in-memory default; the stateful ones can move to Redis or PostgreSQL
 | **Retries** | DD-13 | 🔵 Off | `notification.retry.enabled: true` | Built-in | n/a | n/a |
 | **Dead-letter queue** | DD-13 | 🔵 Off | `notification.dead-letter.enabled: true` | Caffeine LRU (in `notification-core`) | `RedisDeadLetterStore` | `JdbcDeadLetterStore` (replica-safe replay) |
 | **Per-channel retry + rate-limit overrides** | DD-23 | n/a | composes on top of retry / rate-limit when those are enabled | n/a | n/a | n/a |
-| **Webhook ingestion** (Twilio + SES) | DD-16 | 🔵 Off | `notification.webhooks.enabled: true` + per-provider; needs REST | n/a | n/a | n/a |
+| **Webhook ingestion** (Twilio, SES, Meta WhatsApp) | DD-16, DD-36 | 🔵 Off | `notification.webhooks.enabled: true` + per-provider; the REST route needs REST, the `WebhookDispatcher` works without it | n/a | n/a | n/a |
 | **Delivery event store** | DD-17 | 🔵 Off | `notification.delivery-events.enabled: true` | Caffeine LRU | `RedisDeliveryEventStore` | `JdbcDeliveryEventStore` |
 | **Audit persistence** | DD-07, DD-33 | 🔵 Off | `notification.audit.enabled: true` | `InMemoryNotificationAuditStore` (bounded) | None: supply a `NotificationAuditStore`, or `notification.redis.audit.enabled: false` for memory | `JdbcNotificationAuditStore` (table `<prefix>audit`) |
 | **Legacy template helpers** (`eval`, `file`, `js`, `serde_*`, unrestricted `?new`) | DD-26 | 🟢 On (deprecated; off from 2.0) | `notification.template.legacy-helpers: false` to remove | n/a | n/a | n/a |
@@ -296,6 +331,9 @@ notification:
         subject-prefix: "[redirected: {originals}] "   # default; "" disables
       sms:
         allowed: ["+15550100"]                         # no redirect-to: drop
+      whatsapp:
+        allowed: ["+15550101"]                         # the WhatsApp phone number
+        redirect-to: "+15550101"
 ```
 
 Not-allowed recipients are redirected one-for-one (or dropped); nothing left fails the send with `RECIPIENT_BLOCKED` (`PERMANENT`) before the provider.
@@ -363,6 +401,7 @@ The template is rendered before the idempotency check, the rate limit and the au
 A request whose template is missing, invalid, does not fit its data, or renders an email with a blank subject or an empty body is refused with `TemplateRenderException`: HTTP 422 over REST (`error`, `reason`, `templateId`, `path`, `message`), one WARN and an offset commit on Kafka.
 Nothing is stored, no rate-limit token is taken and nothing goes to the dead-letter store.
 The rendered content is reused for the send, so the template is rendered once.
+A channel with its own renderer (WhatsApp, DD-35) is rendered by it at this point instead, so a WhatsApp `TemplateValidationException` is refused the same way, as HTTP 400.
 
 ### 3b. Rate limiting (DD-12 + DD-23)
 
@@ -457,7 +496,7 @@ notification:
       max-entries: 10000           # Redis list cap, when Redis backs the DLQ
 ```
 
-### 3d. Webhooks — provider delivery callbacks (DD-16 + DD-17)
+### 3d. Webhooks - provider delivery callbacks (DD-16 + DD-17 + DD-36)
 
 ```yaml
 notification:
@@ -471,6 +510,10 @@ notification:
       enabled: true
       topic-arn: arn:aws:sns:us-east-1:0:my-ses-topic
       signature-verification: true
+    meta:                          # needs whatsapp-provider-meta (since 1.4.0)
+      enabled: true
+      app-secret: ${META_APP_SECRET}        # your-app-secret
+      verify-token: ${META_VERIFY_TOKEN}    # your own value, entered in the Meta app
 
   delivery-events:                 # store for querying via admin endpoint
     enabled: true
@@ -480,6 +523,11 @@ notification:
 URLs to register with providers:
 - Twilio status callback URL: `https://your.host/api/v1/webhooks/twilio/status`
 - SES → SNS topic subscription URL: `https://your.host/api/v1/webhooks/ses/sns`
+- Meta WhatsApp callback URL (GET handshake and POST statuses): `https://your.host/api/v1/webhooks/meta`
+
+Every path is `<rest base path><webhooks base path>/{handlerId}/**`, routed to the `WebhookHandler` bean with that id (DD-36).
+Without the REST module, call `WebhookDispatcher.dispatch(handlerId, request)` from your own endpoint.
+WhatsApp statuses map to `SENT`, `DELIVERED`, `READ`, `BOUNCED` and `FAILED_AT_PROVIDER`; `READ` can arrive before `DELIVERED`, so never move a projected status backwards.
 
 Query operator endpoints:
 - `GET /api/v1/admin/delivery-events`
