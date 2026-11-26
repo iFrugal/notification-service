@@ -8,8 +8,10 @@ import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.exception.NotificationException;
 import com.lazydevs.notification.api.exception.RateLimitExceededException;
+import com.lazydevs.notification.api.guard.RecipientGuard;
 import com.lazydevs.notification.api.idempotency.IdempotencyKey;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
+import com.lazydevs.notification.api.model.EmailRecipient;
 import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.NotificationAudit;
 import com.lazydevs.notification.api.model.NotificationRequest;
@@ -56,6 +58,7 @@ public class DefaultNotificationService implements NotificationService {
     private final Optional<NotificationMetrics> metrics;
     private final MessageScrubber scrubber;
     private final NotificationViews views;
+    private final RecipientGuard recipientGuard;
     private final Executor asyncExecutor;
 
     /**
@@ -109,6 +112,7 @@ public class DefaultNotificationService implements NotificationService {
         this.metrics = metrics;
         this.scrubber = extensions.messageScrubber();
         this.views = new NotificationViews(extensions.deliveryEvents());
+        this.recipientGuard = extensions.recipientGuard();
         this.asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
         // Optional<IdempotencyStore>: empty when notification.idempotency.enabled=false.
         this.idempotency = idempotencyStore.map(store -> new IdempotencyCoordinator(
@@ -157,11 +161,25 @@ public class DefaultNotificationService implements NotificationService {
         // idempotency record on every exit path (success or failure).
         NotificationResponse response = null;
         try {
+            // Recipient guard (DD-34): decided on the request as the caller sent
+            // it (the fingerprint and the claim above used that one too); the
+            // audit record and the provider only ever see the guarded recipient.
+            RecipientGuard.Decision guard = guard(request);
+            NotificationRequest dispatched = guard != null && guard.changed()
+                    ? request.toBuilder().recipient(guard.recipient()).build()
+                    : request;
+
             // Record audit (received)
-            fillRecipientSummary(auditService.recordReceived(request), request);
+            fillRecipientSummary(auditService.recordReceived(dispatched), dispatched);
 
             // Render template
-            RenderedContent content = templateEngine.render(request);
+            RenderedContent rendered = templateEngine.render(request);
+            if (guard != null && guard.blocked()) {
+                throw new NotificationException(RecipientGuard.BLOCKED_ERROR_CODE,
+                        "Every recipient was blocked by the recipient guard");
+            }
+            RenderedContent content = guard == null ? rendered
+                    : withSubjectPrefix(rendered, guard.subjectPrefix(), dispatched);
 
             // Get provider
             NotificationProvider provider = providerRegistry.getProvider(
@@ -181,7 +199,7 @@ public class DefaultNotificationService implements NotificationService {
                 // per-channel rule overrides (notification.retry.by-channel.<channel>).
                 // Null-safe — execute(null, ...) falls back to the global rule.
                 RetryExecutor.Outcome outcome = retryExecutor.get()
-                        .execute(request.getChannel(), () -> provider.send(request, content));
+                        .execute(request.getChannel(), () -> provider.send(dispatched, content));
                 result = outcome.result();
                 attempts = outcome.attempts();
                 if (attempts > 1) {
@@ -195,7 +213,7 @@ public class DefaultNotificationService implements NotificationService {
                     metrics.ifPresent(m -> m.recordRetry(request.getChannel(), totalAttempts));
                 }
             } else {
-                result = provider.send(request, content);
+                result = provider.send(dispatched, content);
                 attempts = 1;
             }
 
@@ -303,6 +321,41 @@ public class DefaultNotificationService implements NotificationService {
                 idempotency.get().close(request, idemKey, toRecord, this::refundUnsent);
             }
         }
+    }
+
+    /**
+     * Run the recipient guard, logging one INFO line with counts (never the
+     * addresses) when it changed anything. A request without a recipient is
+     * not guarded ({@code null}); it is left to the provider's own validation.
+     */
+    private RecipientGuard.Decision guard(NotificationRequest request) {
+        if (request.getRecipient() == null) {
+            return null;
+        }
+        RecipientGuard.Decision decision = recipientGuard.check(request);
+        if (decision.changed()) {
+            log.info("Recipient guard changed the recipients: requestId={}, channel={}, redirected={}, dropped={},"
+                            + " blocked={}", sanitizeForLog(request.getRequestId()), request.getChannel(),
+                    decision.redirectedOriginals().size(), decision.dropped(), decision.blocked());
+        }
+        return decision;
+    }
+
+    /**
+     * Put the guard's subject prefix in front of the email subject: the
+     * rendered one, else the recipient's own.
+     */
+    private static RenderedContent withSubjectPrefix(RenderedContent content, String prefix,
+                                                     NotificationRequest dispatched) {
+        if (prefix == null || prefix.isEmpty() || content == null) {
+            return content;
+        }
+        String subject = content.subject();
+        if (!StringUtils.hasText(subject) && dispatched.getRecipient() instanceof EmailRecipient email) {
+            subject = email.subject();
+        }
+        return new RenderedContent(prefix + (subject == null ? "" : subject),
+                content.textBody(), content.htmlBody(), content.templateId());
     }
 
     /**

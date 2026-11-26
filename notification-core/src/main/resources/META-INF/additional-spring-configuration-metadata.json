@@ -31,28 +31,6 @@
       }
     },
     {
-      "name": "notification.audit.max-entries",
-      "type": "java.lang.Long",
-      "description": "Bound of the in-memory audit store (notification.store.type=memory); least recently written records are evicted first.",
-      "defaultValue": 10000
-    },
-    {
-      "name": "notification.idempotency.failure-policy",
-      "type": "com.lazydevs.notification.core.idempotency.IdempotencyFailurePolicy",
-      "description": "What happens to an idempotency key after a failed send: RELEASE_ALL (retry dispatches again), KEEP (retry gets HTTP 409 until the TTL) or RELEASE_TRANSIENT (release only after a TRANSIENT failure; other failures are replayed). Unset follows retry-after-failure, which gives RELEASE_ALL."
-    },
-    {
-      "name": "notification.idempotency.reject-key-reuse",
-      "type": "java.lang.Boolean",
-      "description": "Refuse with HTTP 409 a request whose idempotency key was already used for a different request (different fingerprint). Records without a fingerprint are never compared.",
-      "defaultValue": false
-    },
-    {
-      "name": "notification.idempotency.in-progress-timeout",
-      "type": "java.time.Duration",
-      "description": "How long a send may hold a key IN_PROGRESS before a later request under the key settles it as FAILED (IN_PROGRESS_TIMEOUT, AMBIGUOUS), which is replayed and never released. Unset keeps answering HTTP 409 until the TTL."
-    },
-    {
       "name": "notification.retry.max-retry-after",
       "type": "java.time.Duration",
       "description": "Longest provider retry hint (an HTTP Retry-After) the retry executor waits for. A longer hint stops the retries: the failure is returned at once and goes to the dead-letter store when one is configured. Defaults to notification.retry.max-delay; per-channel rules accept the same key under notification.retry.by-channel.<channel>, defaulting to that rule's max-delay."

@@ -6,12 +6,14 @@ import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.delivery.DeliveryEventListener;
 import com.lazydevs.notification.api.delivery.DeliveryEventPublisher;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
+import com.lazydevs.notification.api.guard.RecipientGuard;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.util.MessageScrubber;
 import com.lazydevs.notification.core.audit.StoreBackedAuditService;
 import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.delivery.ListenerDeliveryEventPublisher;
+import com.lazydevs.notification.core.guard.ConfiguredRecipientGuard;
 import com.lazydevs.notification.core.metrics.NotificationMetrics;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.provider.ProviderResolver;
@@ -133,6 +135,18 @@ public class NotificationCoreAutoConfiguration {
         return new StoreBackedAuditService(store, properties.getDefaultTenant(), Clock.systemUTC());
     }
 
+    /**
+     * The configuration-driven recipient guard (DD-34), validated at
+     * startup. Replace it by declaring another {@link RecipientGuard} bean,
+     * which is used whether or not this switch is on.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "notification.recipient-guard", name = "enabled", havingValue = "true")
+    @ConditionalOnMissingBean(RecipientGuard.class)
+    public ConfiguredRecipientGuard configuredRecipientGuard(NotificationProperties properties) {
+        return new ConfiguredRecipientGuard(properties.getRecipientGuard());
+    }
+
     @Bean
     @ConditionalOnMissingBean(NotificationService.class)
     public DefaultNotificationService defaultNotificationService(
@@ -146,10 +160,11 @@ public class NotificationCoreAutoConfiguration {
             Optional<DeadLetterStore> deadLetterStore,
             Optional<NotificationMetrics> metrics,
             MessageScrubber messageScrubber,
-            Optional<DeliveryEventStore> deliveryEventStore) {
+            Optional<DeliveryEventStore> deliveryEventStore,
+            Optional<RecipientGuard> recipientGuard) {
         return new DefaultNotificationService(properties, providerRegistry, templateEngine, auditService,
                 idempotencyStore, rateLimiter, retryExecutor, deadLetterStore, metrics,
                 new NotificationServiceExtensions(messageScrubber, Clock.systemUTC(),
-                        deliveryEventStore.orElse(null)));
+                        deliveryEventStore.orElse(null), recipientGuard.orElse(null)));
     }
 }

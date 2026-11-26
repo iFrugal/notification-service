@@ -134,6 +134,11 @@ public class NotificationProperties {
     private HealthProperties health = new HealthProperties();
 
     /**
+     * Recipient guard (DD-34). Off by default.
+     */
+    private RecipientGuardProperties recipientGuard = new RecipientGuardProperties();
+
+    /**
      * Tenant-specific configurations
      */
     private Map<String, TenantConfig> tenants = new LinkedHashMap<>();
@@ -385,6 +390,67 @@ public class NotificationProperties {
          * {@link #strict}).
          */
         private List<String> knownServices = new ArrayList<>();
+    }
+
+    /**
+     * Recipient guard (DD-34): an allow-list per channel, with redirect or
+     * drop for everything else. Off by default.
+     *
+     * <pre>
+     * notification:
+     *   recipient-guard:
+     *     enabled: true
+     *     channels:
+     *       email:
+     *         allowed: ["@example.com", "qa.lead@example.org"]
+     *         redirect-to: qa-inbox@example.com
+     *       sms:
+     *         allowed: ["+15550100"]
+     * </pre>
+     *
+     * @since 1.3.0
+     */
+    @Data
+    public static class RecipientGuardProperties {
+        /** Master switch for the configuration-driven guard. */
+        private boolean enabled = false;
+
+        /**
+         * Rules per channel name ({@code email}, {@code sms},
+         * {@code whatsapp}; case-insensitive). A channel without rules is not
+         * guarded. Push recipients are never guarded.
+         */
+        private Map<String, RecipientGuardChannel> channels = new LinkedHashMap<>();
+    }
+
+    /**
+     * Recipient guard rules for one channel (DD-34).
+     *
+     * @since 1.3.0
+     */
+    @Data
+    public static class RecipientGuardChannel {
+        /**
+         * Allowed recipients. {@code @example.com} allows every email address
+         * in exactly that domain (case-insensitive, subdomains excluded);
+         * anything else is one address (case-insensitive) or phone number
+         * (compared on its digits only).
+         */
+        private List<String> allowed = new ArrayList<>();
+
+        /**
+         * Address or number that takes the place of each recipient that is
+         * not allowed. Must itself be allowed. Unset drops those recipients;
+         * when none is left the send fails with {@code RECIPIENT_BLOCKED}.
+         */
+        private String redirectTo;
+
+        /**
+         * Email only: put in front of the subject when something was
+         * redirected; {@code {originals}} becomes the comma-separated original
+         * addresses. An empty value disables the prefix.
+         */
+        private String subjectPrefix = "[redirected: {originals}] ";
     }
 
     /**
