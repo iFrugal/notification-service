@@ -26,6 +26,13 @@
             <artifactId>google-auth-library-oauth2-http</artifactId>
         </dependency>
 
+        <!-- FcmGoogleAuthAutoConfiguration: wires FcmSubjectTokenSupplier beans (DD-37) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Testing: Logback ListAppender, ApplicationContextRunner -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

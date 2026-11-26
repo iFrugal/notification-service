@@ -6,6 +6,7 @@ import com.google.auth.http.HttpTransportFactory;
 import com.google.auth.oauth2.AccessToken;
 import com.google.auth.oauth2.ExternalAccountCredentials;
 import com.google.auth.oauth2.GoogleCredentials;
+import com.google.auth.oauth2.IdentityPoolCredentials;
 import com.google.auth.oauth2.ServiceAccountCredentials;
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.exception.ProviderConfigurationException;
@@ -38,8 +39,9 @@ import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * FCM access tokens from the Google auth library: Application Default Credentials
- * ({@code credentials: adc}) or a workload identity federation configuration
- * ({@code credentials: external-account:<path>}).
+ * ({@code credentials: adc}), a workload identity federation configuration
+ * ({@code credentials: external-account:<path>}) or workload identity federation with a
+ * {@link FcmSubjectTokenSupplier} ({@code credentials: external-account-supplier:<name>}).
  *
  * <ul>
  *   <li>The credentials are loaded with the type-specific loaders
@@ -158,6 +160,46 @@ public final class GoogleAuthTokenProvider implements FcmAccessTokenProvider {
                 factory -> ExternalAccountCredentials.fromStream(new ByteArrayInputStream(json), factory),
                 "the external account configuration '" + config + "' is not usable",
                 "; it must be an 'external_account' credential configuration");
+    }
+
+    /**
+     * Workload identity federation with a subject token supplier and no configuration file
+     * ({@code credentials: external-account-supplier:<name>}, since 1.4.0): identity pool
+     * credentials built with the supplier's audience, token type, token URL and, when it names
+     * one, the service account to impersonate. No network call until the first {@link #token()}.
+     *
+     * @param supplier      the subject token supplier
+     * @param transport     the tenant's transport; every token call goes through it
+     * @param clock         the clock to judge token expiry with
+     * @param refreshMargin refresh this long before the token expires
+     * @param timeout       the longest timeout of one HTTP call
+     * @return the provider
+     * @throws ProviderConfigurationException when the supplier's settings are unusable
+     */
+    public static GoogleAuthTokenProvider externalAccountSupplier(FcmSubjectTokenSupplier supplier,
+                                                                  FcmHttpTransport transport, Clock clock,
+                                                                  Duration refreshMargin, Duration timeout) {
+        Objects.requireNonNull(supplier, "supplier");
+        String name = supplier.name();
+        String spec = FcmSettings.CREDENTIALS_EXTERNAL_ACCOUNT_SUPPLIER + name;
+        if (!hasText(supplier.audience())) {
+            throw invalid("the subject token supplier '" + name + "' names no audience");
+        }
+        return load(spec, false, transport, clock, refreshMargin, timeout,
+                factory -> {
+                    IdentityPoolCredentials.Builder builder = IdentityPoolCredentials.newBuilder()
+                            .setSubjectTokenSupplier(_ -> supplier.subjectToken())
+                            .setAudience(supplier.audience())
+                            .setSubjectTokenType(supplier.subjectTokenType())
+                            .setTokenUrl(supplier.tokenUrl())
+                            .setHttpTransportFactory(factory);
+                    String impersonationUrl = supplier.serviceAccountImpersonationUrl();
+                    if (hasText(impersonationUrl)) {
+                        builder.setServiceAccountImpersonationUrl(impersonationUrl);
+                    }
+                    return builder.build();
+                },
+                "the subject token supplier '" + name + "' is not usable", "");
     }
 
     /**
