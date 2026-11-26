@@ -58,7 +58,7 @@ public interface MessageScrubber {
             if (message == null || message.isEmpty()) {
                 return message;
             }
-            String out = PiiMasking.EMAIL.matcher(message).replaceAll(Matcher.quoteReplacement(EMAIL_PLACEHOLDER));
+            String out = PiiMasking.replaceEmails(message, email -> EMAIL_PLACEHOLDER);
             return PiiMasking.PHONE.matcher(out).replaceAll(Matcher.quoteReplacement(PHONE_PLACEHOLDER));
         }
     }
