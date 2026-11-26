@@ -5,6 +5,8 @@ import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.NotificationStatus;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -84,6 +86,6 @@ public record NotificationView(
         Instant deliveryStatusAt) {
 
     public NotificationView {
-        metadata = metadata == null ? null : Map.copyOf(metadata);
+        metadata = metadata == null ? null : Collections.unmodifiableMap(new LinkedHashMap<>(metadata));
     }
 }

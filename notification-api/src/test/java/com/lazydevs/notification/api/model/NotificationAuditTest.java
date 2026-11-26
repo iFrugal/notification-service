@@ -4,12 +4,15 @@ import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.NotificationStatus;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Constructor;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
 
 /**
  * DD-33 additions to {@link NotificationAudit} and {@link NotificationView}.
@@ -52,12 +55,18 @@ class NotificationAuditTest {
         assertThat(NotificationAudit.isFailure(null)).isFalse();
     }
 
+    /** Reflectively, as compiled 1.2.0 callers link to it: the signature must stay. */
     @Test
-    @SuppressWarnings("deprecation")
-    void legacyConstructorLeavesTheNewFieldsNull() {
-        NotificationAudit audit = new NotificationAudit("id", "r", "c", "t", "caller", "r0", "TYPE", Channel.SMS,
+    void legacyConstructorLeavesTheNewFieldsNull() throws ReflectiveOperationException {
+        Constructor<NotificationAudit> legacy = NotificationAudit.class.getConstructor(String.class, String.class,
+                String.class, String.class, String.class, String.class, String.class, Channel.class, String.class,
+                String.class, NotificationStatus.class, String.class, String.class, String.class, Instant.class,
+                Instant.class, Instant.class, Instant.class, Map.class, String.class, String.class, String.class);
+        NotificationAudit audit = legacy.newInstance("id", "r", "c", "t", "caller", "r0", "TYPE", Channel.SMS,
                 "twilio", "phone=+1***90", NotificationStatus.SENT, "m", null, null, NOW, NOW, NOW, null,
                 Map.of("k", "v"), "tpl", null, null);
+
+        assertThat(legacy.isAnnotationPresent(Deprecated.class)).isTrue();
 
         assertThat(audit.getRequestId()).isEqualTo("r");
         assertThat(audit.getReplayOf()).isEqualTo("r0");
@@ -76,8 +85,16 @@ class NotificationAuditTest {
                 1, metadata, NotificationStatus.SENT, null, null, null, null, NOW, NOW, null, null, NOW, null, null);
         metadata.put("b", "2");
 
-        assertThat(view.metadata()).containsOnlyKeys("a");
-        assertThatThrownBy(() -> view.metadata().put("c", "3")).isInstanceOf(UnsupportedOperationException.class);
+        Map<String, String> copy = view.metadata();
+        assertThat(copy).containsOnlyKeys("a");
+        assertThatThrownBy(() -> copy.put("c", "3")).isInstanceOf(UnsupportedOperationException.class);
+
+        Map<String, String> ordered = new LinkedHashMap<>();
+        ordered.put("z", "1");
+        ordered.put("a", null);
+        assertThat(new NotificationView("r", "t", null, null, null, null, null, null, null, null, ordered, null,
+                null, null, null, null, null, null, null, null, null, null, null).metadata())
+                .as("keeps insertion order and null values").containsExactly(entry("z", "1"), entry("a", null));
         assertThat(new NotificationView("r", "t", null, null, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null).metadata()).isNull();
     }
