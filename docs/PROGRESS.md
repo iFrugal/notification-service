@@ -20,7 +20,7 @@ collaborator) can pick up where the last one left off.
 - **Repository:** `iFrugal/notification-service`
 - **Working version (current):** `1.2.2-SNAPSHOT`
 - **Latest released on Maven Central:** `1.2.1`
-- **Next release:** `1.3.0` (run the release workflow with `release-version: 1.3.0`, because the tree is at `1.2.2-SNAPSHOT`)
+- **Next release:** `1.3.0` (run the release workflow with `release-version: 1.3.0`, because the tree is at `1.2.2-SNAPSHOT`); push follows as `1.4.0` (Phase 22)
 - **Java:** 25 LTS · **Spring Boot:** 4.1.1 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
@@ -477,6 +477,20 @@ Built as three stacked branches: `feat/1.2.0-api` (PR-A), `feat/1.2.0-fcm` (PR-B
 - [x] PR-C: `notification-server` bundles `email-provider-acs` and the FCM modules; `credentials` replaces `credentials-path` in its `application.yml`
 - [x] PR-C: release notes, architecture, feature matrix and README
 - [ ] Merge the stack, then run "Release to Maven Central" with `release-version: 1.2.0`, dry-run first; every node must run 1.1.2 before 1.2.0
+
+### Phase 22 - 1.4.0: push device registry and user targeting (DD-37)
+
+Release notes: [`RELEASE_NOTES_1.4.0.md`](./RELEASE_NOTES_1.4.0.md).
+Branch `feat/1.5.0-push`, on top of the WhatsApp 1.3.0 branch (`feat/1.4.0-whatsapp-meta`, PR #78), whose renderer hook it reuses.
+
+- [x] `PushDeviceRegistry` SPI, `PushDevice`, `PushDeviceRegistration`, `PushTokens.hash` as the one token hash
+- [x] `InMemoryPushDeviceRegistry` and `JdbcPushDeviceRegistry` (`<prefix>push_device`, purge, RLS case), one contract test in the core test-jar
+- [x] `PushRecipient.userId`/`appId` and `PushTargetExpansion` (`NO_DEVICES` without a dead letter), wired through `NotificationServiceExtensions`
+- [x] `PushDeviceCleanupListener` on `BOUNCED` / `INVALID_TARGET`
+- [x] `PushContentRenderer`: `[TITLE]`, `[BODY]`, `[DATA key]` sections through the engine's lookup
+- [x] FCM: per-request multi-token policy, rendered data merged under caller data, `FcmRuntimeHints`
+- [x] google-auth: `external-account-supplier:<name>` with the `FcmSubjectTokenSupplier` SPI
+- [ ] Merge after PR #78, then release 1.4.0; `JdbcPushDeviceRegistryIT` and the RLS case run in CI (Testcontainers)
 
 ### Out-of-scope / parked
 
