@@ -21,7 +21,7 @@ import java.util.TreeMap;
  * @param headers request headers; names are case-insensitive
  * @param body    the request body, never {@code null}
  * @param timeout how long to wait for the complete response
- * @since 1.4.0
+ * @since 1.3.0
  */
 public record MetaHttpRequest(String method, URI uri, Map<String, String> headers, byte[] body, Duration timeout) {
 

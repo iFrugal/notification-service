@@ -26,8 +26,8 @@ import java.util.Objects;
  *                        {@code notification.idempotency.failure-policy}
  * @param renderers       per-channel content renderers, at most one per channel
  *                        (DD-35); {@code null} means none, every channel renders
- *                        with the template engine (since 1.4.0)
- * @since 1.3.0
+ *                        with the template engine (since 1.3.0)
+ * @since 1.2.1
  */
 public record NotificationServiceExtensions(MessageScrubber messageScrubber, Clock clock,
                                             DeliveryEventStore deliveryEvents, RecipientGuard recipientGuard,
@@ -42,7 +42,7 @@ public record NotificationServiceExtensions(MessageScrubber messageScrubber, Clo
     }
 
     /**
-     * The 1.3.0 constructor: no per-channel content renderers.
+     * The 1.2.1 constructor: no per-channel content renderers.
      */
     public NotificationServiceExtensions(MessageScrubber messageScrubber, Clock clock,
                                          DeliveryEventStore deliveryEvents, RecipientGuard recipientGuard,
@@ -53,7 +53,7 @@ public record NotificationServiceExtensions(MessageScrubber messageScrubber, Clo
     /**
      * @param channelRenderers per-channel content renderers, at most one per channel
      * @return these extensions with {@code channelRenderers} in place of the current ones
-     * @since 1.4.0
+     * @since 1.3.0
      */
     public NotificationServiceExtensions withRenderers(List<ChannelContentRenderer> channelRenderers) {
         return new NotificationServiceExtensions(messageScrubber, clock, deliveryEvents, recipientGuard,
@@ -61,7 +61,7 @@ public record NotificationServiceExtensions(MessageScrubber messageScrubber, Clo
     }
 
     /**
-     * The 1.3.0 defaults: {@link MessageScrubber#placeholders()}, the
+     * The 1.2.1 defaults: {@link MessageScrubber#placeholders()}, the
      * system UTC clock, no delivery event store, no recipient guard and the
      * configured failure policy.
      *

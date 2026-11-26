@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
  *                      {@code whatsapp_business_messaging} permission
  * @param phoneNumberId the sender's phone number id (not the phone number)
  * @param wabaId        the WhatsApp Business Account id, optional, informational only
- * @since 1.4.0
+ * @since 1.3.0
  */
 public record MetaCredentials(String accessToken, String phoneNumberId, String wabaId) {
 

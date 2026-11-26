@@ -16,7 +16,7 @@ import org.springframework.context.annotation.ImportRuntimeHints;
  *
  * <p>Inert until configured: without {@code notification.whatsapp.templates}
  * and without a template name on the recipient, the renderer hands the request
- * to the FreeMarker template engine, as the pipeline did before 1.4.0.
+ * to the FreeMarker template engine, as the pipeline did before 1.3.0.
  * Replace the registry by declaring a {@link WhatsAppTemplateRegistry} bean,
  * and the renderer by declaring a bean named {@value #RENDERER_BEAN_NAME}.
  */

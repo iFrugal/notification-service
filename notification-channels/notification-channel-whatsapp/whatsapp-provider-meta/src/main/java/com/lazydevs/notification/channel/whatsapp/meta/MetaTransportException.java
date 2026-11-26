@@ -14,7 +14,7 @@ import java.io.IOException;
  * {@code NO_CONFIRMATION}: the Cloud API has no idempotency key, and a resend
  * could deliver the message twice.
  *
- * @since 1.4.0
+ * @since 1.3.0
  */
 public class MetaTransportException extends IOException {
 

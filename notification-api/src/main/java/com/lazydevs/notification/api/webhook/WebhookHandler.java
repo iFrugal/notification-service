@@ -21,7 +21,7 @@ package com.lazydevs.notification.api.webhook;
  * 4xx response. A thrown exception becomes HTTP 500, and most providers retry
  * a 5xx.
  *
- * @since 1.4.0
+ * @since 1.3.0
  */
 public interface WebhookHandler {
 

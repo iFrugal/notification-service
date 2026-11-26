@@ -42,7 +42,7 @@ import java.util.Optional;
  *   <li>{@code notification.delivery-events.size} — gauge</li>
  *   <li>{@code notification.delivery-events.emitted.total{provider, status}} - counter (since 1.2.0)</li>
  *   <li>{@code notification.webhook.signature.failed.total{provider}} — counter</li>
- *   <li>{@code notification.template.validation.failed.total{channel, reason}} - counter (since 1.3.0)</li>
+ *   <li>{@code notification.template.validation.failed.total{channel, reason}} - counter (since 1.2.1)</li>
  * </ul>
  *
  * <p>Tag cardinality is deliberate: {@code tenant} only on

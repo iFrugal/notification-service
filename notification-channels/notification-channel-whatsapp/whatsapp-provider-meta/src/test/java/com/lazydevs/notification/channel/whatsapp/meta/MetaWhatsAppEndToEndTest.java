@@ -221,7 +221,7 @@ class MetaWhatsAppEndToEndTest {
         });
     }
 
-    // ---- 1.3.0 send pipeline (DD-27, DD-31, DD-32, DD-33, DD-34) with the WhatsApp channel ----
+    // ---- 1.2.1 send pipeline (DD-27, DD-31, DD-32, DD-33, DD-34) with the WhatsApp channel ----
 
     private static NotificationRequest keyed(NotificationRequest request, String idempotencyKey) {
         return request.toBuilder().idempotencyKey(idempotencyKey).build();

@@ -29,7 +29,7 @@ import java.util.Objects;
  * signature or an unexpected topic ARN. A {@code SubscriptionConfirmation} is
  * logged for an operator to confirm, never fetched.
  *
- * @since 1.4.0 (the same endpoint was a controller method before)
+ * @since 1.3.0 (the same endpoint was a controller method before)
  */
 @Slf4j
 public class SesWebhookHandler implements WebhookHandler {

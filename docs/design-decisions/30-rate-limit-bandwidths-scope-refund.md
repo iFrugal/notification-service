@@ -89,7 +89,7 @@ Keying the shared bucket by rule keeps their quotas apart and makes every bucket
 
 ### Why refund is a default method
 
-Limiters written before 1.3.0 keep compiling and keep charging every admitted request, which is the 1.2.0 behaviour.
+Limiters written before 1.2.1 keep compiling and keep charging every admitted request, which is the 1.2.0 behaviour.
 
 ## Consequences
 

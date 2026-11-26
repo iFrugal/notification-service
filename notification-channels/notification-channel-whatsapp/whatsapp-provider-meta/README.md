@@ -2,7 +2,7 @@
 
 WhatsApp provider for Meta's [WhatsApp Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api) (Graph API), with its status webhook.
 Provider name `meta` on the `WHATSAPP` channel.
-Available since 1.4.0.
+Available since 1.3.0.
 See [DD-35](../../../docs/design-decisions/35-whatsapp-channel-and-meta-provider.md).
 
 ```xml

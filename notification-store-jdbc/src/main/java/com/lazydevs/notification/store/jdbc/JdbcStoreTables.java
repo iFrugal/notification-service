@@ -64,7 +64,7 @@ public record JdbcStoreTables(String schema, String tablePrefix) {
     /**
      * Qualified name of the audit table (DD-33).
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public String audit() {
         return qualified("audit");

@@ -306,7 +306,7 @@ must not be trusted from clients:
 ## Versioning and release
 
 The project follows semantic versioning.
-The current snapshot is `1.2.1-SNAPSHOT`; `1.2.0` is the most recent release on Maven Central, and the next release is `1.3.0`.
+The current snapshot is `1.2.2-SNAPSHOT`; `1.2.1` is the most recent release on Maven Central, and the next release is `1.3.0` (the WhatsApp channel).
 Release automation is wired via GitHub Actions
 (see `.github/workflows/release.yml`). Maven Central publishing
 goes through the Central Portal via

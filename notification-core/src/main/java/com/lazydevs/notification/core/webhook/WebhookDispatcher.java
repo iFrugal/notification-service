@@ -40,7 +40,7 @@ import java.util.regex.Pattern;
  *       handler's answer, so a broken listener cannot make it retry forever.</li>
  * </ul>
  *
- * @since 1.4.0
+ * @since 1.3.0
  */
 @Slf4j
 public class WebhookDispatcher {

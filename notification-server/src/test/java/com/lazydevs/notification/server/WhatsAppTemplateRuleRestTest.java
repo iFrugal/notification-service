@@ -19,7 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * The standalone server with WhatsApp on and {@code validate-before-dispatch}: a request
  * whose WhatsApp template parameter breaks a rule is answered over REST with 422 and the
- * 1.3.0 template error body, before anything is claimed, rate limited or audited, and
+ * 1.2.1 template error body, before anything is claimed, rate limited or audited, and
  * Meta is never called.
  */
 class WhatsAppTemplateRuleRestTest {

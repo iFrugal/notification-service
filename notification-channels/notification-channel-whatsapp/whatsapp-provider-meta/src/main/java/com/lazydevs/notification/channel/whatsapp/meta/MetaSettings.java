@@ -40,7 +40,7 @@ import java.util.regex.Pattern;
  * @param timeout                 per-request timeout
  * @param pairRateLimitRetryAfter least retry delay after code 131056
  * @param credentials             the static credentials, {@code null} when not configured
- * @since 1.4.0
+ * @since 1.3.0
  */
 public record MetaSettings(
         URI baseUrl,

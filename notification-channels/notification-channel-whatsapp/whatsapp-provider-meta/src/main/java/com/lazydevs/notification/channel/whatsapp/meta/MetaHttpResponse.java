@@ -14,7 +14,7 @@ import java.util.TreeMap;
  * @param statusCode the HTTP status code
  * @param headers    response headers; names are case-insensitive
  * @param body       the response body, never {@code null}
- * @since 1.4.0
+ * @since 1.3.0
  */
 public record MetaHttpResponse(int statusCode, Map<String, List<String>> headers, byte[] body) {
 

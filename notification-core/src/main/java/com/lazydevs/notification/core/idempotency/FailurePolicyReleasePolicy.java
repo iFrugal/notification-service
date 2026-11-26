@@ -12,7 +12,7 @@ import java.util.Objects;
  * {@code notification.idempotency.failure-policy} (or its deprecated alias
  * {@code retry-after-failure}) says, read on every call (DD-32).
  *
- * @since 1.3.0
+ * @since 1.2.1
  */
 public final class FailurePolicyReleasePolicy implements IdempotencyReleasePolicy {
 

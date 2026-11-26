@@ -88,8 +88,8 @@ public class DefaultNotificationService implements NotificationService {
     }
 
     /**
-     * @param extensions collaborators added since 1.3.0
-     * @since 1.3.0
+     * @param extensions collaborators added since 1.2.1
+     * @since 1.2.1
      */
     @SuppressWarnings("java:S107") // one parameter per optional collaborator, see DD-10..DD-22
     public DefaultNotificationService(

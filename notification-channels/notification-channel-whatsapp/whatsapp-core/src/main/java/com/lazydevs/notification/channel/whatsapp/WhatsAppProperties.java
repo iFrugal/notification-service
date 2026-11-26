@@ -28,7 +28,7 @@ import java.util.Map;
  *               variable: trackingToken
  * </pre>
  *
- * @since 1.4.0
+ * @since 1.3.0
  */
 @Data
 @ConfigurationProperties(prefix = WhatsAppProperties.PREFIX)

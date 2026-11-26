@@ -33,7 +33,7 @@ import java.util.Objects;
  * so an override still matches by tenant and caller even when its bucket is
  * shared per channel.
  *
- * @since 1.3.0
+ * @since 1.2.1
  */
 public final class RateLimitRuleResolver {
 

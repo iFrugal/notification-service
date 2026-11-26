@@ -25,7 +25,7 @@ import java.time.Instant;
  *                       the key (DD-32), used to detect a key reused for a
  *                       different request. {@code null} means unknown: a
  *                       record written by 1.2.0 or earlier, or by a store
- *                       that does not keep fingerprints. Since 1.3.0.
+ *                       that does not keep fingerprints. Since 1.2.1.
  */
 public record IdempotencyRecord(
         String notificationId,

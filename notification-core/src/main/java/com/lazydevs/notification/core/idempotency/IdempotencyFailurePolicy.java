@@ -10,7 +10,7 @@ import com.lazydevs.notification.api.model.FailureType;
  * {@code ACCEPTED}) is always kept and replayed; the policy only decides
  * about {@code FAILED} and {@code REJECTED} outcomes.
  *
- * @since 1.3.0
+ * @since 1.2.1
  */
 public enum IdempotencyFailurePolicy {
 

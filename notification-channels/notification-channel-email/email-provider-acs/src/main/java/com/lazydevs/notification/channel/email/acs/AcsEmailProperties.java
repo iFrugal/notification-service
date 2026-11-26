@@ -35,7 +35,7 @@ import java.util.TreeMap;
  *   <li>{@code user-engagement-tracking-disabled} - optional boolean.</li>
  *   <li>{@code timeout-failure-type} - {@code transient} (default) or
  *       {@code ambiguous}: how a timeout or I/O error after the send request may
- *       have reached ACS is classified (since 1.3.0, DD-31).</li>
+ *       have reached ACS is classified (since 1.2.1, DD-31).</li>
  * </ul>
  *
  * @param endpoint                       ACS endpoint, may be {@code null}
@@ -48,7 +48,7 @@ import java.util.TreeMap;
  * @param sdkRetries                     retries performed by the Azure SDK itself
  * @param userEngagementTrackingDisabled {@code null} keeps the ACS resource default
  * @param timeoutFailureType             {@link FailureType#TRANSIENT} (default) or
- *                                       {@link FailureType#AMBIGUOUS}; since 1.3.0
+ *                                       {@link FailureType#AMBIGUOUS}; since 1.2.1
  */
 public record AcsEmailProperties(
         String endpoint,
@@ -76,7 +76,7 @@ public record AcsEmailProperties(
     public static final String WAIT_TIMEOUT = "wait-timeout";
     public static final String SDK_RETRIES = "sdk-retries";
     public static final String USER_ENGAGEMENT_TRACKING_DISABLED = "user-engagement-tracking-disabled";
-    /** @since 1.3.0 */
+    /** @since 1.2.1 */
     public static final String TIMEOUT_FAILURE_TYPE = "timeout-failure-type";
 
     /** Default upper bound for {@link SendMode#WAIT}. */

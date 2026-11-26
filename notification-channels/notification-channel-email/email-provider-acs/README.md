@@ -63,7 +63,7 @@ If your notification-core version lists `EMAIL:acs` in its provider catalog, the
 | `wait-timeout` | `PT60S` | ISO-8601 upper bound for `wait` mode. |
 | `sdk-retries` | `0` | Retries performed inside the Azure SDK. Keep `0` so the library's `RetryExecutor` is the only retry layer. |
 | `user-engagement-tracking-disabled` | ACS resource setting | `true` disables open and click tracking for messages from this tenant. |
-| `timeout-failure-type` | `transient` | `transient` or `ambiguous`: how a timeout or I/O error after the send request may have reached ACS is classified (since 1.3.0, see below). |
+| `timeout-failure-type` | `transient` | `transient` or `ambiguous`: how a timeout or I/O error after the send request may have reached ACS is classified (since 1.2.1, see below). |
 
 Configuration errors fail at startup with a `ProviderConfigurationException` that names the missing or malformed key.
 
@@ -156,7 +156,7 @@ The `SendResult` and the `FAILED` response still carry the operation id, so the 
 | Request that cannot become an ACS message (no body, URL-only attachment) | `PERMANENT`, and ACS is not called |
 
 Timeouts are `TRANSIENT` by default (DD-25): ACS recognises a resend with the same `Operation-Id`, which the provider derives from the request, so a retry cannot deliver the message twice.
-An application that must treat a timeout as "may have been delivered" sets `timeout-failure-type: ambiguous` (since 1.3.0, DD-31).
+An application that must treat a timeout as "may have been delivered" sets `timeout-failure-type: ambiguous` (since 1.2.1, DD-31).
 Then only a failure to connect (connection refused, unknown host, connect timeout, TLS handshake) stays `TRANSIENT`; a read timeout, a connection reset, another I/O error or a `TimeoutException` is `AMBIGUOUS`.
 The default `RetryPredicate` does not retry `AMBIGUOUS`, and under `notification.idempotency.failure-policy=RELEASE_TRANSIENT` an `AMBIGUOUS` failure keeps its idempotency key and is replayed (DD-32).
 

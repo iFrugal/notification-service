@@ -15,7 +15,7 @@ import java.util.Objects;
  * <p>The contract is intentionally narrow: no introspection, no quotas.
  * {@link #tryConsume(RateLimitKey)} is one call per request inside
  * {@code DefaultNotificationService.send()}; {@link #refund(RateLimitKey)}
- * (since 1.3.0) gives a token back for a request that never reached a
+ * (since 1.2.1) gives a token back for a request that never reached a
  * provider. Everything else is the implementation's business.
  */
 public interface RateLimiter {
@@ -36,11 +36,11 @@ public interface RateLimiter {
      * provider (DD-30). Implementations never fill a bucket above its
      * capacity, and must not throw for a key they have no bucket for.
      *
-     * <p>The default does nothing, so limiters written before 1.3.0 keep
+     * <p>The default does nothing, so limiters written before 1.2.1 keep
      * charging every admitted request.
      *
      * @param key the same key that was passed to {@link #tryConsume(RateLimitKey)}
-     * @since 1.3.0
+     * @since 1.2.1
      */
     default void refund(RateLimitKey key) {
         // Default: no refund; every admitted request costs one token.

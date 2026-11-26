@@ -82,7 +82,7 @@ An `Instant` would depend on the clocks of the provider, the library and the cal
 
 ### Negative
 
-- The record's canonical constructor has three more parameters; code calling it with all components must be written against 1.3.0 (the 1.2.0 constructor still works).
+- The record's canonical constructor has three more parameters; code calling it with all components must be written against 1.2.1 (the 1.2.0 constructor still works).
 - `AcsEmailProperties` has one more component; a record pattern that deconstructs it with nine components no longer compiles.
 - The status view has no `retryAfter`.
 

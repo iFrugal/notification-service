@@ -55,7 +55,7 @@ public interface NotificationService {
      *                  default tenant
      * @param requestId request id returned by {@link #send}
      * @return the view, or empty when unknown (never sent, expired, or audit off)
-     * @since 1.3.0
+     * @since 1.2.1
      */
     default Optional<NotificationView> find(String tenantId, String requestId) {
         return Optional.empty();
@@ -71,7 +71,7 @@ public interface NotificationService {
      * @param callerId       calling service, may be {@code null}
      * @param idempotencyKey the key
      * @return the view, or empty when unknown
-     * @since 1.3.0
+     * @since 1.2.1
      */
     default Optional<NotificationView> findByIdempotencyKey(String tenantId, String callerId,
                                                             String idempotencyKey) {

@@ -18,7 +18,7 @@ import java.util.List;
  * @param signatureRejected whether the callback failed signature verification;
  *                          the dispatcher counts it in the
  *                          {@code notification.webhook.signature.failed.total} metric
- * @since 1.4.0
+ * @since 1.3.0
  */
 public record WebhookResponse(
         int status,

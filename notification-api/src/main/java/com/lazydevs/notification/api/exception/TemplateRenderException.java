@@ -16,7 +16,7 @@ package com.lazydevs.notification.api.exception;
  * {@link TemplateNotFoundException} is the {@link Reason#NOT_FOUND} subclass, so callers
  * that catch it keep working.
  *
- * @since 1.3.0
+ * @since 1.2.1
  */
 @SuppressWarnings("java:S110") // depth comes from the NotificationException tree shipped in 1.2.0
 public class TemplateRenderException extends NotificationException {
@@ -42,7 +42,7 @@ public class TemplateRenderException extends NotificationException {
          * or a button index out of range. {@link TemplateRenderException#getVariablePath()}
          * names the variable.
          *
-         * @since 1.4.0
+         * @since 1.3.0
          */
         PARAMETER_INVALID("TEMPLATE_PARAMETER_INVALID");
 

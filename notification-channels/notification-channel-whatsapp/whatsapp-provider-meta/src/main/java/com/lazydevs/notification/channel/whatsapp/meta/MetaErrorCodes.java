@@ -12,7 +12,7 @@ package com.lazydevs.notification.channel.whatsapp.meta;
  * one only after the credential is fixed). "May have been sent":
  * {@link #NO_CONFIRMATION}. Everything else is final for this message.
  *
- * @since 1.4.0
+ * @since 1.3.0
  */
 public final class MetaErrorCodes {
 

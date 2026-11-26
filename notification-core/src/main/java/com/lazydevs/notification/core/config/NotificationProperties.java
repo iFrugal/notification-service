@@ -36,14 +36,14 @@ public class NotificationProperties {
      * Provider fallback to {@link #defaultTenant} for tenants that have no
      * entry under {@code notification.tenants} (DD-28).
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     private TenantFallbackProperties tenantFallback = new TenantFallbackProperties();
 
     /**
      * Provider lifecycle settings shared by every tenant (DD-29).
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     private ProvidersProperties providers = new ProvidersProperties();
 
@@ -203,7 +203,7 @@ public class NotificationProperties {
          * Bound of the in-memory audit store ({@code notification.store.type=memory});
          * least recently written records are evicted first.
          *
-         * @since 1.3.0
+         * @since 1.2.1
          */
         @Min(value = 1, message = "audit max-entries must be at least 1")
         private long maxEntries = 10_000L;
@@ -241,7 +241,7 @@ public class NotificationProperties {
          * {@code false} in 2.0. {@code uuid}, {@code trim} and the notification helpers are
          * available either way (DD-26).
          *
-         * @since 1.3.0
+         * @since 1.2.1
          */
         private boolean legacyHelpers = true;
         /**
@@ -251,7 +251,7 @@ public class NotificationProperties {
          * for such a request. {@code false} keeps the 1.2 flow, where a render failure is a
          * stored {@code FAILED} attempt. Planned to default to {@code true} in 2.0 (DD-27).
          *
-         * @since 1.3.0
+         * @since 1.2.1
          */
         private boolean validateBeforeDispatch = false;
     }
@@ -285,9 +285,9 @@ public class NotificationProperties {
          * does not implement {@code IdempotencyStore.release}.
          *
          * @since 1.1.2
-         * @deprecated since 1.3.0, use {@code notification.idempotency.failure-policy}
+         * @deprecated since 1.2.1, use {@code notification.idempotency.failure-policy}
          */
-        @Deprecated(since = "1.3.0")
+        @Deprecated(since = "1.2.1")
         @SuppressWarnings("java:S1133") // kept for source compatibility until the next major version
         private Boolean retryAfterFailure;
 
@@ -298,7 +298,7 @@ public class NotificationProperties {
          * after a TRANSIENT failure; other failures are replayed). Unset
          * follows {@link #retryAfterFailure}, which gives {@code RELEASE_ALL}.
          *
-         * @since 1.3.0
+         * @since 1.2.1
          */
         private IdempotencyFailurePolicy failurePolicy;
 
@@ -309,7 +309,7 @@ public class NotificationProperties {
          * response is replayed, as in 1.2.0. A record without a fingerprint
          * (written by 1.2.0 or earlier) is never compared.
          *
-         * @since 1.3.0
+         * @since 1.2.1
          */
         private boolean rejectKeyReuse = false;
 
@@ -322,7 +322,7 @@ public class NotificationProperties {
          * (the default) answers with HTTP 409 until the TTL, as in 1.2.0.
          * Must be positive when set.
          *
-         * @since 1.3.0
+         * @since 1.2.1
          */
         private java.time.Duration inProgressTimeout;
 
@@ -333,7 +333,7 @@ public class NotificationProperties {
          * what went wrong (DD-32). Off by default: the stored copy has no
          * error message, as in 1.1.2 to 1.2.0.
          *
-         * @since 1.3.0
+         * @since 1.2.1
          */
         private boolean storeScrubbedErrorMessage = false;
 
@@ -343,9 +343,9 @@ public class NotificationProperties {
          *
          * @return {@code false} only when {@code retry-after-failure} is
          *         explicitly {@code false}
-         * @deprecated since 1.3.0, use {@link #resolvedFailurePolicy()}
+         * @deprecated since 1.2.1, use {@link #resolvedFailurePolicy()}
          */
-        @Deprecated(since = "1.3.0")
+        @Deprecated(since = "1.2.1")
         @SuppressWarnings("java:S1133") // kept for source compatibility until the next major version
         public boolean isRetryAfterFailure() {
             return !Boolean.FALSE.equals(retryAfterFailure);
@@ -357,7 +357,7 @@ public class NotificationProperties {
          * {@code RELEASE_ALL} for anything else.
          *
          * @return the policy, never {@code null}
-         * @since 1.3.0
+         * @since 1.2.1
          */
         public IdempotencyFailurePolicy resolvedFailurePolicy() {
             if (failurePolicy != null) {
@@ -371,7 +371,7 @@ public class NotificationProperties {
         /**
          * @return {@code true} when {@code failure-policy} and the deprecated
          *         {@code retry-after-failure} are both set and disagree
-         * @since 1.3.0
+         * @since 1.2.1
          */
         public boolean hasConflictingFailurePolicy() {
             if (failurePolicy == null || retryAfterFailure == null) {
@@ -462,7 +462,7 @@ public class NotificationProperties {
      *         allowed: ["+15550100"]
      * </pre>
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     @Data
     public static class RecipientGuardProperties {
@@ -480,7 +480,7 @@ public class NotificationProperties {
     /**
      * Recipient guard rules for one channel (DD-34).
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     @Data
     public static class RecipientGuardChannel {
@@ -568,7 +568,7 @@ public class NotificationProperties {
          * {@code false} (the default) keeps the 1.2.0 behaviour: every
          * admitted request costs one token.
          *
-         * @since 1.3.0
+         * @since 1.2.1
          */
         private boolean refundUnsent = false;
     }
@@ -576,7 +576,7 @@ public class NotificationProperties {
     /**
      * Which requests share one token bucket (DD-30).
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public enum RateLimitScope {
         /**
@@ -598,7 +598,7 @@ public class NotificationProperties {
      * {@link #refillTokens} are added (greedy refill — they're not held
      * back for a fixed-window boundary).
      *
-     * <p>Since 1.3.0 a rule can instead list several {@link #bandwidths}, all
+     * <p>Since 1.2.1 a rule can instead list several {@link #bandwidths}, all
      * of which must allow a send (for example 2 per minute and 5 per hour),
      * and can choose its bucket {@link #scope}. Setting {@link #bandwidths}
      * together with any of {@code capacity}, {@code refill-tokens} or
@@ -624,7 +624,7 @@ public class NotificationProperties {
          * band has a token. Empty (the default) means the single band given
          * by {@link #capacity}, {@link #refillTokens} and {@link #refillPeriod}.
          *
-         * @since 1.3.0
+         * @since 1.2.1
          */
         @Valid
         private List<RateLimitBandwidth> bandwidths = new ArrayList<>();
@@ -633,7 +633,7 @@ public class NotificationProperties {
          * Which requests share the bucket this rule builds.
          * {@link RateLimitScope#TENANT_CALLER} (the default) is the 1.2.0 key.
          *
-         * @since 1.3.0
+         * @since 1.2.1
          */
         @NotNull(message = "rate-limit scope must not be null")
         private RateLimitScope scope = RateLimitScope.TENANT_CALLER;
@@ -680,7 +680,7 @@ public class NotificationProperties {
          * otherwise the single band from {@link #capacity},
          * {@link #refillTokens} and {@link #refillPeriod}.
          *
-         * @since 1.3.0
+         * @since 1.2.1
          */
         public List<RateLimitBandwidth> effectiveBandwidths() {
             if (bandwidths != null && !bandwidths.isEmpty()) {
@@ -728,7 +728,7 @@ public class NotificationProperties {
      * {@link #capacity} tokens, refilled greedily by {@link #refillTokens}
      * every {@link #refillPeriod}. Every field is required.
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     @Data
     @lombok.NoArgsConstructor
@@ -1258,7 +1258,7 @@ public class NotificationProperties {
     /**
      * Tenant provider fallback (DD-28).
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     @Data
     public static class TenantFallbackProperties {
@@ -1276,7 +1276,7 @@ public class NotificationProperties {
     /**
      * Provider lifecycle settings (DD-29).
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     @Data
     public static class ProvidersProperties {

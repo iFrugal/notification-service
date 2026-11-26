@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  * rule. Its variable path is the variable, and its message names the template
  * and the variable, never the value.
  *
- * @since 1.4.0
+ * @since 1.3.0
  */
 public final class WhatsAppParameterRules {
 

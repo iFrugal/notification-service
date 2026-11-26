@@ -7,7 +7,7 @@ PostgreSQL-backed implementations of four notification-service SPIs, written as 
 | `IdempotencyStore` | `JdbcIdempotencyStore` |
 | `DeadLetterStore` | `JdbcDeadLetterStore` |
 | `DeliveryEventStore` (also a `DeliveryEventListener`) | `JdbcDeliveryEventStore` |
-| `NotificationAuditStore` (since 1.3.0, the status view) | `JdbcNotificationAuditStore` |
+| `NotificationAuditStore` (since 1.2.1, the status view) | `JdbcNotificationAuditStore` |
 
 There is no ORM, no JPA or Hibernate, and no migration tool.
 The library never executes DDL and never needs a superuser, a table owner, or `BYPASSRLS`: every statement is plain DML on the configured tables.
@@ -47,7 +47,7 @@ notification:
     enabled: true
     max-entries: 5000      # default; bound of snapshot() and findByProviderMessageId()
   audit:
-    enabled: true          # since 1.3.0: audit rows behind NotificationService.find(...)
+    enabled: true          # since 1.2.1: audit rows behind NotificationService.find(...)
     retention-days: 90     # default; drives expires_at of audit rows
 ```
 
@@ -201,7 +201,7 @@ The tables are:
 - `idempotency`: one row per `(tenant, caller, idempotency key)`, with the cached `NotificationResponse` as JSON.
 - `dead_letter`: one row per `(tenant, request id)`, with the request and the response as JSON and a `claimed_until` lease column.
 - `delivery_event`: one row per webhook event, de-duplicated on `(tenant, provider, provider event id)`, with the provider attributes as JSON.
-- `audit` (since 1.3.0): one row per `(tenant, request id)` with the send's lifecycle (status, failure type, error code, scrubbed error message, provider message id, timestamps), the caller's metadata as JSON, a masked recipient summary and a recipient count; never a recipient address.
+- `audit` (since 1.2.1): one row per `(tenant, request id)` with the send's lifecycle (status, failure type, error code, scrubbed error message, provider message id, timestamps), the caller's metadata as JSON, a masked recipient summary and a recipient count; never a recipient address.
   It is indexed for lookups by request id and by `(tenant, caller, idempotency key)`; `status` and `failure_type` are plain text without a check constraint, so later statuses need no migration.
 
 Fields that are queried (tenant, request id, idempotency key, provider name, provider message id, status, attempts, timestamps, lease) are real, indexed columns.
@@ -213,12 +213,12 @@ The stores always serialise with their own module-owned Jackson `ObjectMapper`, 
 It registers `JavaTimeModule`, writes dates as ISO-8601 strings, and ignores unknown properties on read.
 Since 1.1.2 an unknown `FailureType` or `DeliveryStatus` constant, in a JSON payload or in the `failure_type` and `status` columns, reads as `UNKNOWN`.
 The idempotency table never stores the raw `errorMessage` of a `FAILED` or `REJECTED` response.
-By default it stores no message, as in 1.2.x; with `notification.idempotency.store-scrubbed-error-message=true` (since 1.3.0) it stores the message after `MessageScrubber` (by default email addresses become `[email]` and phone numbers `[phone]`), so a failure kept and replayed under `failure-policy=RELEASE_TRANSIENT` still says what went wrong.
+By default it stores no message, as in 1.2.x; with `notification.idempotency.store-scrubbed-error-message=true` (since 1.2.1) it stores the message after `MessageScrubber` (by default email addresses become `[email]` and phone numbers `[phone]`), so a failure kept and replayed under `failure-policy=RELEASE_TRANSIENT` still says what went wrong.
 This keeps the stored JSON stable when the host changes its own Jackson configuration, and lets rows written by a newer library version still be read.
 
 ### Upgrading from 1.2.x
 
-1.3.0 adds one optional, nullable column to the idempotency table: `fingerprint`, the SHA-256 of the request that claimed the key (DD-32).
+1.2.1 adds one optional, nullable column to the idempotency table: `fingerprint`, the SHA-256 of the request that claimed the key (DD-32).
 A 1.2.x table without it keeps working: the store probes for the column at startup (with the configured schema and prefix), logs one WARN with the statement below and stores no fingerprints.
 With `notification.idempotency.reject-key-reuse=true` a missing column fails startup with the same statement, because the check could never fire.
 Add it when convenient, adjusting the table name to your prefix and schema:

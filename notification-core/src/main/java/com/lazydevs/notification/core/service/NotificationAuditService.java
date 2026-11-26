@@ -57,7 +57,7 @@ public interface NotificationAuditService {
      * carry.
      *
      * @param response the outcome, never {@code null}
-     * @since 1.3.0
+     * @since 1.2.1
      */
     default void recordOutcome(NotificationResponse response) {
         updateStatus(response.requestId(), response.status(), response.providerMessageId(),
@@ -80,7 +80,7 @@ public interface NotificationAuditService {
      * @param tenantId  the tenant
      * @param requestId the request ID
      * @return the audit record if found
-     * @since 1.3.0
+     * @since 1.2.1
      */
     default Optional<NotificationAudit> findByRequestId(String tenantId, String requestId) {
         return findByRequestId(requestId).filter(a -> java.util.Objects.equals(tenantId, a.getTenantId()));
@@ -94,7 +94,7 @@ public interface NotificationAuditService {
      * @param callerId       the calling service, may be {@code null}
      * @param idempotencyKey the key
      * @return the audit record if found
-     * @since 1.3.0
+     * @since 1.2.1
      */
     default Optional<NotificationAudit> findByIdempotencyKey(String tenantId, String callerId,
                                                              String idempotencyKey) {

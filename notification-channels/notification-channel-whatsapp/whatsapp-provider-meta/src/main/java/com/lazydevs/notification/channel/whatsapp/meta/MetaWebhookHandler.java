@@ -66,7 +66,7 @@ import java.util.regex.Pattern;
  * <p>One instance serves one Meta app; register one per app, with different ids,
  * to serve several.
  *
- * @since 1.4.0
+ * @since 1.3.0
  */
 @Slf4j
 public class MetaWebhookHandler implements WebhookHandler {

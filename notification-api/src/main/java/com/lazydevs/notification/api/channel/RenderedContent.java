@@ -13,7 +13,7 @@ import java.util.Optional;
  * @param payload    channel-specific structured content produced by a
  *                   per-channel content renderer, for example a resolved
  *                   WhatsApp template message; {@code null} for content
- *                   rendered by the template engine (since 1.4.0)
+ *                   rendered by the template engine (since 1.3.0)
  */
 public record RenderedContent(
         String subject,
@@ -24,7 +24,7 @@ public record RenderedContent(
 
     /**
      * Content without a structured payload, as rendered by the template engine.
-     * The constructor every release before 1.4.0 had.
+     * The constructor every release before 1.3.0 had.
      */
     public RenderedContent(String subject, String textBody, String htmlBody, String templateId) {
         this(subject, textBody, htmlBody, templateId, null);
@@ -36,7 +36,7 @@ public record RenderedContent(
      * @param type the expected payload type
      * @param <T>  the expected payload type
      * @return the payload; empty when there is none or it is of another type
-     * @since 1.4.0
+     * @since 1.3.0
      */
     public <T> Optional<T> payload(Class<T> type) {
         Objects.requireNonNull(type, "type");

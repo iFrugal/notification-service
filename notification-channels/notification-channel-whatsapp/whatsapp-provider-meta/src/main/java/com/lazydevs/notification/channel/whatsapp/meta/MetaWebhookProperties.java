@@ -21,7 +21,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * module, or by the application's own endpoint through the
  * {@code WebhookDispatcher}.
  *
- * @since 1.4.0
+ * @since 1.3.0
  */
 @Data
 @ConfigurationProperties(prefix = MetaWebhookProperties.PREFIX)

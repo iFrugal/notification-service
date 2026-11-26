@@ -16,7 +16,7 @@ import static java.net.HttpURLConnection.HTTP_CONFLICT;
  * {@code {"notificationId":"...","status":"KEY_REUSED"}}, where
  * {@code notificationId} is the request id that first used the key.
  *
- * @since 1.3.0
+ * @since 1.2.1
  */
 @SuppressWarnings("java:S110") // depth comes from the NotificationException tree shipped in 1.2.0
 public class IdempotencyKeyReusedException extends NotificationException {
