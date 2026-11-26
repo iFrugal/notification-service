@@ -349,6 +349,35 @@ public class NotificationProperties {
          */
         @Valid
         private Map<String, RateLimitRule> byChannel = new LinkedHashMap<>();
+
+        /**
+         * Whether a send that was admitted by the limiter but never reached
+         * a provider gives its token back (DD-30), through
+         * {@link com.lazydevs.notification.api.ratelimit.RateLimiter#refund}.
+         * {@code false} (the default) keeps the 1.2.0 behaviour: every
+         * admitted request costs one token.
+         *
+         * @since 1.3.0
+         */
+        private boolean refundUnsent = false;
+    }
+
+    /**
+     * Which requests share one token bucket (DD-30).
+     *
+     * @since 1.3.0
+     */
+    public enum RateLimitScope {
+        /**
+         * One bucket per {@code (tenant, caller, channel)}; the 1.2.0 key.
+         */
+        TENANT_CALLER,
+
+        /**
+         * One bucket per channel, shared by every tenant and caller whose
+         * request resolves to the rule, for example a provider account quota.
+         */
+        CHANNEL
     }
 
     /**
@@ -357,10 +386,15 @@ public class NotificationProperties {
      * {@link #capacity} tokens; every {@link #refillPeriod}, up to
      * {@link #refillTokens} are added (greedy refill — they're not held
      * back for a fixed-window boundary).
+     *
+     * <p>Since 1.3.0 a rule can instead list several {@link #bandwidths}, all
+     * of which must allow a send (for example 2 per minute and 5 per hour),
+     * and can choose its bucket {@link #scope}. Setting {@link #bandwidths}
+     * together with any of {@code capacity}, {@code refill-tokens} or
+     * {@code refill-period} is a configuration error.
      */
     @Data
     @lombok.NoArgsConstructor
-    @lombok.AllArgsConstructor
     public static class RateLimitRule {
         /** Maximum tokens in the bucket — the burst tolerance. */
         @Min(value = 1, message = "rate-limit capacity must be at least 1")
@@ -373,6 +407,87 @@ public class NotificationProperties {
         /** How often the refill happens. ISO-8601 duration. Non-zero, positive. */
         @NotNull
         private java.time.Duration refillPeriod = java.time.Duration.ofSeconds(1);
+
+        /**
+         * Several limits enforced together; a send is allowed only when every
+         * band has a token. Empty (the default) means the single band given
+         * by {@link #capacity}, {@link #refillTokens} and {@link #refillPeriod}.
+         *
+         * @since 1.3.0
+         */
+        @Valid
+        private List<RateLimitBandwidth> bandwidths = new ArrayList<>();
+
+        /**
+         * Which requests share the bucket this rule builds.
+         * {@link RateLimitScope#TENANT_CALLER} (the default) is the 1.2.0 key.
+         *
+         * @since 1.3.0
+         */
+        @NotNull(message = "rate-limit scope must not be null")
+        private RateLimitScope scope = RateLimitScope.TENANT_CALLER;
+
+        /**
+         * Whether a single-band field was set through its setter, which is
+         * what configuration binding calls. Field defaults and the
+         * three-argument constructor do not count, so a rule built from
+         * {@code new RateLimitRule(...)} can still be given bandwidths by
+         * configuration.
+         */
+        @lombok.Getter(lombok.AccessLevel.NONE)
+        @lombok.Setter(lombok.AccessLevel.NONE)
+        @lombok.EqualsAndHashCode.Exclude
+        @lombok.ToString.Exclude
+        private boolean singleBandSet;
+
+        /**
+         * A single-band rule with the default {@link RateLimitScope#TENANT_CALLER} scope.
+         */
+        public RateLimitRule(long capacity, long refillTokens, java.time.Duration refillPeriod) {
+            this.capacity = capacity;
+            this.refillTokens = refillTokens;
+            this.refillPeriod = refillPeriod;
+        }
+
+        public void setCapacity(long capacity) {
+            this.capacity = capacity;
+            this.singleBandSet = true;
+        }
+
+        public void setRefillTokens(long refillTokens) {
+            this.refillTokens = refillTokens;
+            this.singleBandSet = true;
+        }
+
+        public void setRefillPeriod(java.time.Duration refillPeriod) {
+            this.refillPeriod = refillPeriod;
+            this.singleBandSet = true;
+        }
+
+        /**
+         * The bands this rule enforces: {@link #bandwidths} when set,
+         * otherwise the single band from {@link #capacity},
+         * {@link #refillTokens} and {@link #refillPeriod}.
+         *
+         * @since 1.3.0
+         */
+        public List<RateLimitBandwidth> effectiveBandwidths() {
+            if (bandwidths != null && !bandwidths.isEmpty()) {
+                return List.copyOf(bandwidths);
+            }
+            return List.of(new RateLimitBandwidth(capacity, refillTokens, refillPeriod));
+        }
+
+        /**
+         * Bean-validation predicate rejecting a rule that sets both
+         * {@link #bandwidths} and a single-band field, because it is not
+         * clear which one the operator meant.
+         */
+        @AssertTrue(message = "rate-limit rule sets both 'bandwidths' and 'capacity'/'refill-tokens'/"
+                + "'refill-period'; use one or the other")
+        public boolean isBandwidthsExclusive() {
+            return bandwidths == null || bandwidths.isEmpty() || !singleBandSet;
+        }
 
         /**
          * Bean-validation predicate enforcing
@@ -393,9 +508,43 @@ public class NotificationProperties {
          */
         @AssertTrue(message = "rate-limit refillPeriod must be positive")
         public boolean isRefillPeriodPositive() {
-            return refillPeriod != null
-                    && !refillPeriod.isZero()
-                    && !refillPeriod.isNegative();
+            return refillPeriod != null && refillPeriod.isPositive();
+        }
+    }
+
+    /**
+     * One band of a multi-band {@link RateLimitRule} (DD-30): at most
+     * {@link #capacity} tokens, refilled greedily by {@link #refillTokens}
+     * every {@link #refillPeriod}. Every field is required.
+     *
+     * @since 1.3.0
+     */
+    @Data
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class RateLimitBandwidth {
+        /** Maximum tokens in this band. */
+        @Min(value = 1, message = "rate-limit bandwidth capacity must be at least 1")
+        private long capacity;
+
+        /** Tokens added each refill period (must be {@code <= capacity}). */
+        @Min(value = 1, message = "rate-limit bandwidth refillTokens must be at least 1")
+        private long refillTokens;
+
+        /** How often the refill happens. ISO-8601 duration, positive. */
+        @NotNull(message = "rate-limit bandwidth refillPeriod is required")
+        private java.time.Duration refillPeriod;
+
+        /** Same invariant as {@link RateLimitRule#isRefillTokensWithinCapacity()}. */
+        @AssertTrue(message = "rate-limit bandwidth refillTokens must not exceed capacity")
+        public boolean isRefillTokensWithinCapacity() {
+            return refillTokens <= capacity;
+        }
+
+        /** A missing period is reported by {@code @NotNull}, not here. */
+        @AssertTrue(message = "rate-limit bandwidth refillPeriod must be positive")
+        public boolean isRefillPeriodPositive() {
+            return refillPeriod == null || refillPeriod.isPositive();
         }
     }
 

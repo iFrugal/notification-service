@@ -12,10 +12,11 @@ import java.util.Objects;
  * replacing the bean — same shape as the {@code IdempotencyStore} SPI from
  * DD-10.
  *
- * <p>The contract is intentionally narrow: no "release", no introspection,
- * no quotas. {@link #tryConsume(RateLimitKey)} is one call per request
- * inside {@code DefaultNotificationService.send()}; everything else is the
- * implementation's business.
+ * <p>The contract is intentionally narrow: no introspection, no quotas.
+ * {@link #tryConsume(RateLimitKey)} is one call per request inside
+ * {@code DefaultNotificationService.send()}; {@link #refund(RateLimitKey)}
+ * (since 1.3.0) gives a token back for a request that never reached a
+ * provider. Everything else is the implementation's business.
  */
 public interface RateLimiter {
 
@@ -28,6 +29,22 @@ public interface RateLimiter {
      *         and, if not, how long until the next token becomes available
      */
     Decision tryConsume(RateLimitKey key);
+
+    /**
+     * Give back one token to the bucket {@code key} resolves to, for a request
+     * that {@link #tryConsume(RateLimitKey)} admitted but that never reached a
+     * provider (DD-30). Implementations never fill a bucket above its
+     * capacity, and must not throw for a key they have no bucket for.
+     *
+     * <p>The default does nothing, so limiters written before 1.3.0 keep
+     * charging every admitted request.
+     *
+     * @param key the same key that was passed to {@link #tryConsume(RateLimitKey)}
+     * @since 1.3.0
+     */
+    default void refund(RateLimitKey key) {
+        // Default: no refund; every admitted request costs one token.
+    }
 
     /**
      * Composite key under which the limiter tracks a single token bucket.

@@ -2,11 +2,8 @@ package com.lazydevs.notification.redis;
 
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.core.config.NotificationProperties;
-import com.lazydevs.notification.core.config.NotificationProperties.RateLimitOverride;
 import com.lazydevs.notification.core.config.NotificationProperties.RateLimitProperties;
-import com.lazydevs.notification.core.config.NotificationProperties.RateLimitRule;
-import io.github.bucket4j.Bandwidth;
-import io.github.bucket4j.BucketConfiguration;
+import com.lazydevs.notification.core.ratelimit.RateLimitRuleResolver;
 import io.github.bucket4j.ConsumptionProbe;
 import io.github.bucket4j.distributed.BucketProxy;
 import io.github.bucket4j.distributed.ExpirationAfterWriteStrategy;
@@ -23,10 +20,8 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Comparator;
-import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Supplier;
 
 /**
  * Redis-backed implementation of the DD-12 {@link RateLimiter} (DD-14).
@@ -39,18 +34,19 @@ import java.util.function.Supplier;
  *
  * <p>The same override-resolution logic (most-specific-wins:
  * {@code (tenant, caller, channel)} > {@code (tenant, caller)} >
- * {@code (tenant)} > default) is applied at decision time. The local
+ * {@code (tenant)} > by-channel > default) is applied at decision time,
+ * through the {@link RateLimitRuleResolver} the in-memory limiter uses, so
+ * bands and scope (DD-30) behave identically. The local
  * {@code ConcurrentHashMap} is just a thin handle cache for
  * {@link BucketProxy} instances — actual token state lives in Redis.
  */
 @Slf4j
 public class RedisRateLimiter implements RateLimiter {
 
-    private final RateLimitProperties config;
-    private final List<RateLimitOverride> sortedOverrides;
+    private final RateLimitRuleResolver resolver;
     private final String keyPrefix;
     private final LettuceConnectionFactory connectionFactory;
-    private final ConcurrentHashMap<RateLimitKey, BucketProxy> bucketHandles = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, BucketProxy> bucketHandles = new ConcurrentHashMap<>();
 
     /**
      * Lazily-initialised Lettuce client + connection + ProxyManager.
@@ -79,21 +75,16 @@ public class RedisRateLimiter implements RateLimiter {
 
     public RedisRateLimiter(NotificationProperties properties,
                             LettuceConnectionFactory connectionFactory) {
-        this.config = properties.getRateLimit();
+        RateLimitProperties config = properties.getRateLimit();
         this.keyPrefix = properties.getRedis().getKeyPrefix();
         this.connectionFactory = connectionFactory;
 
-        // Same precedence sort the in-memory limiter uses — keep one
-        // copy of the rule resolution semantics, just two backing
-        // stores for the buckets themselves.
-        this.sortedOverrides = config.getOverrides() == null
-                ? List.of()
-                : config.getOverrides().stream()
-                        .sorted(Comparator.comparingInt(RedisRateLimiter::specificity).reversed())
-                        .toList();
+        // Same rule resolution the in-memory limiter uses: one copy of
+        // the semantics, two backing stores for the buckets themselves.
+        this.resolver = new RateLimitRuleResolver(config);
 
         log.info("RedisRateLimiter registered (lazy-connect): keyPrefix={}, default={}, {} override(s)",
-                keyPrefix, config.getDefaultRule(), sortedOverrides.size());
+                keyPrefix, config.getDefaultRule(), resolver.overrideCount());
     }
 
     /**
@@ -132,74 +123,57 @@ public class RedisRateLimiter implements RateLimiter {
 
     @Override
     public Decision tryConsume(RateLimitKey key) {
-        BucketProxy bucket = bucketHandles.computeIfAbsent(key, this::buildBucket);
-        ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(1);
+        ConsumptionProbe probe = bucketFor(key).tryConsumeAndReturnRemaining(1);
         if (probe.isConsumed()) {
             return Decision.allow();
         }
+        // With several bands this is the time until every band has a token.
         Duration retryAfter = Duration.ofNanos(probe.getNanosToWaitForRefill());
         log.debug("Rate limit hit (Redis) — retry in {}ms", retryAfter.toMillis());
         return Decision.deny(retryAfter);
     }
 
     /**
-     * Build a {@link BucketProxy} for this key. Called once per unique
-     * key; subsequent calls reuse the cached handle. The Redis-side
-     * state is keyed by {@link #redisKey(RateLimitKey)}.
+     * Give one token back to the bucket {@code key} resolves to (DD-30).
+     * Bucket4j's {@code addTokens} never fills a band above its capacity;
+     * on a bucket Redis no longer holds it recreates the bucket full, which
+     * is the state an expired bucket would have anyway.
      */
-    private BucketProxy buildBucket(RateLimitKey key) {
-        RateLimitRule rule = ruleFor(key);
-        Supplier<BucketConfiguration> configSupplier = () -> BucketConfiguration.builder()
-                .addLimit(Bandwidth.builder()
-                        .capacity(rule.getCapacity())
-                        .refillGreedy(rule.getRefillTokens(), rule.getRefillPeriod())
-                        .build())
-                .build();
-        return proxyManager().builder().build(
-                redisKey(key).getBytes(StandardCharsets.UTF_8),
-                configSupplier);
+    @Override
+    public void refund(RateLimitKey key) {
+        bucketFor(key).addTokens(1);
     }
 
     /**
-     * Walk overrides most-specific-first, fall back to the byChannel
-     * default (DD-23), then the global default — same algorithm as
-     * the in-memory {@code Bucket4jRateLimiter}.
+     * The {@link BucketProxy} for the bucket {@code key} resolves to. One
+     * handle per Redis key; the Redis-side state is keyed by
+     * {@link #redisKey(RateLimitKey)}.
      */
-    private RateLimitRule ruleFor(RateLimitKey key) {
-        for (RateLimitOverride o : sortedOverrides) {
-            if (matches(o, key)) {
-                return o;
-            }
-        }
-        if (key.channel() != null) {
-            RateLimitRule perChannel = config.getByChannel()
-                    .get(key.channel().toLowerCase(java.util.Locale.ROOT));
-            if (perChannel != null) {
-                return perChannel;
-            }
-        }
-        return config.getDefaultRule();
+    private BucketProxy bucketFor(RateLimitKey key) {
+        RateLimitRuleResolver.Resolution resolution = resolver.resolve(key);
+        String redisKey = redisKey(key, resolution);
+        return bucketHandles.computeIfAbsent(redisKey, k -> proxyManager().builder().build(
+                k.getBytes(StandardCharsets.UTF_8),
+                () -> RateLimitRuleResolver.bucketConfiguration(resolution.rule())));
     }
 
-    private static boolean matches(RateLimitOverride o, RateLimitKey key) {
-        if (!key.tenantId().equals(o.getTenant())) {
-            return false;
-        }
-        if (o.getCaller() != null && !o.getCaller().equals(key.callerId())) {
-            return false;
-        }
-        return o.getChannel() == null || o.getChannel().equalsIgnoreCase(key.channel());
-    }
-
-    private static int specificity(RateLimitOverride o) {
-        int s = 1;
-        if (o.getCaller() != null) s++;
-        if (o.getChannel() != null) s++;
-        return s;
-    }
-
-    /** Build the Redis key for this rate-limit scope. */
+    /** Build the Redis key of the bucket this rate-limit key resolves to. */
     String redisKey(RateLimitKey key) {
+        return redisKey(key, resolver.resolve(key));
+    }
+
+    /**
+     * {@code <prefix>:ratelimit:<tenant>:<caller>:<channel>} for the default
+     * {@code TENANT_CALLER} scope (the 1.2.0 key), and
+     * {@code <prefix>:ratelimit-shared:<ruleId>:<channel>} for a
+     * {@code CHANNEL}-scoped rule. The different segment keeps a shared
+     * bucket from colliding with any tenant's bucket.
+     */
+    private String redisKey(RateLimitKey key, RateLimitRuleResolver.Resolution resolution) {
+        if (resolution.channelScoped()) {
+            return keyPrefix + ":ratelimit-shared:" + resolution.ruleId() + ":"
+                    + key.channel().toLowerCase(Locale.ROOT);
+        }
         return keyPrefix + ":ratelimit:"
                 + key.tenantId() + ":"
                 + key.callerId() + ":"
