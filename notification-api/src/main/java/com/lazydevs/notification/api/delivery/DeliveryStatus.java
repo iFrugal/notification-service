@@ -17,6 +17,17 @@ import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
  * <p>Webhooks ingested under {@code /webhooks/{provider}/...} are
  * normalised onto these values per the provider mapping documented in
  * each handler.
+ *
+ * <p>Constants are only ever appended, so their ordinals never change. A
+ * reader that enables {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE}
+ * reads a constant it does not know as {@link #UNKNOWN}.
+ *
+ * <p>Ordering: providers do not guarantee that callbacks arrive in the order
+ * the states happened. WhatsApp, for example, can report {@link #READ} before
+ * {@link #DELIVERED}. A consumer that projects these events onto a current
+ * status must never move it backwards: progress runs
+ * {@link #SENT} &lt; {@link #DELIVERED} &lt; {@link #READ}, and a later
+ * {@code SENT} or {@code DELIVERED} does not replace a {@code READ}.
  */
 public enum DeliveryStatus {
 
@@ -66,5 +77,28 @@ public enum DeliveryStatus {
      * constant added by a later version (since 1.1.2).
      */
     @JsonEnumDefaultValue
-    UNKNOWN
+    UNKNOWN,
+
+    /**
+     * The provider handed the message on towards the recipient, but has not
+     * confirmed delivery yet. Mapping: Meta WhatsApp {@code "sent"}.
+     *
+     * <p>Readers from 1.2.x and earlier read it as {@link #UNKNOWN} when they
+     * enable {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE}.
+     *
+     * @since 1.4.0
+     */
+    SENT,
+
+    /**
+     * The recipient opened the message. Implies {@link #DELIVERED}, and may
+     * arrive before the delivered callback. Mapping: Meta WhatsApp
+     * {@code "read"}.
+     *
+     * <p>Readers from 1.2.x and earlier read it as {@link #UNKNOWN} when they
+     * enable {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE}.
+     *
+     * @since 1.4.0
+     */
+    READ
 }
