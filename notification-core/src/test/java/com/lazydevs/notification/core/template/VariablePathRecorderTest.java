@@ -25,9 +25,29 @@ class VariablePathRecorderTest {
 
     @ParameterizedTest
     @NullAndEmptySource
-    @ValueSource(strings = {"(a + b)", "a.b()", "a?upper_case", "a[b]", "a.", "1abc", "a[-1]"})
+    @ValueSource(strings = {"(a + b)", "a.b()", "a?upper_case", "a[b]", "a.", "1abc", "a[-1]",
+            "a[", "a[]", "a[1", "a[1234567890]", "a[\"b", "a[\"b\"", "a[\"b\"x", "a['b\\", "a[\"b\\\nc\"]",
+            "a['b\\\u2028c']"})
     void parse_rejectsAnythingButAPlainPath(String expression) {
         assertThat(VariablePathRecorder.parse(expression)).isEmpty();
+    }
+
+    @Test
+    void parse_keepsEscapesAndTheOtherQuoteInsideAKey() {
+        assertThat(VariablePathRecorder.parse("a[\"x\\\"y'z\\\\\"]['q\"r'][123456789]"))
+                .containsExactly("a", "x\"y'z\\", "q\"r", 123456789);
+    }
+
+    @Test
+    void parse_handlesVeryLongExpressionsWithoutStackOverflow() {
+        String longKey = "k\\'".repeat(35_000);
+        assertThat(VariablePathRecorder.parse("a['" + longKey + "']"))
+                .containsExactly("a", "k'".repeat(35_000));
+
+        String longPath = "a" + ".b[0]".repeat(20_000);
+        assertThat(VariablePathRecorder.parse(longPath)).hasSize(40_001);
+
+        assertThat(VariablePathRecorder.parse("a[\"" + "x".repeat(100_000))).isEmpty();
     }
 
     @Test

@@ -50,6 +50,7 @@ import java.time.temporal.ChronoField;
 import java.time.temporal.TemporalAccessor;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -80,6 +81,8 @@ public class NotificationTemplateEngine {
      * path, so anything that could leave it (separators, "..") is rejected up front.
      */
     private static final Pattern SAFE_PATH_SEGMENT = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$");
+    /** A run of whitespace or line separators; possessive, so matching never backtracks. */
+    private static final Pattern WHITESPACE_RUN = Pattern.compile("[\\s\\u0085\\u2028\\u2029]++");
 
     /** Characters of a rejected id that are logged; the rest is masked. */
     private static final int LOGGED_ID_PREFIX = 8;
@@ -248,15 +251,21 @@ public class NotificationTemplateEngine {
     public RenderedContent renderAndValidate(NotificationRequest request) {
         RenderedContent content = render(request);
         if (request.getChannel() == Channel.EMAIL) {
-            String problem = isBlank(content.subject()) ? "subject is blank"
-                    : isBlank(content.textBody()) && isBlank(content.htmlBody()) ? "body is empty"
-                    : null;
+            String problem = emailProblem(content);
             if (problem != null) {
                 throw new TemplateRenderException(Reason.EMPTY_OUTPUT, tenantOf(request), content.templateId(), null,
                         "Template " + content.templateId() + " rendered an email whose " + problem, null);
             }
         }
         return content;
+    }
+
+    /** Why a rendered email cannot be sent, or {@code null} when it can. */
+    private static String emailProblem(RenderedContent content) {
+        if (isBlank(content.subject())) {
+            return "subject is blank";
+        }
+        return isBlank(content.textBody()) && isBlank(content.htmlBody()) ? "body is empty" : null;
     }
 
     /**
@@ -331,8 +340,21 @@ public class NotificationTemplateEngine {
         return description;
     }
 
-    private static String oneLine(String text) {
-        return text == null ? "" : text.strip().replaceAll("\\s*\\R\\s*", " ");
+    /**
+     * {@code text} stripped, with every run of whitespace that contains a line break
+     * collapsed into one space; linear in the length of the text.
+     */
+    static String oneLine(String text) {
+        if (text == null) {
+            return "";
+        }
+        return WHITESPACE_RUN.matcher(text.strip())
+                .replaceAll(run -> containsLineBreak(run.group()) ? " " : Matcher.quoteReplacement(run.group()));
+    }
+
+    private static boolean containsLineBreak(String whitespace) {
+        return whitespace.chars().anyMatch(c -> c == '\n' || c == '\r' || c == '\u000B' || c == '\f'
+                || c == '\u0085' || c == '\u2028' || c == '\u2029');
     }
 
     private static TemplateRenderException renderFailure(RenderTarget target, Reason reason, String path,

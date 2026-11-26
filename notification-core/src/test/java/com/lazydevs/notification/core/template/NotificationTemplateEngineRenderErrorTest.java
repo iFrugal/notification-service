@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.DefaultResourceLoader;
 
@@ -118,6 +119,25 @@ class NotificationTemplateEngineRenderErrorTest {
         assertThat(e.getTemplateId()).isEqualTo("T");
     }
 
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
+            "'  a \n\t b  '|'a b'",
+            "'a\r\nb\n\nc'|'a b c'",
+            "'a  \t b'|'a  \t b'",
+            "'a\u2028b \u0085 c'|'a b c'",
+            "''|''"})
+    void oneLine_collapsesWhitespaceRunsThatBreakTheLine(String text, String expected) {
+        assertThat(NotificationTemplateEngine.oneLine(text)).isEqualTo(expected);
+    }
+
+    @Test
+    void oneLine_isLinearOnLongWhitespace() {
+        String text = "a" + " \t".repeat(50_000) + "\n" + " ".repeat(50_000) + "b" + " ".repeat(100_000) + "c";
+
+        assertThat(NotificationTemplateEngine.oneLine(text)).isEqualTo("a b" + " ".repeat(100_000) + "c");
+        assertThat(NotificationTemplateEngine.oneLine(null)).isEmpty();
+    }
+
     @Test
     void modelError_messageIsOneLineWithLocationAndNoTipsOrStackTrace() throws IOException {
         TemplateRenderException e = renderSmsFailure("line one\n${user.name}", user());
@@ -128,9 +148,18 @@ class NotificationTemplateEngineRenderErrorTest {
                 .doesNotContain("\n", "Tip:", "FTL stack trace", "----");
     }
 
-    @Test
-    void templateLocalValueNotFromTheDataModel_hasNoPath() throws IOException {
-        TemplateRenderException e = renderSmsFailure("<#assign local = {'a': 1}>${local.b}", user());
+    /*
+     * A template-local value that is not from the data model; a function returning a missing
+     * value (legal in #return, the interpolation of the call result fails, and the call has
+     * no path); an expression that is not a plain path.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "<#assign local = {'a': 1}>${local.b}",
+            "<#function city a><#return a.city></#function>${city(user.address)}",
+            "${(count + 1).x}"})
+    void modelErrorWithoutADataModelPath_hasNoPath(String template) throws IOException {
+        TemplateRenderException e = renderSmsFailure(template, user());
 
         assertThat(e.getReason()).isEqualTo(Reason.MODEL_INVALID);
         assertThat(e.getVariablePath()).isNull();
@@ -153,24 +182,6 @@ class NotificationTemplateEngineRenderErrorTest {
         assertThat(e.getReason()).isEqualTo(Reason.MODEL_INVALID);
         assertThat(e.getVariablePath()).isNull();
         assertThat(e.getMessage()).contains("required parameter \"u\"", "at line 1");
-    }
-
-    @Test
-    void functionReturningAMissingValue_blamesTheCallWhichHasNoPath() throws IOException {
-        // #return of a missing value is legal; the interpolation of the call result fails
-        TemplateRenderException e = renderSmsFailure(
-                "<#function city a><#return a.city></#function>${city(user.address)}", user());
-
-        assertThat(e.getReason()).isEqualTo(Reason.MODEL_INVALID);
-        assertThat(e.getVariablePath()).isNull();
-    }
-
-    @Test
-    void notAPlainPath_hasNoPath() throws IOException {
-        TemplateRenderException e = renderSmsFailure("${(count + 1).x}", user());
-
-        assertThat(e.getReason()).isEqualTo(Reason.MODEL_INVALID);
-        assertThat(e.getVariablePath()).isNull();
     }
 
     @Test
@@ -209,7 +220,9 @@ class NotificationTemplateEngineRenderErrorTest {
 
     @Test
     void missingTemplate_isStillTemplateNotFoundException() {
-        assertThatThrownBy(() -> engine().render(request(Channel.SMS, Map.of())))
+        NotificationTemplateEngine engine = engine();
+        NotificationRequest request = request(Channel.SMS, Map.of());
+        assertThatThrownBy(() -> engine.render(request))
                 .isInstanceOf(TemplateNotFoundException.class)
                 .isInstanceOf(TemplateRenderException.class)
                 .satisfies(t -> {

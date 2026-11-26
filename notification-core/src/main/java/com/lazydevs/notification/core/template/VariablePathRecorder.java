@@ -48,9 +48,12 @@ final class VariablePathRecorder implements TemplateExceptionHandler {
     private static final int MAX_DEPTH = 16;
     private static final int MAX_NODES = 10_000;
 
-    private static final Pattern ROOT = Pattern.compile("[\\p{L}_$@][\\p{L}\\p{N}_$@]*");
-    private static final Pattern STEP = Pattern.compile(
-            "\\.([\\p{L}_$@][\\p{L}\\p{N}_$@]*)|\\[(\\d{1,9})]|\\[\"((?:[^\"\\\\]|\\\\.)*)\"]|\\['((?:[^'\\\\]|\\\\.)*)']");
+    /** A root variable or a {@code .name} step. */
+    private static final Pattern NAME = Pattern.compile("[\\p{L}_$@][\\p{L}\\p{N}_$@]*");
+    /** Longest {@code [n]} index accepted, so it always fits an {@code int}. */
+    private static final int MAX_INDEX_DIGITS = 9;
+    /** {@link #parseStep} result when no step starts at the position. */
+    private static final int NO_STEP = -1;
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*");
 
     private record Failure(TemplateException exception, String variablePath) {
@@ -74,9 +77,8 @@ final class VariablePathRecorder implements TemplateExceptionHandler {
      * The data-model path recorded for {@code exception} in {@code env}, or {@code null}.
      */
     static String variablePath(Environment env, TemplateException exception) {
-        return env.getCustomAttribute(ATTRIBUTE) instanceof Failure failure && failure.exception() == exception
-                ? failure.variablePath()
-                : null;
+        return env.getCustomAttribute(ATTRIBUTE) instanceof Failure(TemplateException failed, String path)
+                && failed == exception ? path : null;
     }
 
     /**
@@ -114,41 +116,100 @@ final class VariablePathRecorder implements TemplateExceptionHandler {
 
     /**
      * Root variable name followed by {@code String} keys and {@code Integer} indexes, or an
-     * empty list when the expression is not a plain variable path.
+     * empty list when the expression is not a plain variable path. A hand-written scanner
+     * rather than one regular expression, so its cost and stack use stay linear in the length
+     * of the expression.
      */
     static List<Object> parse(String expression) {
         if (expression == null) {
             return List.of();
         }
         String text = expression.strip();
-        Matcher root = ROOT.matcher(text);
-        if (!root.lookingAt()) {
+        Matcher name = NAME.matcher(text);
+        if (!name.lookingAt()) {
             return List.of();
         }
         List<Object> steps = new ArrayList<>();
-        steps.add(root.group());
-        Matcher step = STEP.matcher(text);
-        int position = root.end();
+        steps.add(name.group());
+        int position = name.end();
         while (position < text.length()) {
-            step.region(position, text.length());
-            if (!step.lookingAt()) {
+            position = parseStep(text, position, name, steps);
+            if (position == NO_STEP) {
                 return List.of();
             }
-            steps.add(stepValue(step));
-            position = step.end();
         }
         return steps;
     }
 
-    private static Object stepValue(Matcher step) {
-        if (step.group(1) != null) {
-            return step.group(1);
+    /**
+     * Adds the step at {@code position} ({@code .name}, {@code [0]}, {@code ["key"]} or
+     * {@code ['key']}) to {@code steps}; returns the position after it, or {@link #NO_STEP}.
+     */
+    private static int parseStep(String text, int position, Matcher name, List<Object> steps) {
+        char first = text.charAt(position);
+        if (first == '.') {
+            name.region(position + 1, text.length());
+            if (!name.lookingAt()) {
+                return NO_STEP;
+            }
+            steps.add(name.group());
+            return name.end();
         }
-        if (step.group(2) != null) {
-            return Integer.valueOf(step.group(2));
+        if (first != '[' || position + 1 >= text.length()) {
+            return NO_STEP;
         }
-        String quoted = step.group(3) != null ? step.group(3) : step.group(4);
-        return quoted.replaceAll("\\\\(.)", "$1");
+        char open = text.charAt(position + 1);
+        return open == '"' || open == '\'' ? quotedStep(text, position + 2, open, steps)
+                : indexStep(text, position + 1, steps);
+    }
+
+    /** {@code [n]} with one to {@link #MAX_INDEX_DIGITS} ASCII digits, starting after the {@code [}. */
+    private static int indexStep(String text, int start, List<Object> steps) {
+        int end = start;
+        while (end < text.length() && end - start < MAX_INDEX_DIGITS && isAsciiDigit(text.charAt(end))) {
+            end++;
+        }
+        if (end == start || end >= text.length() || text.charAt(end) != ']') {
+            return NO_STEP;
+        }
+        steps.add(Integer.valueOf(text.substring(start, end)));
+        return end + 1;
+    }
+
+    /**
+     * {@code "key"]} or {@code 'key']}, starting after the opening quote. A backslash escapes
+     * the next character, which must not be a line terminator.
+     */
+    private static int quotedStep(String text, int start, char quote, List<Object> steps) {
+        StringBuilder key = new StringBuilder();
+        int i = start;
+        while (i < text.length()) {
+            char c = text.charAt(i++);
+            if (c == quote) {
+                if (i >= text.length() || text.charAt(i) != ']') {
+                    return NO_STEP;
+                }
+                steps.add(key.toString());
+                return i + 1;
+            }
+            if (c == '\\') {
+                if (i >= text.length() || isLineTerminator(text.charAt(i))) {
+                    return NO_STEP;
+                }
+                c = text.charAt(i++);
+            }
+            key.append(c);
+        }
+        return NO_STEP;
+    }
+
+    private static boolean isAsciiDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    /** The characters {@code .} does not match in a regular expression without DOTALL. */
+    private static boolean isLineTerminator(char c) {
+        return c == '\n' || c == '\r' || c == '\u0085' || c == '\u2028' || c == '\u2029';
     }
 
     private static void appendStep(StringBuilder path, Object step) {
