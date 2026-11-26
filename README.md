@@ -496,6 +496,46 @@ When a request doesn't specify a provider:
 | Multiple providers, none with `default: true` | Error: provider required in request |
 | Multiple providers, 2+ with `default: true` | Startup failure |
 
+### Default-tenant provider fallback
+
+A tenant with no entry under `notification.tenants` fails with `TENANT_NOT_FOUND`.
+Turn on the fallback to let such tenants send through the providers of `notification.default-tenant` ([DD-28](docs/design-decisions/28-default-tenant-provider-fallback.md)):
+
+```yaml
+notification:
+  default-tenant: default
+  tenant-fallback:
+    enabled: true          # default false
+  tenants:
+    default:
+      channels:
+        email:
+          providers:
+            smtp:
+              properties:
+                host: smtp.example.com
+```
+
+Only provider resolution falls back.
+The request keeps its own tenant id for idempotency, rate limits, templates, audit and the dead-letter store, and the admin endpoints never list the unconfigured tenant.
+If the default tenant is not configured either, the request still fails with `TENANT_NOT_FOUND`.
+
+### Lazy provider initialisation
+
+By default every provider is configured and initialised at startup, and a provider with missing or invalid settings stops the application.
+With `notification.providers.lazy-init: true` a provider is built on the first send that needs it instead, so the application boots without the settings of a channel it does not use yet ([DD-29](docs/design-decisions/29-lazy-provider-initialisation.md)):
+
+```yaml
+notification:
+  providers:
+    lazy-init: true        # default false
+```
+
+- Concurrent first sends share one build.
+- When the build fails, the send fails with error code `PROVIDER_NOT_CONFIGURED` as a `TRANSIENT` failure: retries and the dead-letter store apply as for any provider failure, and nothing is cached, so the next send tries the build again.
+- `GET /admin/health` lists a provider no send has needed yet as `NOT_INITIALIZED` (status stays `UP`) and one whose last build failed as `INIT_FAILED` (status `DEGRADED`).
+- Startup still rejects a channel with more than one `default: true` provider.
+
 ### Store selection
 
 Idempotency, rate limiting, the dead-letter queue and delivery events each keep state in a store.
@@ -764,7 +804,33 @@ notification:
 ```
 
 **Match precedence (most specific wins):**
-`(tenant, caller, channel)` → `(tenant, caller)` → `(tenant)` → `default`.
+`(tenant, caller, channel)` → `(tenant, caller)` → `(tenant)` → `by-channel.<channel>` → `default-rule`.
+
+**Several limits, shared buckets and refunds ([DD-30](docs/design-decisions/30-rate-limit-bandwidths-scope-refund.md)):**
+
+```yaml
+notification:
+  rate-limit:
+    enabled: true
+    refund-unsent: false        # default; see below
+    by-channel:
+      sms:
+        scope: channel          # one bucket for all tenants and callers
+        bandwidths:             # all must allow: 2 per minute and 5 per hour
+          - capacity: 2
+            refill-tokens: 2
+            refill-period: PT1M
+          - capacity: 5
+            refill-tokens: 5
+            refill-period: PT1H
+```
+
+- `bandwidths` replaces `capacity` / `refill-tokens` / `refill-period` on any rule (default, by-channel or override); setting both on one rule fails startup.
+  On a denial, `Retry-After` is the time until every band has a token.
+- `scope: tenant-caller` (default) keeps one bucket per `(tenant, caller, channel)`.
+  `scope: channel` shares one bucket per channel among every request that resolves to the rule.
+  The rule is chosen first, so a tenant override still applies to that tenant even when the channel rule is shared.
+- `RateLimiter.refund(key)` gives one token back (never above capacity); `refund-unsent` says whether a request admitted but never sent to a provider is refunded.
 
 **On rejection (REST):**
 
@@ -1377,6 +1443,8 @@ Tenant is determined by:
 3. **Programmatic**: `request.setTenantId("tenant-a")`
 4. **Fallback**: `notification.default-tenant` config
 
+A tenant id that has no entry under `notification.tenants` fails with `TENANT_NOT_FOUND`, unless `notification.tenant-fallback.enabled` lets it use the default tenant's providers (see [Default-tenant provider fallback](#default-tenant-provider-fallback)).
+
 Each tenant can have:
 - Different enabled channels
 - Different providers per channel
@@ -1468,6 +1536,7 @@ services sharing one Redis instance should set distinct prefixes.
 |---------|-----------------|
 | Idempotency record | `String` at `<prefix>:idempotency:<tenant>:<caller>:<key>` (JSON, TTL via `EX`) |
 | Rate-limit bucket | bucket4j-redis CAS state at `<prefix>:ratelimit:<tenant>:<caller>:<channel>` |
+| Shared rate-limit bucket (`scope: channel`, DD-30) | bucket4j-redis CAS state at `<prefix>:ratelimit-shared:<ruleId>:<channel>`, where `ruleId` is `default`, `by-channel:<channel>` or `override:<index>` |
 | Dead-letter list | `LIST` at `<prefix>:dlq` (LPUSH + LTRIM-bounded) |
 
 Operators can read DLQ entries with `redis-cli LRANGE
