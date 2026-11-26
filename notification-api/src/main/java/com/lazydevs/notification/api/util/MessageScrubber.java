@@ -6,7 +6,7 @@ import java.util.regex.Matcher;
  * Removes recipient data from free text before the library persists it.
  *
  * <p>Error messages come from providers and SDKs and can quote the
- * recipient. Since 1.3.0 every error message the library persists (the
+ * recipient. Since 1.2.1 every error message the library persists (the
  * idempotency record's stored response, the audit record and therefore the
  * status view) first passes through a scrubber.
  *
@@ -20,7 +20,7 @@ import java.util.regex.Matcher;
  * <p>Implementations must be thread-safe, must accept {@code null} and must
  * not throw.
  *
- * @since 1.3.0
+ * @since 1.2.1
  */
 @FunctionalInterface
 public interface MessageScrubber {

@@ -21,7 +21,9 @@ bean that registers conditionally):
                              ▼
                 ┌─────────────────────────────┐
                 │  render + validate          │  opt-in (DD-27,
-                │  • TemplateRenderException  │  validate-before-dispatch)
+                │  • channel renderer (DD-35) │  validate-before-dispatch)
+                │    or template engine       │
+                │  • TemplateRenderException  │
                 │    → 422, nothing stored    │
                 └────────────┬────────────────┘
                              ▼
@@ -58,8 +60,9 @@ bean that registers conditionally):
                 ┌─────────────────────────────┐
                 │  dispatch                   │  core
                 │  • audit "received"         │
-                │  • render template (unless  │
-                │    already rendered above)  │
+                │  • render content (channel  │
+                │    renderer, else template; │
+                │    unless rendered above)   │
                 │  • resolve provider         │
                 │  • provider.send()          │
                 │    (wrapped in RetryExecutor│
@@ -89,7 +92,7 @@ bean that registers conditionally):
               │
               ▼  (some time later — provider sends a status callback)
     ┌─────────────────────────────┐
-    │  POST /webhooks/{provider}  │  opt-in (DD-16)
+    │  POST /webhooks/{handlerId} │  opt-in (DD-16, DD-36)
     │  • verify signature         │
     │  • parse                    │
     │  • dispatch to listeners    │
@@ -128,6 +131,8 @@ The defaults are `@Bean` methods in `NotificationCoreDefaultsAutoConfiguration` 
 | `IdempotencyReleasePolicy` | `notification-api` | `FailurePolicyReleasePolicy` | - | - | Decides whether a failed send releases its idempotency key (DD-32) |
 | `RecipientGuard` | `notification-api` | `ConfiguredRecipientGuard` (when enabled) | - | - | Allow-list, redirect or drop before dispatch (DD-34) |
 | `MessageScrubber` | `notification-api` | `MessageScrubber.placeholders()` | - | - | Scrubs error messages before they are persisted (DD-32) |
+| `WebhookHandler` | `notification-api` | Twilio and SES handlers (`notification-rest`), `MetaWebhookHandler` (`whatsapp-provider-meta`) | - | - | Verifies and parses one provider's callbacks, routed by id by `WebhookDispatcher` (DD-36) |
+| `ChannelContentRenderer` | `notification-core` | none: FreeMarker; `WhatsAppContentRenderer` in `whatsapp-core` | - | - | Renders one channel's content instead of the template engine, before the claim with validate-before-dispatch (DD-35) |
 
 Dead-letter replay (DD-15, DD-19) claims entries before sending, acknowledges with `remove` and gives them back with `release`, under `notification.dead-letter.replay-lease`.
 `JdbcDeadLetterStore` makes claims hold across replicas with `FOR UPDATE SKIP LOCKED`; the SPI's default `claim` methods, which the in-memory and Redis stores inherit, take no lease.
@@ -174,6 +179,19 @@ The events reach the same listeners and store as webhook callbacks.
 `push-provider-fcm` calls the FCM HTTP v1 API through its own `FcmHttpTransport` SPI (`java.net.http` by default, or an application bean) and signs the service-account assertion with the JDK, so it adds no HTTP or Google library.
 Access tokens come from an `FcmAccessTokenProvider`, created per tenant by the first `FcmAccessTokenProviderFactory` that supports the tenant's `credentials` value: Spring beans first, then `META-INF/services` entries, then the built-in service-account factory.
 `push-provider-fcm-google-auth` is one such `META-INF/services` entry: it supports `adc` and `external-account:<path>` through the Google auth library, and its `FcmHttpTransportAdapter` sends every call of that library through the tenant's `FcmHttpTransport`.
+
+**Per-channel content renderers (DD-35).**
+Before the provider is called, `DefaultNotificationService` renders the content with the `ChannelContentRenderer` bean registered for the request's channel, else with the FreeMarker `NotificationTemplateEngine`.
+Two renderers for one channel fail startup.
+`whatsapp-core` registers the `WHATSAPP` renderer: it resolves the request onto a template approved at the provider through the `WhatsAppTemplateRegistry`, checks WhatsApp's parameter rules and passes a `WhatsAppTemplateMessage` as the `RenderedContent` payload.
+
+**WhatsApp and the Meta provider (DD-35).**
+`whatsapp-provider-meta` calls the Graph API through its own `MetaHttpTransport` (`java.net.http` by default) and classifies every answer into a `FailureType` and a documented error code, without retrying itself.
+Credentials come from a `MetaCredentialsProvider` bean per tenant on every send, else from the tenant's provider properties.
+
+**Webhook handlers (DD-36).**
+Provider callbacks are `WebhookHandler` beans (Twilio and SES in `notification-rest`, Meta in its provider module), routed by id by the core's servlet-free `WebhookDispatcher`, which publishes their events to the `DeliveryEventListener`s and counts them.
+The REST module's `WebhookController` is one generic route over it; an application without the REST module calls the dispatcher from its own endpoint.
 
 ## Transport surfaces
 
@@ -246,16 +264,19 @@ notification-channels/*           Channel + provider implementations
   notification-channel-push
     push-provider-fcm             FCM HTTP v1, no HTTP or Google library (DD-24)
     push-provider-fcm-google-auth Optional: adc and external-account credentials for FCM
+  notification-channel-whatsapp
+    whatsapp-core                 Template registry, parameter rules, WHATSAPP renderer (DD-35)
+    whatsapp-provider-meta        Meta WhatsApp Cloud API and its status webhook (DD-35)
 notification-spring-boot-starter  The library-mode dependency; registers no beans itself
 notification-server               Standalone Docker app; bundles every built-in provider
 notification-service-bom          Bill of materials for every library jar above
 ```
 
-Total: 20 modules, including the root, the BOM and the aggregator poms.
+Total: 23 modules, including the root, the BOM and the aggregator poms.
 The strict separation lets consumers pull only the providers they use, so an SMTP-only deployment doesn't transitively inherit AWS or Twilio SDKs, and FCM with a service-account key doesn't inherit the Google auth library.
 The BOM's parent is `ifrugal-parent`, not the root pom, so importing it manages only this project's artifacts and leaves Spring Boot, Jackson and the provider SDKs to the application.
 `scripts/check-bom.sh`, run in CI, fails when a jar module is missing from the BOM or the BOM's version differs from the reactor's.
-AWS SNS SMS, WhatsApp (Twilio, Meta) and APNs providers are planned; until they ship, the `SmsProvider`, `WhatsAppProvider` and `PushProvider` SPIs in `notification-api` are the extension points.
+AWS SNS SMS, Twilio or MSG91 WhatsApp and APNs providers are planned; until they ship, the `SmsProvider`, `WhatsAppProvider` and `PushProvider` SPIs in `notification-api` are the extension points.
 Audit has no module of its own: the `NotificationAuditService` SPI, its `NoOpAuditService` default and the store-backed service live in `notification-core`, with the in-memory audit store; the JDBC audit store is in `notification-store-jdbc`, and Redis has none.
 
 ## Cross-cutting invariants
@@ -285,7 +306,7 @@ must not be trusted from clients:
 ## Versioning and release
 
 The project follows semantic versioning.
-The current snapshot is `1.2.1-SNAPSHOT`; `1.2.0` is the most recent release on Maven Central, and the next release is `1.3.0`.
+The current snapshot is `1.2.2-SNAPSHOT`; `1.2.1` is the most recent release on Maven Central, and the next release is `1.3.0` (the WhatsApp channel).
 Release automation is wired via GitHub Actions
 (see `.github/workflows/release.yml`). Maven Central publishing
 goes through the Central Portal via

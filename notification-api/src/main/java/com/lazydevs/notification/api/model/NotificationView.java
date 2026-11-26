@@ -57,7 +57,7 @@ import java.util.Map;
  *                          {@code BOUNCED}); {@code null} when none arrived.
  *                          Text, not an enum, so new statuses need no change here.
  * @param deliveryStatusAt  timestamp of that delivery event
- * @since 1.3.0
+ * @since 1.2.1
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record NotificationView(

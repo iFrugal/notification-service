@@ -4,6 +4,7 @@ import com.lazydevs.notification.api.delivery.DeliveryEvent;
 import com.lazydevs.notification.api.delivery.DeliveryEventListener;
 import com.lazydevs.notification.api.delivery.DeliveryStatus;
 import com.lazydevs.notification.core.config.NotificationProperties;
+import com.lazydevs.notification.core.webhook.WebhookDispatcher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -42,7 +43,7 @@ class WebhookControllerTest {
         properties = new NotificationProperties();
         properties.getWebhooks().setEnabled(true);
         listener = new RecordingListener();
-        controller = new WebhookController(properties, List.of(listener), Optional.empty());
+        controller = controller(properties, List.of(listener));
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 
@@ -143,17 +144,17 @@ class WebhookControllerTest {
         // Static helper — verify the mapping table directly so a
         // future maintainer changing the cases doesn't have to spin
         // up MockMvc to know the contract.
-        assertThat(WebhookController.mapTwilioStatus("delivered"))
+        assertThat(TwilioWebhookHandler.mapTwilioStatus("delivered"))
                 .isEqualTo(DeliveryStatus.DELIVERED);
-        assertThat(WebhookController.mapTwilioStatus("DELIVERED"))
+        assertThat(TwilioWebhookHandler.mapTwilioStatus("DELIVERED"))
                 .isEqualTo(DeliveryStatus.DELIVERED);
-        assertThat(WebhookController.mapTwilioStatus("undelivered"))
+        assertThat(TwilioWebhookHandler.mapTwilioStatus("undelivered"))
                 .isEqualTo(DeliveryStatus.BOUNCED);
-        assertThat(WebhookController.mapTwilioStatus("failed"))
+        assertThat(TwilioWebhookHandler.mapTwilioStatus("failed"))
                 .isEqualTo(DeliveryStatus.FAILED_AT_PROVIDER);
-        assertThat(WebhookController.mapTwilioStatus("queued"))
+        assertThat(TwilioWebhookHandler.mapTwilioStatus("queued"))
                 .isEqualTo(DeliveryStatus.UNKNOWN);
-        assertThat(WebhookController.mapTwilioStatus(null))
+        assertThat(TwilioWebhookHandler.mapTwilioStatus(null))
                 .isEqualTo(DeliveryStatus.UNKNOWN);
     }
 
@@ -353,7 +354,7 @@ class WebhookControllerTest {
         // shouldn't make us return 500 to the provider (which would
         // then retry forever).
         ThrowingListener throwing = new ThrowingListener();
-        controller = new WebhookController(properties, List.of(throwing, listener), Optional.empty());
+        controller = controller(properties, List.of(throwing, listener));
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         mockMvc.perform(post("/api/v1/webhooks/twilio/status")
@@ -368,6 +369,14 @@ class WebhookControllerTest {
     // -----------------------------------------------------------------
     //  Test fixtures
     // -----------------------------------------------------------------
+
+    /** The controller over a dispatcher with the built-in Twilio and SES handlers. */
+    private static WebhookController controller(NotificationProperties properties,
+                                                List<DeliveryEventListener> listeners) {
+        return new WebhookController(new WebhookDispatcher(
+                List.of(new TwilioWebhookHandler(properties), new SesWebhookHandler(properties)),
+                listeners, Optional.empty()));
+    }
 
     private static String escapeForJson(String s) {
         // Wrap in JSON-string form: turn into a JSON literal that, when

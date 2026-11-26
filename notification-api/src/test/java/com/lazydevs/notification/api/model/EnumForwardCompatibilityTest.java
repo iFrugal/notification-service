@@ -34,4 +34,15 @@ class EnumForwardCompatibilityTest {
         assertThat(tolerant.readValue("\"SOMETHING_NEW\"", DeliveryStatus.class)).isEqualTo(DeliveryStatus.UNKNOWN);
         assertThat(tolerant.readValue("\"BOUNCED\"", DeliveryStatus.class)).isEqualTo(DeliveryStatus.BOUNCED);
     }
+
+    @Test
+    void sentAndRead_areKnownDeliveryStatuses_appendedAfterUnknown() throws Exception {
+        assertThat(tolerant.readValue("\"SENT\"", DeliveryStatus.class)).isEqualTo(DeliveryStatus.SENT);
+        assertThat(tolerant.readValue("\"READ\"", DeliveryStatus.class)).isEqualTo(DeliveryStatus.READ);
+        assertThat(tolerant.writeValueAsString(DeliveryStatus.READ)).isEqualTo("\"READ\"");
+        // Ordinals of the 1.2.0 constants are unchanged; new constants are appended.
+        assertThat(DeliveryStatus.UNKNOWN.ordinal()).isEqualTo(4);
+        assertThat(DeliveryStatus.SENT.ordinal()).isEqualTo(5);
+        assertThat(DeliveryStatus.READ.ordinal()).isEqualTo(6);
+    }
 }

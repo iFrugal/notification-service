@@ -104,7 +104,7 @@ deployment doesn't transitively inherit AWS or Twilio SDKs.
 |----------|----------|-------------|----------------------------------------|
 | SMTP | `email-provider-smtp` | Self-hosted SMTP relay or Gmail / SendGrid SMTP | `host`, `port`, `username`, `password`, `starttls` |
 | AWS SES | `email-provider-ses` | AWS-native email | `aws-region`, `aws-access-key`, `aws-secret-key` (or IAM role on EC2) |
-| Azure Communication Services | `email-provider-acs` | Azure-native email (ACS Email) | `sender` plus `connection-string`, or `endpoint` + `credential` (`default` for managed identity via azure-identity, or a `TokenCredential` bean name); optional `reply-to`, `send-mode` (`wait`/`submit`), `wait-timeout`, `sdk-retries`, `user-engagement-tracking-disabled`, `timeout-failure-type` (`transient` default, or `ambiguous` since 1.3.0, DD-31). See the [module README](../notification-channels/notification-channel-email/email-provider-acs/README.md) |
+| Azure Communication Services | `email-provider-acs` | Azure-native email (ACS Email) | `sender` plus `connection-string`, or `endpoint` + `credential` (`default` for managed identity via azure-identity, or a `TokenCredential` bean name); optional `reply-to`, `send-mode` (`wait`/`submit`), `wait-timeout`, `sdk-retries`, `user-engagement-tracking-disabled`, `timeout-failure-type` (`transient` default, or `ambiguous` since 1.2.1, DD-31). See the [module README](../notification-channels/notification-channel-email/email-provider-acs/README.md) |
 
 ```xml
 <dependency>
@@ -141,13 +141,48 @@ notification:
 
 ### 2c. WhatsApp channel
 
-No built-in WhatsApp provider ships yet.
-The `WhatsAppProvider` SPI in `notification-api` exists today; implement it and register it as a bean or FQCN to send WhatsApp messages now.
+The Meta WhatsApp Cloud API ships as `whatsapp-provider-meta` since 1.3.0, on top of the vendor-neutral `whatsapp-core` (DD-35).
+Messages are templates approved at the provider; `whatsapp-core` maps the request's `templateId` (else `notificationType`) onto the approved template and fills its parameters from `templateData`, instead of rendering a FreeMarker file.
 
 | Provider | Artifact | When to use | Required properties |
 |----------|----------|-------------|---------------------|
+| Meta | `whatsapp-provider-meta` (brings `whatsapp-core`) | Direct Meta WhatsApp Cloud API (Graph API) | `phone-number-id` and `access-token`, unless a `MetaCredentialsProvider` bean supplies them per tenant; optional `api-version` (default `v25.0`, pinned), `base-url`, `timeout`, `pair-rate-limit-retry-after`. See the [module README](../notification-channels/notification-channel-whatsapp/whatsapp-provider-meta/README.md) |
+| Template registry | `whatsapp-core` | Comes with every WhatsApp provider | `notification.whatsapp.templates.<tenant>.<templateId>`: `name`, `language`, `header`, `body`, `buttons`. See the [module README](../notification-channels/notification-channel-whatsapp/whatsapp-core/README.md) |
 | Twilio | Planned (no artifact) | Twilio's WhatsApp Business API | Not defined yet |
-| Meta | Planned (no artifact) | Direct Meta WhatsApp Cloud API | Not defined yet |
+
+```xml
+<dependency>
+    <groupId>com.github.ifrugal</groupId>
+    <artifactId>whatsapp-provider-meta</artifactId>
+    <version>1.3.0</version>
+</dependency>
+```
+
+```yaml
+notification:
+  tenants:
+    default:
+      channels:
+        whatsapp:
+          enabled: true
+          providers:
+            meta:
+              properties:
+                phone-number-id: ${WHATSAPP_META_PHONE_NUMBER_ID}   # <phone-number-id>
+                access-token: ${WHATSAPP_META_ACCESS_TOKEN}
+  whatsapp:
+    templates:
+      default:
+        order-shipped:
+          name: order_shipped
+          language: en
+          body: [customerName, orderNumber]
+```
+
+Failures carry a documented `errorCode` (`THROTTLED`, `PAIR_RATE_LIMITED`, `TEMPLATE_REJECTED`, `CREDENTIAL_REJECTED`, ...) and a `FailureType`; the provider never retries on its own.
+Message statuses (`sent`, `delivered`, `read`, `failed`) arrive through the Meta webhook, see 3d.
+A Retry-After hint reaches the caller as `NotificationResponse.retryAfter`; to release the idempotency key after `CREDENTIAL_REJECTED` too, declare an `IdempotencyReleasePolicy` bean (see the module README).
+The standalone server bundles both modules.
 
 ### 2d. Push channel
 
@@ -181,8 +216,8 @@ A device token that FCM reports as unregistered is published as a `BOUNCED` deli
 
 ### 2e. Planned providers
 
-FCM (HTTP v1 API) shipped in 1.2.0; next is the Meta WhatsApp Cloud API with a signed webhook.
-AWS SNS SMS, Twilio WhatsApp and Apple APNs are planned but not scheduled yet.
+FCM (HTTP v1 API) shipped in 1.2.0 and the Meta WhatsApp Cloud API with a signed webhook in 1.3.0.
+AWS SNS SMS, Twilio or MSG91 WhatsApp and Apple APNs are planned but not scheduled yet.
 The `SmsProvider`, `WhatsAppProvider` and `PushProvider` SPIs are the extension points in the meantime.
 
 ### 2f. Unpublished artifacts
@@ -191,7 +226,7 @@ The artifactIds `sms-provider-sns`, `whatsapp-provider-twilio`, `whatsapp-provid
 They are not published from 1.1.0 on.
 If your build declares any of them, remove the dependency; you lose nothing, because they never contained code.
 The aggregator poms `notification-channel-whatsapp` and `notification-channel-push` are dropped for the same reason.
-The exception is `push-provider-fcm` (and its aggregator `notification-channel-push`), published again from 1.2.0 with the real FCM provider; versions 1.0.0 to 1.0.2 of it are still empty.
+The exceptions are `push-provider-fcm` (and its aggregator `notification-channel-push`), published again from 1.2.0 with the real FCM provider, and `whatsapp-provider-meta` (and its aggregator `notification-channel-whatsapp`), published again from 1.3.0 with the real Meta provider; versions 1.0.0 to 1.0.2 of them are still empty.
 
 ---
 
@@ -208,7 +243,7 @@ All have an in-memory default; the stateful ones can move to Redis or PostgreSQL
 | **Retries** | DD-13 | 🔵 Off | `notification.retry.enabled: true` | Built-in | n/a | n/a |
 | **Dead-letter queue** | DD-13 | 🔵 Off | `notification.dead-letter.enabled: true` | Caffeine LRU (in `notification-core`) | `RedisDeadLetterStore` | `JdbcDeadLetterStore` (replica-safe replay) |
 | **Per-channel retry + rate-limit overrides** | DD-23 | n/a | composes on top of retry / rate-limit when those are enabled | n/a | n/a | n/a |
-| **Webhook ingestion** (Twilio + SES) | DD-16 | 🔵 Off | `notification.webhooks.enabled: true` + per-provider; needs REST | n/a | n/a | n/a |
+| **Webhook ingestion** (Twilio, SES, Meta WhatsApp) | DD-16, DD-36 | 🔵 Off | `notification.webhooks.enabled: true` + per-provider; the REST route needs REST, the `WebhookDispatcher` works without it | n/a | n/a | n/a |
 | **Delivery event store** | DD-17 | 🔵 Off | `notification.delivery-events.enabled: true` | Caffeine LRU | `RedisDeliveryEventStore` | `JdbcDeliveryEventStore` |
 | **Audit persistence** | DD-07, DD-33 | 🔵 Off | `notification.audit.enabled: true` | `InMemoryNotificationAuditStore` (bounded) | None: supply a `NotificationAuditStore`, or `notification.redis.audit.enabled: false` for memory | `JdbcNotificationAuditStore` (table `<prefix>audit`) |
 | **Legacy template helpers** (`eval`, `file`, `js`, `serde_*`, unrestricted `?new`) | DD-26 | 🟢 On (deprecated; off from 2.0) | `notification.template.legacy-helpers: false` to remove | n/a | n/a | n/a |
@@ -262,7 +297,7 @@ Send-side: include `idempotencyKey` on `NotificationRequest`. Replay of a
 completed key returns `200` with header `X-Idempotent-Replay: true`.
 Concurrent duplicate returns `409`.
 
-Since 1.3.0 (DD-32):
+Since 1.2.1 (DD-32):
 
 ```yaml
 notification:
@@ -296,6 +331,9 @@ notification:
         subject-prefix: "[redirected: {originals}] "   # default; "" disables
       sms:
         allowed: ["+15550100"]                         # no redirect-to: drop
+      whatsapp:
+        allowed: ["+15550101"]                         # the WhatsApp phone number
+        redirect-to: "+15550101"
 ```
 
 Not-allowed recipients are redirected one-for-one (or dropped); nothing left fails the send with `RECIPIENT_BLOCKED` (`PERMANENT`) before the provider.
@@ -363,6 +401,7 @@ The template is rendered before the idempotency check, the rate limit and the au
 A request whose template is missing, invalid, does not fit its data, or renders an email with a blank subject or an empty body is refused with `TemplateRenderException`: HTTP 422 over REST (`error`, `reason`, `templateId`, `path`, `message`), one WARN and an offset commit on Kafka.
 Nothing is stored, no rate-limit token is taken and nothing goes to the dead-letter store.
 The rendered content is reused for the send, so the template is rendered once.
+A channel with its own renderer (WhatsApp, DD-35) is rendered by it at this point instead; a WhatsApp value that breaks a parameter rule is refused the same way, with reason `PARAMETER_INVALID` (`TEMPLATE_PARAMETER_INVALID`) and the variable as `path`.
 
 ### 3b. Rate limiting (DD-12 + DD-23)
 
@@ -391,7 +430,7 @@ notification:
 REST denial: HTTP `429` + `Retry-After`. Kafka: drop-and-commit (no
 requeue amplification).
 
-Since 1.3.0 (DD-30):
+Since 1.2.1 (DD-30):
 
 ```yaml
 notification:
@@ -457,7 +496,7 @@ notification:
       max-entries: 10000           # Redis list cap, when Redis backs the DLQ
 ```
 
-### 3d. Webhooks — provider delivery callbacks (DD-16 + DD-17)
+### 3d. Webhooks - provider delivery callbacks (DD-16 + DD-17 + DD-36)
 
 ```yaml
 notification:
@@ -471,6 +510,10 @@ notification:
       enabled: true
       topic-arn: arn:aws:sns:us-east-1:0:my-ses-topic
       signature-verification: true
+    meta:                          # needs whatsapp-provider-meta (since 1.3.0)
+      enabled: true
+      app-secret: ${META_APP_SECRET}        # your-app-secret
+      verify-token: ${META_VERIFY_TOKEN}    # your own value, entered in the Meta app
 
   delivery-events:                 # store for querying via admin endpoint
     enabled: true
@@ -480,6 +523,11 @@ notification:
 URLs to register with providers:
 - Twilio status callback URL: `https://your.host/api/v1/webhooks/twilio/status`
 - SES → SNS topic subscription URL: `https://your.host/api/v1/webhooks/ses/sns`
+- Meta WhatsApp callback URL (GET handshake and POST statuses): `https://your.host/api/v1/webhooks/meta`
+
+Every path is `<rest base path><webhooks base path>/{handlerId}/**`, routed to the `WebhookHandler` bean with that id (DD-36).
+Without the REST module, call `WebhookDispatcher.dispatch(handlerId, request)` from your own endpoint.
+WhatsApp statuses map to `SENT`, `DELIVERED`, `READ`, `BOUNCED` and `FAILED_AT_PROVIDER`; `READ` can arrive before `DELIVERED`, so never move a projected status backwards.
 
 Query operator endpoints:
 - `GET /api/v1/admin/delivery-events`
@@ -689,7 +737,7 @@ notification:
     retention-days: 90
 ```
 
-**Shipped stores since 1.3.0 (DD-33).** With `enabled: true` the records go to the audit store of the store family: a bounded in-memory store (`notification.audit.max-entries`, default 10000) for `memory`, the `<prefix>audit` table for `jdbc`.
+**Shipped stores since 1.2.1 (DD-33).** With `enabled: true` the records go to the audit store of the store family: a bounded in-memory store (`notification.audit.max-entries`, default 10000) for `memory`, the `<prefix>audit` table for `jdbc`.
 The Redis family has no audit store: supply a `NotificationAuditStore` bean, or set `notification.redis.audit.enabled: false` to keep audit in memory.
 With `enabled: false` (the default) `NoOpAuditService` logs only.
 A `NotificationAuditService` bean of your own replaces all of this (DD-07). Admin browse (DD-20) at:
@@ -881,34 +929,34 @@ spring:
 | `notification.store.type` | `memory` | Store family for every enabled stateful feature: `memory`, `redis` or `jdbc` |
 | `notification.rest.base-path` | `/api/v1` | Path prefix for all REST + admin + webhook surfaces |
 | `notification.kafka.enabled` | `false` | Kafka consumer |
-| `notification.audit.enabled` | `false` | Audit records in the store family's audit store, the data behind `NotificationService.find` (store shipped since 1.3.0, DD-33) |
+| `notification.audit.enabled` | `false` | Audit records in the store family's audit store, the data behind `NotificationService.find` (store shipped since 1.2.1, DD-33) |
 | `notification.audit.retention-days` | `90` | Lifetime of an audit record (in-memory expiry, JDBC `expires_at`) |
-| `notification.audit.max-entries` | `10000` | Bound of the in-memory audit store (since 1.3.0) |
-| `notification.tenant-fallback.enabled` | `false` | A tenant without an entry under `notification.tenants` uses the providers of `notification.default-tenant` (since 1.3.0, DD-28) |
-| `notification.providers.lazy-init` | `false` | Build providers on first use instead of at startup; a failed build fails the send with `PROVIDER_NOT_CONFIGURED` (`TRANSIENT`) (since 1.3.0, DD-29) |
-| `notification.template.legacy-helpers` | `true` | Add the persistence-utils helpers `eval`, `file`, `js`, `serde_*` and leave `?new` unrestricted; deprecated, `false` from 2.0 (since 1.3.0, DD-26) |
-| `notification.template.validate-before-dispatch` | `false` | Render before idempotency, rate limit and audit; refuse a template that cannot render with `TemplateRenderException` / HTTP 422 (since 1.3.0, DD-27) |
-| `notification.recipient-guard.enabled` | `false` | Configuration-driven recipient guard (since 1.3.0, DD-34) |
+| `notification.audit.max-entries` | `10000` | Bound of the in-memory audit store (since 1.2.1) |
+| `notification.tenant-fallback.enabled` | `false` | A tenant without an entry under `notification.tenants` uses the providers of `notification.default-tenant` (since 1.2.1, DD-28) |
+| `notification.providers.lazy-init` | `false` | Build providers on first use instead of at startup; a failed build fails the send with `PROVIDER_NOT_CONFIGURED` (`TRANSIENT`) (since 1.2.1, DD-29) |
+| `notification.template.legacy-helpers` | `true` | Add the persistence-utils helpers `eval`, `file`, `js`, `serde_*` and leave `?new` unrestricted; deprecated, `false` from 2.0 (since 1.2.1, DD-26) |
+| `notification.template.validate-before-dispatch` | `false` | Render before idempotency, rate limit and audit; refuse a template that cannot render with `TemplateRenderException` / HTTP 422 (since 1.2.1, DD-27) |
+| `notification.recipient-guard.enabled` | `false` | Configuration-driven recipient guard (since 1.2.1, DD-34) |
 | `notification.recipient-guard.channels.<channel>.allowed` | empty | `@domain`, exact address or phone number (digits) |
 | `notification.recipient-guard.channels.<channel>.redirect-to` | unset | Replacement for not-allowed recipients; must itself be allowed; unset drops them |
 | `notification.recipient-guard.channels.email.subject-prefix` | `[redirected: {originals}] ` | Subject prefix when something was redirected; empty disables |
 | `notification.idempotency.enabled` | `true` | Idempotency dedup |
 | `notification.idempotency.ttl` | `24h` | Key retention |
 | `notification.idempotency.max-entries` | `100000` | In-memory bound |
-| `notification.idempotency.retry-after-failure` | `true` | Deprecated since 1.3.0: alias of `failure-policy` (`true` = `RELEASE_ALL`, `false` = `KEEP`) (since 1.1.2) |
-| `notification.idempotency.failure-policy` | unset (= `RELEASE_ALL`) | `RELEASE_ALL`, `KEEP` or `RELEASE_TRANSIENT`: what happens to a key after a failed send; replaceable with an `IdempotencyReleasePolicy` bean (since 1.3.0, DD-32) |
-| `notification.idempotency.reject-key-reuse` | `false` | `409 KEY_REUSED` for a key reused with a different request fingerprint (since 1.3.0, DD-32) |
-| `notification.idempotency.in-progress-timeout` | unset | Settle a key stuck `IN_PROGRESS` longer than this as `FAILED` / `IN_PROGRESS_TIMEOUT` / `AMBIGUOUS` and replay it (since 1.3.0, DD-32) |
-| `notification.idempotency.store-scrubbed-error-message` | `false` | Keep the scrubbed error message of a stored `FAILED`/`REJECTED` response; `false` stores none, as in 1.2.0 (since 1.3.0, DD-32) |
+| `notification.idempotency.retry-after-failure` | `true` | Deprecated since 1.2.1: alias of `failure-policy` (`true` = `RELEASE_ALL`, `false` = `KEEP`) (since 1.1.2) |
+| `notification.idempotency.failure-policy` | unset (= `RELEASE_ALL`) | `RELEASE_ALL`, `KEEP` or `RELEASE_TRANSIENT`: what happens to a key after a failed send; replaceable with an `IdempotencyReleasePolicy` bean (since 1.2.1, DD-32) |
+| `notification.idempotency.reject-key-reuse` | `false` | `409 KEY_REUSED` for a key reused with a different request fingerprint (since 1.2.1, DD-32) |
+| `notification.idempotency.in-progress-timeout` | unset | Settle a key stuck `IN_PROGRESS` longer than this as `FAILED` / `IN_PROGRESS_TIMEOUT` / `AMBIGUOUS` and replay it (since 1.2.1, DD-32) |
+| `notification.idempotency.store-scrubbed-error-message` | `false` | Keep the scrubbed error message of a stored `FAILED`/`REJECTED` response; `false` stores none, as in 1.2.0 (since 1.2.1, DD-32) |
 | `notification.caller-registry.enabled` | `false` | Validate `X-Service-Id` against known list |
 | `notification.caller-registry.strict` | `false` | Reject unknown callers with `403` |
 | `notification.rate-limit.enabled` | `false` | Token-bucket throttling |
 | `notification.rate-limit.default-rule.*` | — | Global bucket shape |
 | `notification.rate-limit.by-channel.<name>.*` | — | Per-channel default (DD-23) |
 | `notification.rate-limit.overrides[*]` | — | Per `(tenant, caller, channel)` overrides |
-| `notification.rate-limit.<rule>.bandwidths[*]` | empty | Several `{capacity, refill-tokens, refill-period}` bands that must all allow; exclusive with the single-band fields (since 1.3.0, DD-30) |
-| `notification.rate-limit.<rule>.scope` | `tenant-caller` | `tenant-caller`: bucket per `(tenant, caller, channel)`; `channel`: one bucket per channel shared by every request the rule matches (since 1.3.0, DD-30) |
-| `notification.rate-limit.refund-unsent` | `false` | Refund the token of a failed send whose idempotency key the release policy released, unless `AMBIGUOUS` or `UNKNOWN` (since 1.3.0, DD-30, DD-32) |
+| `notification.rate-limit.<rule>.bandwidths[*]` | empty | Several `{capacity, refill-tokens, refill-period}` bands that must all allow; exclusive with the single-band fields (since 1.2.1, DD-30) |
+| `notification.rate-limit.<rule>.scope` | `tenant-caller` | `tenant-caller`: bucket per `(tenant, caller, channel)`; `channel`: one bucket per channel shared by every request the rule matches (since 1.2.1, DD-30) |
+| `notification.rate-limit.refund-unsent` | `false` | Refund the token of a failed send whose idempotency key the release policy released, unless `AMBIGUOUS` or `UNKNOWN` (since 1.2.1, DD-30, DD-32) |
 | `notification.retry.enabled` | `false` | Synchronous retry on transient failures |
 | `notification.retry.max-attempts` | `3` | Global attempts (incl. first try) |
 | `notification.retry.max-retry-after` | `max-delay` | Longest provider `Retry-After` hint the executor waits for; a longer hint stops the retries and the failure goes to the DLQ (since 1.2.0, DD-25) |
@@ -930,7 +978,7 @@ spring:
 | `notification.redis.dead-letter.max-entries` | `1000` | Redis list cap |
 | `notification.redis.delivery-events.enabled` | unset | Per-feature override of `store.type`: `true` Redis, `false` memory |
 | `notification.redis.delivery-events.max-entries` | `10000` | Redis list cap |
-| `notification.redis.audit.enabled` | unset | `false` keeps audit in memory under `store.type: redis` (since 1.3.0) |
+| `notification.redis.audit.enabled` | unset | `false` keeps audit in memory under `store.type: redis` (since 1.2.1) |
 | `notification.store.jdbc.schema` | none | Schema of the JDBC tables; unset uses the search path |
 | `notification.store.jdbc.table-prefix` | `notification_` | Prefix of every JDBC table, constraint and index |
 | `notification.store.jdbc.datasource-bean-name` | none | DataSource bean for the JDBC stores; unset picks the single or `@Primary` one |

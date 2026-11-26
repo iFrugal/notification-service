@@ -101,11 +101,13 @@ notification:
         whatsapp:
           enabled: ${WHATSAPP_ENABLED:false}
           providers:
-            twilio:
+            # Meta WhatsApp Cloud API. Messages are approved templates, bound
+            # under notification.whatsapp.templates (see whatsapp-core).
+            meta:
               properties:
-                account-sid: ${TWILIO_ACCOUNT_SID:}
-                auth-token: ${TWILIO_AUTH_TOKEN:}
-                from: ${TWILIO_WHATSAPP_FROM:}
+                phone-number-id: ${WHATSAPP_META_PHONE_NUMBER_ID:}
+                access-token: ${WHATSAPP_META_ACCESS_TOKEN:}
+                api-version: ${WHATSAPP_META_API_VERSION:v25.0}
 
         push:
           enabled: ${PUSH_ENABLED:false}

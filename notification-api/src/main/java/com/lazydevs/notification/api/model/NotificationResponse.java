@@ -46,17 +46,17 @@ import java.util.Map;
  *                          ({@link FailureType#AMBIGUOUS}). {@code null} on
  *                          success and on responses written by 1.2.0 or
  *                          earlier; omitted from JSON when {@code null}.
- *                          Since 1.3.0 (DD-31).
+ *                          Since 1.2.1 (DD-31).
  * @param providerMetadata  provider-specific details of the send, from
  *                          {@link SendResult#providerMetadata()}, for example
  *                          an ACS {@code acsStatus} or a retry hint.
  *                          {@code null} when the provider gave none; omitted
- *                          from JSON when {@code null}. Since 1.3.0 (DD-31).
+ *                          from JSON when {@code null}. Since 1.2.1 (DD-31).
  * @param retryAfter        how long the provider asked to wait before the next
  *                          attempt, from {@link SendResult#retryAfter()} (for
  *                          example an HTTP 429 {@code Retry-After}) on a failed
  *                          send. {@code null} when the provider gave no hint;
- *                          omitted from JSON when {@code null}. Since 1.3.0 (DD-31).
+ *                          omitted from JSON when {@code null}. Since 1.2.1 (DD-31).
  */
 public record NotificationResponse(
         String requestId,
@@ -110,7 +110,7 @@ public record NotificationResponse(
      *
      * @param type the classification, may be {@code null}
      * @return the copy; this response is not changed
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public NotificationResponse withFailureType(FailureType type) {
         return new NotificationResponse(requestId, correlationId, tenantId, callerId, channel, provider, status,
@@ -124,7 +124,7 @@ public record NotificationResponse(
      *
      * @param metadata the provider metadata, may be {@code null}
      * @return the copy; this response is not changed
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public NotificationResponse withProviderMetadata(Map<String, Object> metadata) {
         return new NotificationResponse(requestId, correlationId, tenantId, callerId, channel, provider, status,
@@ -138,7 +138,7 @@ public record NotificationResponse(
      *
      * @param message the error message, may be {@code null}
      * @return the copy; this response is not changed
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public NotificationResponse withErrorMessage(String message) {
         return new NotificationResponse(requestId, correlationId, tenantId, callerId, channel, provider, status,
@@ -151,7 +151,7 @@ public record NotificationResponse(
      *
      * @param delay the delay, may be {@code null}; zero or negative is no hint
      * @return the copy; this response is not changed
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public NotificationResponse withRetryAfter(Duration delay) {
         return new NotificationResponse(requestId, correlationId, tenantId, callerId, channel, provider, status,

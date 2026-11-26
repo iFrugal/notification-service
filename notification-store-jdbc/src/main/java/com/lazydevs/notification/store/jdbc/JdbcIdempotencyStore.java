@@ -42,7 +42,7 @@ import static com.lazydevs.notification.store.jdbc.JdbcStoreSupport.nowPlusMilli
  * <p>The row's {@code tenant_id} is {@link IdempotencyKey#tenantId()},
  * which is the SPI's dedup scope and is always set.
  *
- * <p>The {@code fingerprint} column (DD-32, since 1.3.0) is optional: a
+ * <p>The {@code fingerprint} column (DD-32, since 1.2.1) is optional: a
  * 1.2.0 table without it keeps working. The store probes for the column
  * once ({@link #detectFingerprintColumn()}, called at startup by the
  * auto-configuration, otherwise on first use); when it is missing it logs
@@ -90,7 +90,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
      * @param requireFingerprint {@code notification.idempotency.reject-key-reuse}:
      *                           {@link #detectFingerprintColumn()} fails when the
      *                           {@code fingerprint} column is missing
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public JdbcIdempotencyStore(JdbcClient jdbc, ObjectMapper json, JdbcStoreTables tables,
                                 Duration ttl, int purgeBatchSize, boolean requireFingerprint) {
@@ -136,7 +136,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
      * @return whether the column exists; empty when the probe could not tell
      * @throws IllegalStateException when the column is missing and the store
      *                               was built with {@code requireFingerprint}
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public Optional<Boolean> detectFingerprintColumn() {
         Optional<Boolean> present = probeFingerprintColumn();
@@ -177,7 +177,7 @@ public class JdbcIdempotencyStore implements IdempotencyStore, JdbcPurgeableStor
     }
 
     private String missingFingerprintMessage() {
-        return "Idempotency table " + table + " has no fingerprint column (added in 1.3.0, DD-32);"
+        return "Idempotency table " + table + " has no fingerprint column (added in 1.2.1, DD-32);"
                 + " idempotency keeps working without request fingerprints, so"
                 + " notification.idempotency.reject-key-reuse cannot detect a reused key."
                 + " Add the column with: ALTER TABLE " + table + " ADD COLUMN IF NOT EXISTS fingerprint VARCHAR(64)";

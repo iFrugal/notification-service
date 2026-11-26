@@ -106,6 +106,16 @@
                 <artifactId>push-provider-fcm-google-auth</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>whatsapp-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.ifrugal</groupId>
+                <artifactId>whatsapp-provider-meta</artifactId>
+                <version>${project.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 

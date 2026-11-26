@@ -8,7 +8,6 @@ import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.config.NotificationCoreDefaultsAutoConfiguration;
 import com.lazydevs.notification.core.config.NotificationProperties;
-import com.lazydevs.notification.core.metrics.NotificationMetrics;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.service.NotificationAuditService;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
@@ -18,10 +17,12 @@ import com.lazydevs.notification.rest.controller.NotificationController;
 import com.lazydevs.notification.rest.filter.CallerAdmissionFilter;
 import com.lazydevs.notification.rest.filter.TenantFilter;
 import com.lazydevs.notification.rest.openapi.OpenApiConfig;
+import com.lazydevs.notification.core.webhook.WebhookDispatcher;
 import com.lazydevs.notification.rest.webhook.LoggingDeliveryEventListener;
+import com.lazydevs.notification.rest.webhook.SesWebhookHandler;
+import com.lazydevs.notification.rest.webhook.TwilioWebhookHandler;
 import com.lazydevs.notification.rest.webhook.WebhookController;
 import jakarta.servlet.Filter;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -143,18 +144,27 @@ public class NotificationRestAutoConfiguration {
     }
 
     /**
-     * Provider delivery-callback webhooks (DD-16), opt-in on top of REST.
-     * The per-provider Twilio and SES flags are checked inside the handlers.
+     * Provider delivery-callback webhooks (DD-16, DD-36), opt-in on top of REST.
+     * The controller routes every handler id to the core {@link WebhookDispatcher};
+     * the per-provider Twilio and SES flags are checked inside their handlers.
      */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnBooleanProperty("notification.webhooks.enabled")
     static class WebhookConfiguration {
 
         @Bean
-        public WebhookController webhookController(NotificationProperties properties,
-                                                   ObjectProvider<DeliveryEventListener> listeners,
-                                                   Optional<NotificationMetrics> metrics) {
-            return new WebhookController(properties, listeners.orderedStream().toList(), metrics);
+        public WebhookController webhookController(WebhookDispatcher webhookDispatcher) {
+            return new WebhookController(webhookDispatcher);
+        }
+
+        @Bean
+        public TwilioWebhookHandler twilioWebhookHandler(NotificationProperties properties) {
+            return new TwilioWebhookHandler(properties);
+        }
+
+        @Bean
+        public SesWebhookHandler sesWebhookHandler(NotificationProperties properties) {
+            return new SesWebhookHandler(properties);
         }
 
         /**

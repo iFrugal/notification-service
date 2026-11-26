@@ -29,6 +29,7 @@ import com.lazydevs.notification.core.idempotency.RequestFingerprint;
 import com.lazydevs.notification.core.metrics.NotificationMetrics;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.retry.RetryExecutor;
+import com.lazydevs.notification.core.template.ChannelContentRenderer;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
 import lazydevs.persistence.connection.multitenant.TenantContext;
 import lazydevs.services.basic.filter.RequestContext;
@@ -37,7 +38,10 @@ import org.springframework.util.StringUtils;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -62,6 +66,7 @@ public class DefaultNotificationService implements NotificationService {
     private final MessageScrubber scrubber;
     private final NotificationViews views;
     private final RecipientGuard recipientGuard;
+    private final Map<com.lazydevs.notification.api.Channel, ChannelContentRenderer> renderers;
     private final Executor asyncExecutor;
 
     /**
@@ -83,8 +88,8 @@ public class DefaultNotificationService implements NotificationService {
     }
 
     /**
-     * @param extensions collaborators added since 1.3.0
-     * @since 1.3.0
+     * @param extensions collaborators added since 1.2.1
+     * @since 1.2.1
      */
     @SuppressWarnings("java:S107") // one parameter per optional collaborator, see DD-10..DD-22
     public DefaultNotificationService(
@@ -116,6 +121,7 @@ public class DefaultNotificationService implements NotificationService {
         this.scrubber = extensions.messageScrubber();
         this.views = new NotificationViews(extensions.deliveryEvents());
         this.recipientGuard = extensions.recipientGuard();
+        this.renderers = renderersByChannel(extensions.renderers());
         this.asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
         // Optional<IdempotencyStore>: empty when notification.idempotency.enabled=false.
         IdempotencyReleasePolicy releasePolicy = extensions.releasePolicy() != null ? extensions.releasePolicy()
@@ -181,9 +187,10 @@ public class DefaultNotificationService implements NotificationService {
             // Record audit (received)
             fillRecipientSummary(auditService.recordReceived(dispatched), dispatched);
 
-            // Render template (already rendered when validate-before-dispatch is on, DD-27);
-            // rendered from the request as the caller sent it, exactly once per send.
-            RenderedContent rendered = preRendered != null ? preRendered : templateEngine.render(request);
+            // Render content (already rendered when validate-before-dispatch is on, DD-27):
+            // the channel's renderer when one is registered (DD-35), otherwise the
+            // template; from the request as the caller sent it, exactly once per send.
+            RenderedContent rendered = preRendered != null ? preRendered : render(request);
             if (guard != null && guard.blocked()) {
                 throw new NotificationException(RecipientGuard.BLOCKED_ERROR_CODE,
                         "Every recipient was blocked by the recipient guard");
@@ -334,11 +341,50 @@ public class DefaultNotificationService implements NotificationService {
         }
     }
 
+    private RenderedContent render(NotificationRequest request) {
+        ChannelContentRenderer renderer = request.getChannel() == null ? null : renderers.get(request.getChannel());
+        return renderer != null ? renderer.render(request) : templateEngine.render(request);
+    }
+
+    /**
+     * Index the renderers by channel. Two renderers for one channel are a
+     * wiring mistake that would silently pick one of them, so they fail the
+     * startup, naming both classes.
+     */
+    private static Map<com.lazydevs.notification.api.Channel, ChannelContentRenderer> renderersByChannel(
+            List<ChannelContentRenderer> renderers) {
+        Map<com.lazydevs.notification.api.Channel, ChannelContentRenderer> byChannel =
+                new EnumMap<>(com.lazydevs.notification.api.Channel.class);
+        if (renderers == null) {
+            return Collections.unmodifiableMap(byChannel);
+        }
+        for (ChannelContentRenderer renderer : renderers) {
+            if (renderer == null) {
+                continue;
+            }
+            com.lazydevs.notification.api.Channel channel = renderer.channel();
+            if (channel == null) {
+                throw new IllegalStateException("ChannelContentRenderer " + renderer.getClass().getName()
+                        + " returned no channel");
+            }
+            ChannelContentRenderer existing = byChannel.putIfAbsent(channel, renderer);
+            if (existing != null) {
+                throw new IllegalStateException("Two ChannelContentRenderer beans for channel " + channel + ": "
+                        + existing.getClass().getName() + " and " + renderer.getClass().getName()
+                        + "; keep one of them");
+            }
+        }
+        return Collections.unmodifiableMap(byChannel);
+    }
+
     /**
      * Render and validate the template up front when
      * {@code notification.template.validate-before-dispatch} is on (DD-27), so a
      * {@link TemplateRenderException} reaches the caller with no idempotency claim, rate
-     * token, audit row or DLQ entry. {@code null} when the flag is off: the engine is not
+     * token, audit row or DLQ entry. A channel with a {@link ChannelContentRenderer}
+     * (DD-35) is rendered by it here, so its {@link TemplateRenderException}, for example
+     * a WhatsApp parameter that breaks a rule ({@code PARAMETER_INVALID}), reaches the
+     * caller the same way. {@code null} when the flag is off: the engine is not
      * touched and the dispatch path renders as in 1.2. A request without a channel also
      * gets {@code null}, so it fails on the dispatch path exactly as before.
      */
@@ -349,7 +395,8 @@ public class DefaultNotificationService implements NotificationService {
             return null;
         }
         try {
-            return templateEngine.renderAndValidate(request);
+            ChannelContentRenderer renderer = renderers.get(request.getChannel());
+            return renderer != null ? renderer.render(request) : templateEngine.renderAndValidate(request);
         } catch (TemplateRenderException e) {
             metrics.ifPresent(m -> m.recordTemplateValidationFailed(request.getChannel(), e.getReason()));
             throw e;
@@ -388,7 +435,7 @@ public class DefaultNotificationService implements NotificationService {
             subject = email.subject();
         }
         return new RenderedContent(prefix + (subject == null ? "" : subject),
-                content.textBody(), content.htmlBody(), content.templateId());
+                content.textBody(), content.htmlBody(), content.templateId(), content.payload());
     }
 
     /**

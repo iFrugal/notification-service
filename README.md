@@ -9,7 +9,7 @@
 [![Java](https://img.shields.io/badge/Java-25-orange.svg)](https://openjdk.org/projects/jdk/25/)
 
 A multi-tenant notification service with pluggable providers.
-Email (SMTP, AWS SES, Azure Communication Services), SMS (Twilio) and Push (Firebase Cloud Messaging) ship with built-in providers; WhatsApp exists as a provider SPI, and its built-in providers are planned, like Apple APNs for push (see [Planned providers](#planned-providers)).
+Email (SMTP, AWS SES, Azure Communication Services), SMS (Twilio), WhatsApp (Meta WhatsApp Cloud API) and Push (Firebase Cloud Messaging) ship with built-in providers; more WhatsApp vendors and Apple APNs for push are planned (see [Planned providers](#planned-providers)).
 Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone Docker container**.
 
 > ### 📋 **[Feature Matrix → `docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md)**
@@ -59,8 +59,8 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 
 ## Features
 
-- **Multi-Channel Support**: Email, SMS and Push with built-in providers; WhatsApp as an SPI extension point (`WhatsAppProvider`) with built-in providers planned
-- **Multiple Providers per Channel**: SMTP, AWS SES and Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)) for email, Twilio for SMS, Firebase Cloud Messaging ([`push-provider-fcm`](notification-channels/notification-channel-push/push-provider-fcm/README.md), with [`push-provider-fcm-google-auth`](notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) for Application Default Credentials and workload identity federation) for push; AWS SNS, WhatsApp (Twilio, Meta) and APNs providers are planned
+- **Multi-Channel Support**: Email, SMS, WhatsApp and Push with built-in providers
+- **Multiple Providers per Channel**: SMTP, AWS SES and Azure Communication Services Email ([`email-provider-acs`](notification-channels/notification-channel-email/email-provider-acs/README.md)) for email, Twilio for SMS, Firebase Cloud Messaging ([`push-provider-fcm`](notification-channels/notification-channel-push/push-provider-fcm/README.md), with [`push-provider-fcm-google-auth`](notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) for Application Default Credentials and workload identity federation) for push; the Meta WhatsApp Cloud API ([`whatsapp-provider-meta`](notification-channels/notification-channel-whatsapp/whatsapp-provider-meta/README.md), on the vendor-neutral [`whatsapp-core`](notification-channels/notification-channel-whatsapp/whatsapp-core/README.md)) for WhatsApp; AWS SNS, other WhatsApp vendors and APNs providers are planned
 - **Multi-Tenancy**: Tenant-specific configurations via `X-Tenant-Id` header
 - **Caller Identity**: Optional `X-Service-Id` header — feeds idempotency dedup, audit, and an opt-in caller registry (DD-11)
 - **Idempotency**: Optional `idempotencyKey` field with pluggable store (DD-10); opt-in key-reuse check, failure policy with a replaceable release policy, and in-progress timeout (DD-32)
@@ -117,7 +117,7 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 ```
 
 `Custom` is any provider you register against a channel SPI (see [Adding Custom Providers](#adding-custom-providers)).
-Push has a built-in FCM provider; WhatsApp has no built-in provider yet, see [Planned providers](#planned-providers).
+Push has a built-in FCM provider and WhatsApp a built-in Meta Cloud API provider, see [WhatsApp providers](#whatsapp-providers).
 
 ---
 
@@ -131,26 +131,25 @@ Push has a built-in FCM provider; WhatsApp has no built-in provider yet, see [Pl
 | `notification-kafka` | Kafka consumer for async notifications |
 | `notification-redis` | Redis-backed stores and rate limiter (`notification.store.type=redis`) |
 | `notification-store-jdbc` | PostgreSQL-backed stores over plain SQL (`notification.store.type=jdbc`) |
-| `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `email-provider-acs`, `sms-provider-twilio`, `push-provider-fcm`, and the FCM credentials adapter `push-provider-fcm-google-auth` |
+| `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `email-provider-acs`, `sms-provider-twilio`, `push-provider-fcm`, the FCM credentials adapter `push-provider-fcm-google-auth`, `whatsapp-core` and `whatsapp-provider-meta` |
 | `notification-spring-boot-starter` | The dependency to add in library mode; every module brings its own auto-configuration |
-| `notification-server` | Standalone application with Dockerfile; bundles every built-in provider (ACS and FCM since 1.2.0) |
+| `notification-server` | Standalone application with Dockerfile; bundles every built-in provider (ACS and FCM since 1.2.0, WhatsApp since 1.3.0) |
 | `notification-service-bom` | Bill of materials: import it once and leave the versions off every other notification-service dependency (since 1.2.0) |
 
 ### Planned providers
 
 The channel SPIs `SmsProvider`, `WhatsAppProvider` and `PushProvider` live in `notification-api` and exist today.
 You can send on any of these channels now by implementing the SPI yourself (see [Adding Custom Providers](#adding-custom-providers)).
-The built-in providers below are planned and have no published artifact (Firebase Cloud Messaging shipped in 1.2.0, see [Push providers](#push-providers)):
+The built-in providers below are planned and have no published artifact (Firebase Cloud Messaging shipped in 1.2.0, see [Push providers](#push-providers), and the Meta WhatsApp Cloud API in 1.3.0, see [WhatsApp providers](#whatsapp-providers)):
 
 | Channel | Provider | Status |
 |---------|----------|--------|
 | SMS | AWS SNS | Planned |
 | WhatsApp | Twilio | Planned |
-| WhatsApp | Meta WhatsApp Cloud API | Planned |
+| WhatsApp | MSG91 | Planned |
 | Push | Apple Push Notification service (APNs) | Planned |
 
-Next planned: the Meta WhatsApp Cloud API with a signed webhook.
-The remaining providers are not scheduled yet.
+None of them is scheduled yet.
 
 ---
 
@@ -489,6 +488,54 @@ class DeadPushTokenListener implements DeliveryEventListener {
 
 The listener runs on the thread that called `send`, after the send completed, so it can read the current tenant.
 
+### WhatsApp providers
+
+| Provider name | Artifact | Notes |
+|---------------|----------|-------|
+| `meta` | `whatsapp-provider-meta` | Meta WhatsApp Cloud API template messages and the signed status webhook, no Meta SDK; see the [module README](notification-channels/notification-channel-whatsapp/whatsapp-provider-meta/README.md) |
+| (channel) | `whatsapp-core` | Maps your template ids onto approved templates and checks WhatsApp's parameter rules; comes with every WhatsApp provider. See the [module README](notification-channels/notification-channel-whatsapp/whatsapp-core/README.md) |
+
+**WhatsApp quick start.**
+Add the provider:
+
+```xml
+<dependency>
+    <groupId>com.github.ifrugal</groupId>
+    <artifactId>whatsapp-provider-meta</artifactId>
+</dependency>
+```
+
+Configure the tenant and bind your template ids to the templates approved at Meta:
+
+```yaml
+notification:
+  tenants:
+    default:
+      channels:
+        whatsapp:
+          enabled: true
+          providers:
+            meta:
+              properties:
+                phone-number-id: ${WHATSAPP_META_PHONE_NUMBER_ID}   # <phone-number-id>
+                access-token: ${WHATSAPP_META_ACCESS_TOKEN}
+  whatsapp:
+    templates:
+      default:
+        order-shipped:                 # request.templateId, else request.notificationType
+          name: order_shipped          # approved at Meta
+          language: en
+          body: [customerName, orderNumber]
+  webhooks:
+    meta:                              # statuses: sent, delivered, read, failed
+      enabled: true
+      app-secret: ${META_APP_SECRET}
+      verify-token: ${META_VERIFY_TOKEN}
+```
+
+A send then carries only `templateData` (`customerName`, `orderNumber`); each value must be one line, without runs of 5 spaces, at most 1024 characters.
+Failures carry a documented `errorCode` such as `THROTTLED`, `TEMPLATE_REJECTED` or `CREDENTIAL_REJECTED` (DD-35), and statuses arrive as `SENT`, `DELIVERED`, `READ`, `BOUNCED` or `FAILED_AT_PROVIDER` delivery events.
+
 ### Default Provider Selection
 
 When a request doesn't specify a provider:
@@ -594,8 +641,8 @@ notification:
 | `cache-ttl-seconds` | `3600` | Seconds before a cached template is read again; `0` or negative never expires. Read since 1.1.2 (it was bound but ignored before). |
 | `cache-max-size` | `1000` | Maximum cached templates across all tenants; `0` or negative is unbounded. Since 1.1.2. |
 | `auto-escape` | `false` | HTML-escape interpolated values in HTML email bodies (see [Auto-escaping](#auto-escaping)). Since 1.1.2. |
-| `legacy-helpers` | `true` | Add the persistence-utils helpers `eval`, `file`, `js`, `serde_deserializeToMap` and `serde_serialize` to every template and leave `?new` unrestricted, as up to 1.2. Deprecated: `true` logs a WARN at startup and the default becomes `false` in 2.0. See [Helpers](#helpers). Since 1.3.0. |
-| `validate-before-dispatch` | `false` | Render the template before anything is stored and refuse a request whose template cannot render (HTTP 422, see [Render errors](#render-errors)). Planned default in 2.0. Since 1.3.0. |
+| `legacy-helpers` | `true` | Add the persistence-utils helpers `eval`, `file`, `js`, `serde_deserializeToMap` and `serde_serialize` to every template and leave `?new` unrestricted, as up to 1.2. Deprecated: `true` logs a WARN at startup and the default becomes `false` in 2.0. See [Helpers](#helpers). Since 1.2.1. |
+| `validate-before-dispatch` | `false` | Render the template before anything is stored and refuse a request whose template cannot render (HTTP 422, see [Render errors](#render-errors)). Planned default in 2.0. Since 1.2.1. |
 
 The cache settings apply to included templates too.
 `POST /api/v1/admin/cache/templates/clear` still clears the cache for one tenant (`?tenantId=acme`) or for all tenants; included templates are shared, so their cache is cleared completely either way.
@@ -677,7 +724,7 @@ Content-Type: application/json
 }
 ```
 
-A `FAILED` response also carries, when known (since 1.3.0, [DD-31](docs/design-decisions/31-failure-type-on-notification-response.md)):
+A `FAILED` response also carries, when known (since 1.2.1, [DD-31](docs/design-decisions/31-failure-type-on-notification-response.md)):
 
 - `failureType`: `TRANSIENT` (safe to retry), `PERMANENT` (pointless to retry), `AMBIGUOUS` (the provider may have accepted it) or `UNKNOWN`.
 - `providerMetadata`: provider details of the send, for example an ACS `acsStatus`.
@@ -737,7 +784,7 @@ See [DD-10](docs/design-decisions/10-idempotency.md) for the design
 rationale, semantics, and the storage-SPI shape for replacing the
 default in-memory store with Redis.
 
-**Failure policy, key reuse and stuck keys ([DD-32](docs/design-decisions/32-idempotency-fingerprint-failure-policy.md), since 1.3.0):**
+**Failure policy, key reuse and stuck keys ([DD-32](docs/design-decisions/32-idempotency-fingerprint-failure-policy.md), since 1.2.1):**
 
 ```yaml
 notification:
@@ -757,7 +804,7 @@ notification:
 - `in-progress-timeout` settles a key held `IN_PROGRESS` longer than this (for example by a process that died) as `FAILED` / `IN_PROGRESS_TIMEOUT` / `AMBIGUOUS` and replays it.
 - `store-scrubbed-error-message` keeps the error message of a stored failure with email addresses and phone numbers replaced by placeholders (`MessageScrubber`), so a replayed failure says what went wrong.
 
-**Status view ([DD-33](docs/design-decisions/33-status-view.md), since 1.3.0).**
+**Status view ([DD-33](docs/design-decisions/33-status-view.md), since 1.2.1).**
 With `notification.audit.enabled=true`, `NotificationService.find(tenantId, requestId)` and `findByIdempotencyKey(tenantId, callerId, key)` return a `NotificationView`: status, failure type, error code, provider message id, timestamps and the latest delivery status, never the recipient's address.
 
 ### Caller Identity
@@ -1404,7 +1451,7 @@ For one release it still falls back to the old location (`{base-path}templates/{
 If you see that warning, move the file or append `templates/` to your `base-path`; the fallback is removed in 1.2.
 
 **Security:** since 1.1.2, tenant ids, channel names and template ids must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` and contain no `..`, `/` or `\`, so a request cannot read files outside `base-path`; an invalid id fails as template-not-found without echoing the value.
-Since 1.3.0 the same rule applies to every path segment of an included template.
+Since 1.2.1 the same rule applies to every path segment of an included template.
 
 **Email sections:**
 
@@ -1427,7 +1474,7 @@ Hi ${customerName}, ...
 
 #### Includes and imports
 
-Since 1.3.0 the engine owns its FreeMarker configuration (DD-26), and `<#include>` and `<#import>` resolve against `base-path`, through the same `classpath:` or `file:` location as the templates:
+Since 1.2.1 the engine owns its FreeMarker configuration (DD-26), and `<#include>` and `<#import>` resolve against `base-path`, through the same `classpath:` or `file:` location as the templates:
 
 ```text
 <#include "parts/footer.ftl">               <#-- next to the including template: default/email/parts/footer.ftl -->
@@ -1549,7 +1596,7 @@ Each tenant can have:
 
 ## Recipient guard
 
-Since 1.3.0 a non-production environment can make sure it only ever reaches an allow-list ([DD-34](docs/design-decisions/34-recipient-guard.md)):
+Since 1.2.1 a non-production environment can make sure it only ever reaches an allow-list ([DD-34](docs/design-decisions/34-recipient-guard.md)):
 
 ```yaml
 notification:
@@ -1576,7 +1623,7 @@ Declare a `RecipientGuard` bean to replace the rules.
 
 Audit is a `NotificationAuditService` SPI in `notification-core`.
 With `notification.audit.enabled=false` (the default) the no-op `NoOpAuditService` logs only.
-Since 1.3.0, `notification.audit.enabled=true` stores the records in the audit store of the selected store family ([DD-33](docs/design-decisions/33-status-view.md)): a bounded in-memory store for `store.type: memory`, the `<prefix>audit` table for `store.type: jdbc`.
+Since 1.2.1, `notification.audit.enabled=true` stores the records in the audit store of the selected store family ([DD-33](docs/design-decisions/33-status-view.md)): a bounded in-memory store for `store.type: memory`, the `<prefix>audit` table for `store.type: jdbc`.
 The Redis family has no audit store; supply a `NotificationAuditStore` bean, or set `notification.redis.audit.enabled: false` to keep audit in memory.
 A `NotificationAuditService` bean of your own still replaces all of this.
 
@@ -1667,7 +1714,7 @@ Operators can read DLQ entries with `redis-cli LRANGE
 
 ## JDBC store
 
-`notification-store-jdbc` provides PostgreSQL-backed `IdempotencyStore`, `DeadLetterStore`, `DeliveryEventStore` and (since 1.3.0) `NotificationAuditStore` implementations, written as plain SQL over Spring's `JdbcClient`.
+`notification-store-jdbc` provides PostgreSQL-backed `IdempotencyStore`, `DeadLetterStore`, `DeliveryEventStore` and (since 1.2.1) `NotificationAuditStore` implementations, written as plain SQL over Spring's `JdbcClient`.
 There is no ORM and no migration tool, and the library never runs DDL.
 Full details are in the [module README](notification-store-jdbc/README.md).
 
@@ -1715,7 +1762,7 @@ The host application supplies the `DataSource` and the JDBC driver.
 - **Row-level security:** every table has a nullable `tenant_id` column, the application role needs only `SELECT, INSERT, UPDATE, DELETE`, and `JdbcStoreRlsIT` runs every store as a non-owner role under a tenant-isolation policy.
 - **Dead-letter replay:** claims are leased with `FOR UPDATE SKIP LOCKED`, so replicas replaying the same tenant never send one entry twice.
 - **No rate limiter:** rate limiting stays on the in-memory Bucket4j limiter, or on Redis with `notification.redis.rate-limit.enabled=true`.
-- **Audit (since 1.3.0):** with `notification.audit.enabled=true` the audit records go to `<prefix>audit`; without it that table is not needed.
+- **Audit (since 1.2.1):** with `notification.audit.enabled=true` the audit records go to `<prefix>audit`; without it that table is not needed.
 - **Upgrading a 1.2.x schema:** the idempotency table gains an optional `fingerprint` column (DD-32).
   Without it the store logs one WARN at startup with the `ALTER TABLE` statement and keeps working without fingerprints; with `notification.idempotency.reject-key-reuse=true` startup fails with that statement instead.
 

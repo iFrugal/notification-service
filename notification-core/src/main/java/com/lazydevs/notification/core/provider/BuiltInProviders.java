@@ -58,7 +58,7 @@ public final class BuiltInProviders {
                     "whatsapp-provider-twilio", false),
             new Entry(Channel.WHATSAPP, "meta",
                     "com.lazydevs.notification.channel.whatsapp.meta.MetaWhatsAppProvider",
-                    "whatsapp-provider-meta", false),
+                    "whatsapp-provider-meta", true),
             new Entry(Channel.PUSH, "fcm",
                     "com.lazydevs.notification.channel.push.fcm.FcmPushProvider", "push-provider-fcm", true),
             new Entry(Channel.PUSH, "apns",

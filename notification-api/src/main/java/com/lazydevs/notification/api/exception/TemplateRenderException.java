@@ -3,6 +3,8 @@ package com.lazydevs.notification.api.exception;
 /**
  * A template could not be turned into sendable content: it is missing, it is not valid
  * FreeMarker, the data model does not fit it, or it rendered to nothing usable (DD-27).
+ * A channel that renders its own content, such as WhatsApp, also reports a value that
+ * breaks the channel's parameter rules with it (DD-35).
  * <p>
  * With {@code notification.template.validate-before-dispatch=true} the send path throws
  * this to the caller before anything is stored, rate limited or dead-lettered, and the
@@ -14,7 +16,7 @@ package com.lazydevs.notification.api.exception;
  * {@link TemplateNotFoundException} is the {@link Reason#NOT_FOUND} subclass, so callers
  * that catch it keep working.
  *
- * @since 1.3.0
+ * @since 1.2.1
  */
 @SuppressWarnings("java:S110") // depth comes from the NotificationException tree shipped in 1.2.0
 public class TemplateRenderException extends NotificationException {
@@ -33,7 +35,16 @@ public class TemplateRenderException extends NotificationException {
         /** The data model does not fit the template: a missing, null or wrongly typed value. */
         MODEL_INVALID("TEMPLATE_MODEL_INVALID"),
         /** The template rendered, but to a blank email subject or an empty body. */
-        EMPTY_OUTPUT("TEMPLATE_EMPTY_OUTPUT");
+        EMPTY_OUTPUT("TEMPLATE_EMPTY_OUTPUT"),
+        /**
+         * A value is present, but breaks the channel's rules for a template parameter, for
+         * example a WhatsApp parameter with a new line, a run of spaces or too many characters,
+         * or a button index out of range. {@link TemplateRenderException#getVariablePath()}
+         * names the variable.
+         *
+         * @since 1.3.0
+         */
+        PARAMETER_INVALID("TEMPLATE_PARAMETER_INVALID");
 
         private final String errorCode;
 

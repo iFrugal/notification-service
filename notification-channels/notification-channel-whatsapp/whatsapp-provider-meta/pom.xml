@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.ifrugal</groupId>
+        <artifactId>notification-channel-whatsapp</artifactId>
+        <version>1.2.2-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>whatsapp-provider-meta</artifactId>
+    <packaging>jar</packaging>
+
+    <name>${project.artifactId}</name>
+    <description>WhatsApp Provider - Meta WhatsApp Cloud API (Graph API) template messages and status webhook</description>
+
+    <!--
+        No HTTP library and no Meta SDK: the Graph API is called through the
+        module's own MetaHttpTransport SPI (java.net.http by default), the
+        webhook signature is checked with the JDK, and JSON goes through the
+        Jackson 2 tree model that notification-api already brings.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>whatsapp-core</artifactId>
+        </dependency>
+
+        <!-- Testing: ApplicationContextRunner, Logback ListAppender -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+</project>

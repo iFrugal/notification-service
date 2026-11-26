@@ -29,7 +29,7 @@ import com.lazydevs.notification.api.model.NotificationResponse;
  * sender's credential was rejected, which nothing delivered. Implementations
  * must be thread-safe and must not throw.
  *
- * @since 1.3.0
+ * @since 1.2.1
  */
 @FunctionalInterface
 public interface IdempotencyReleasePolicy {

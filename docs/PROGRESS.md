@@ -18,13 +18,13 @@ collaborator) can pick up where the last one left off.
 ## Status snapshot
 
 - **Repository:** `iFrugal/notification-service`
-- **Working version (current):** `1.2.1-SNAPSHOT`
-- **Latest released on Maven Central:** `1.2.0`
-- **Next release:** `1.3.0` (run the release workflow with `release-version: 1.3.0`, because the tree is at `1.2.1-SNAPSHOT`)
+- **Working version (current):** `1.2.2-SNAPSHOT`
+- **Latest released on Maven Central:** `1.2.1`
+- **Next release:** `1.3.0` (run the release workflow with `release-version: 1.3.0`, because the tree is at `1.2.2-SNAPSHOT`)
 - **Java:** 25 LTS · **Spring Boot:** 4.1.1 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
-- **Last updated:** 2026-11-26 IST (1.3.0 tracks integrated; release notes in `docs/RELEASE_NOTES_1.3.0.md`).
+- **Last updated:** 2026-11-26 IST (1.2.1 tracks published; release notes in `docs/RELEASE_NOTES_1.2.1.md`, WhatsApp notes in `docs/RELEASE_NOTES_1.3.0.md`).
 
 > **Release procedure note:** The release workflow at
 > `.github/workflows/release.yml` is **`workflow_dispatch`-only**

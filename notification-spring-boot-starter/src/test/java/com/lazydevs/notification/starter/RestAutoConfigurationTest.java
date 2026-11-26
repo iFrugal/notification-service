@@ -3,6 +3,7 @@ package com.lazydevs.notification.starter;
 import com.lazydevs.notification.api.delivery.DeliveryEventListener;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.core.delivery.InMemoryDeliveryEventStore;
+import com.lazydevs.notification.core.webhook.WebhookDispatcher;
 import com.lazydevs.notification.rest.controller.AdminController;
 import com.lazydevs.notification.rest.controller.GlobalExceptionHandler;
 import com.lazydevs.notification.rest.controller.NotificationController;
@@ -25,6 +26,7 @@ import org.springframework.web.method.ControllerAdviceBean;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -158,6 +160,8 @@ class RestAutoConfigurationTest {
             assertThat(context).hasSingleBean(LoggingDeliveryEventListener.class);
             assertThat(webhookListeners(context))
                     .containsExactly(context.getBean(LoggingDeliveryEventListener.class));
+            assertThat(context.getBean(WebhookDispatcher.class).handlerIds())
+                    .containsExactlyInAnyOrder("twilio", "ses");
         });
     }
 
@@ -222,10 +226,14 @@ class RestAutoConfigurationTest {
         return context.getBean(name, FilterRegistrationBean.class);
     }
 
+    /** The listeners the webhook dispatcher (behind the controller) hands events to, in order. */
     @SuppressWarnings("unchecked")
     private static List<DeliveryEventListener> webhookListeners(AssertableWebApplicationContext context) {
-        return (List<DeliveryEventListener>) ReflectionTestUtils.getField(
-                context.getBean(WebhookController.class), "listeners");
+        Iterable<DeliveryEventListener> listeners = (Iterable<DeliveryEventListener>) ReflectionTestUtils.getField(
+                context.getBean(WebhookDispatcher.class), "listeners");
+        List<DeliveryEventListener> ordered = new ArrayList<>();
+        listeners.forEach(ordered::add);
+        return ordered;
     }
 
     private static List<String> mappedPatterns(AssertableWebApplicationContext context) {

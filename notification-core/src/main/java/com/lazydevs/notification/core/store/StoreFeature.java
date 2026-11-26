@@ -34,7 +34,7 @@ public enum StoreFeature {
      * {@code NotificationAuditService}), or sets
      * {@code notification.redis.audit.enabled=false} to keep audit in memory.
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     AUDIT("audit", false);
 

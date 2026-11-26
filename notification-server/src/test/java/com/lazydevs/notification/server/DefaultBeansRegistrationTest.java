@@ -1,5 +1,6 @@
 package com.lazydevs.notification.server;
 
+import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.NotificationService;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
@@ -7,11 +8,14 @@ import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.channel.push.fcm.FcmAccessTokenProviderFactory;
 import com.lazydevs.notification.channel.push.fcm.googleauth.GoogleAuthTokenProviderFactory;
+import com.lazydevs.notification.channel.whatsapp.WhatsAppTemplateRegistry;
+import com.lazydevs.notification.channel.whatsapp.meta.MetaWebhookHandler;
 import com.lazydevs.notification.core.deadletter.InMemoryDeadLetterStore;
 import com.lazydevs.notification.core.delivery.InMemoryDeliveryEventStore;
 import com.lazydevs.notification.core.idempotency.CaffeineIdempotencyStore;
 import com.lazydevs.notification.core.ratelimit.Bucket4jRateLimiter;
 import com.lazydevs.notification.core.retry.RetryExecutor;
+import com.lazydevs.notification.core.template.ChannelContentRenderer;
 import com.lazydevs.notification.rest.controller.AdminController;
 import com.lazydevs.notification.rest.controller.GlobalExceptionHandler;
 import com.lazydevs.notification.rest.controller.NotificationController;
@@ -83,6 +87,18 @@ class DefaultBeansRegistrationTest {
             assertThat(ServiceLoader.load(FcmAccessTokenProviderFactory.class).stream().map(ServiceLoader.Provider::type))
                     .as("the google-auth adapter, for credentials: adc")
                     .contains(GoogleAuthTokenProviderFactory.class);
+        });
+    }
+
+    @Test
+    void bundledWhatsAppChannel_registersRendererRegistryAndMetaProvider() {
+        runner.run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context.getBeanFactory().getBeanDefinition("metaWhatsappProvider").isPrototype()).isTrue();
+            assertThat(context).hasSingleBean(WhatsAppTemplateRegistry.class);
+            assertThat(context.getBean(ChannelContentRenderer.class).channel()).isEqualTo(Channel.WHATSAPP);
+            // The Meta webhook is opt-in.
+            assertThat(context).doesNotHaveBean(MetaWebhookHandler.class);
         });
     }
 

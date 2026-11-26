@@ -82,6 +82,17 @@
             <artifactId>push-provider-fcm-google-auth</artifactId>
         </dependency>
 
+        <!-- WhatsApp: the vendor-neutral template channel and the Meta Cloud API
+             provider (JDK HTTP client and Jackson only, no extra libraries). -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>whatsapp-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>whatsapp-provider-meta</artifactId>
+        </dependency>
+
         <!-- Persistence Implementations (user chooses one) -->
         <!-- MongoDB - commonly used for audit -->
         <dependency>

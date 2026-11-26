@@ -48,14 +48,14 @@ public class ProviderRegistry {
      * Error code of the send failure reported while a lazily initialised
      * provider cannot be built (DD-29).
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public static final String PROVIDER_NOT_CONFIGURED = "PROVIDER_NOT_CONFIGURED";
 
     /**
      * State of a configured provider that has no instance yet (DD-29).
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public enum PendingState {
         /** Lazy initialisation is on and no send has needed the provider yet. */
@@ -465,7 +465,7 @@ public class ProviderRegistry {
      * keyed like {@link #getAllProviders()}. Always empty unless
      * {@code notification.providers.lazy-init=true} (DD-29).
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public Map<String, PendingState> getUninitializedProviders() {
         Map<String, PendingState> result = new LinkedHashMap<>();

@@ -52,7 +52,7 @@ public class NotificationAudit {
      * finds the record through
      * {@code NotificationService.findByIdempotencyKey}.
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     private String idempotencyKey;
 
@@ -96,7 +96,7 @@ public class NotificationAudit {
      * push), after the recipient guard; {@code null} when unknown, for
      * example a push topic (DD-33).
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     private Integer recipientCount;
 
@@ -125,7 +125,7 @@ public class NotificationAudit {
     /**
      * Classification of the failure (DD-31), {@code null} unless failed.
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     private FailureType failureType;
 
@@ -155,14 +155,14 @@ public class NotificationAudit {
      * When the send was recorded as {@code FAILED} or {@code REJECTED}
      * (DD-33), {@code null} otherwise.
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     private Instant failedAt;
 
     /**
      * When the record last changed (DD-33).
      *
-     * @since 1.3.0
+     * @since 1.2.1
      */
     private Instant updatedAt;
 
@@ -197,7 +197,7 @@ public class NotificationAudit {
      *
      * @param outcome the outcome
      * @param now     the time of the change
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public void applyOutcome(NotificationResponse outcome, Instant now) {
         status = outcome.status();
@@ -220,20 +220,20 @@ public class NotificationAudit {
 
     /**
      * @return whether {@code status} is a failed outcome ({@code FAILED} or {@code REJECTED})
-     * @since 1.3.0
+     * @since 1.2.1
      */
     public static boolean isFailure(NotificationStatus status) {
         return status == NotificationStatus.FAILED || status == NotificationStatus.REJECTED;
     }
 
     /**
-     * The 1.2.0 all-arguments constructor, without the fields added in 1.3.0
+     * The 1.2.0 all-arguments constructor, without the fields added in 1.2.1
      * (DD-33), which are left {@code null}. Kept so code that called it keeps
      * compiling; prefer {@link #builder()}.
      *
-     * @deprecated since 1.3.0, use {@link #builder()}
+     * @deprecated since 1.2.1, use {@link #builder()}
      */
-    @Deprecated(since = "1.3.0")
+    @Deprecated(since = "1.2.1")
     @SuppressWarnings({"java:S107", "java:S1133"}) // mirrors the 1.2.0 field list; kept until the next major version
     public NotificationAudit(String id, String requestId, String correlationId, String tenantId, String callerId,
                              String replayOf, String notificationType, Channel channel, String provider,

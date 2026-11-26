@@ -6,7 +6,7 @@ import static java.net.HttpURLConnection.HTTP_NOT_FOUND;
  * Exception thrown when a template is not found.
  * Carries HTTP 404 Not Found as its status code.
  * <p>
- * Since 1.3.0 it is the {@link TemplateRenderException.Reason#NOT_FOUND} case of
+ * Since 1.2.1 it is the {@link TemplateRenderException.Reason#NOT_FOUND} case of
  * {@link TemplateRenderException}; its error code ({@code TEMPLATE_NOT_FOUND}), status
  * code and constructors are unchanged.
  */

@@ -11,6 +11,7 @@ import com.lazydevs.notification.api.idempotency.IdempotencyReleasePolicy;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.util.MessageScrubber;
+import com.lazydevs.notification.api.webhook.WebhookHandler;
 import com.lazydevs.notification.core.audit.StoreBackedAuditService;
 import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.delivery.ListenerDeliveryEventPublisher;
@@ -26,7 +27,9 @@ import com.lazydevs.notification.core.service.NoOpAuditService;
 import com.lazydevs.notification.core.service.NotificationServiceExtensions;
 import com.lazydevs.notification.core.service.NotificationAuditService;
 import com.lazydevs.notification.core.store.StoreTypeValidator;
+import com.lazydevs.notification.core.template.ChannelContentRenderer;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
+import com.lazydevs.notification.core.webhook.WebhookDispatcher;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -85,6 +88,21 @@ public class NotificationCoreAutoConfiguration {
     public ListenerDeliveryEventPublisher deliveryEventPublisher(ObjectProvider<DeliveryEventListener> listeners,
                                                                  Optional<NotificationMetrics> metrics) {
         return new ListenerDeliveryEventPublisher(listeners, metrics);
+    }
+
+    /**
+     * Routes provider callbacks to the {@link WebhookHandler} beans (DD-36).
+     * Always present and inert without handlers: the REST module mounts it
+     * when {@code notification.webhooks.enabled=true}, and an application
+     * without that module can call it from its own endpoint.
+     */
+    @Bean
+    @ConditionalOnMissingBean(WebhookDispatcher.class)
+    public WebhookDispatcher webhookDispatcher(ObjectProvider<WebhookHandler> handlers,
+                                               ObjectProvider<DeliveryEventListener> listeners,
+                                               Optional<NotificationMetrics> metrics) {
+        return new WebhookDispatcher(handlers.orderedStream().toList(),
+                () -> listeners.orderedStream().iterator(), metrics);
     }
 
     @Bean
@@ -175,11 +193,12 @@ public class NotificationCoreAutoConfiguration {
             MessageScrubber messageScrubber,
             Optional<DeliveryEventStore> deliveryEventStore,
             Optional<RecipientGuard> recipientGuard,
-            Optional<IdempotencyReleasePolicy> releasePolicy) {
+            Optional<IdempotencyReleasePolicy> releasePolicy,
+            ObjectProvider<ChannelContentRenderer> renderers) {
         return new DefaultNotificationService(properties, providerRegistry, templateEngine, auditService,
                 idempotencyStore, rateLimiter, retryExecutor, deadLetterStore, metrics,
                 new NotificationServiceExtensions(messageScrubber, Clock.systemUTC(),
                         deliveryEventStore.orElse(null), recipientGuard.orElse(null),
-                        releasePolicy.orElse(null)));
+                        releasePolicy.orElse(null), renderers.orderedStream().toList()));
     }
 }

@@ -62,7 +62,7 @@ public interface IdempotencyStore {
      *
      * @param fingerprint SHA-256 hex fingerprint, may be {@code null}
      * @return as {@link #markInProgress(IdempotencyKey, String)}
-     * @since 1.3.0
+     * @since 1.2.1
      */
     default boolean markInProgress(IdempotencyKey key, String notificationId, String fingerprint) {
         return markInProgress(key, notificationId);
@@ -89,7 +89,7 @@ public interface IdempotencyStore {
      * @param notificationId the notification id the in-progress record must belong to
      * @param response       the terminal response to record
      * @return {@code true} if this call settled the record
-     * @since 1.3.0
+     * @since 1.2.1
      */
     default boolean settleInProgress(IdempotencyKey key, String notificationId, NotificationResponse response) {
         return false;
@@ -154,7 +154,7 @@ public interface IdempotencyStore {
      * <p>Stores call this as a safety net. {@code DefaultNotificationService}
      * already hands them the message removed (the 1.1.2 to 1.2.0 behaviour), or
      * scrubbed when {@code notification.idempotency.store-scrubbed-error-message}
-     * is on (since 1.3.0).
+     * is on (since 1.2.1).
      *
      * @param response the terminal response, may be {@code null}
      * @return the response to persist
@@ -172,7 +172,7 @@ public interface IdempotencyStore {
      * @param response the terminal response, may be {@code null}
      * @param scrubber the scrubber for the error message
      * @return the response to persist
-     * @since 1.3.0
+     * @since 1.2.1
      */
     static NotificationResponse storedForm(NotificationResponse response, MessageScrubber scrubber) {
         if (response == null || response.errorMessage() == null

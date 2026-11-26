@@ -26,7 +26,7 @@ import java.util.Optional;
  * the audit service logs and swallows them so a send never fails because
  * of its audit record.
  *
- * @since 1.3.0
+ * @since 1.2.1
  */
 public interface NotificationAuditStore {
 

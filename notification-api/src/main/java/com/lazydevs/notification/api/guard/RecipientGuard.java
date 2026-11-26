@@ -26,7 +26,7 @@ import java.util.Objects;
  * replace it. Implementations must be thread-safe and must not change the
  * request.
  *
- * @since 1.3.0
+ * @since 1.2.1
  */
 @FunctionalInterface
 public interface RecipientGuard {
