@@ -24,6 +24,9 @@ COPY notification-channels/notification-channel-sms/sms-provider-twilio/pom.xml 
 COPY notification-channels/notification-channel-push/pom.xml notification-channels/notification-channel-push/
 COPY notification-channels/notification-channel-push/push-provider-fcm/pom.xml notification-channels/notification-channel-push/push-provider-fcm/
 COPY notification-channels/notification-channel-push/push-provider-fcm-google-auth/pom.xml notification-channels/notification-channel-push/push-provider-fcm-google-auth/
+COPY notification-channels/notification-channel-whatsapp/pom.xml notification-channels/notification-channel-whatsapp/
+COPY notification-channels/notification-channel-whatsapp/whatsapp-core/pom.xml notification-channels/notification-channel-whatsapp/whatsapp-core/
+COPY notification-channels/notification-channel-whatsapp/whatsapp-provider-meta/pom.xml notification-channels/notification-channel-whatsapp/whatsapp-provider-meta/
 COPY notification-spring-boot-starter/pom.xml notification-spring-boot-starter/
 COPY notification-server/pom.xml notification-server/
 
