@@ -18,7 +18,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * DD-32 idempotency settings: binding, the deprecated alias and validation.
  */
-@SuppressWarnings("deprecation") // exercises the deprecated retry-after-failure alias on purpose
 class IdempotencyPropertiesTest {
 
     @Test
@@ -26,7 +25,7 @@ class IdempotencyPropertiesTest {
         IdempotencyProperties p = new IdempotencyProperties();
 
         assertThat(p.resolvedFailurePolicy()).isEqualTo(IdempotencyFailurePolicy.RELEASE_ALL);
-        assertThat(p.isRetryAfterFailure()).isTrue();
+        assertThat(legacyRetryAfterFailure(p)).isTrue();
         assertThat(p.isRejectKeyReuse()).isFalse();
         assertThat(p.getInProgressTimeout()).isNull();
         assertThat(p.hasConflictingFailurePolicy()).isFalse();
@@ -48,8 +47,7 @@ class IdempotencyPropertiesTest {
     void retryAfterFailureFalse_isAnAliasForKeep() {
         IdempotencyProperties p = bind(Map.of("notification.idempotency.retry-after-failure", "false"));
 
-        assertThat(p.getRetryAfterFailure()).isFalse();
-        assertThat(p.isRetryAfterFailure()).isFalse();
+        assertThat(legacyRetryAfterFailure(p)).isFalse();
         assertThat(p.resolvedFailurePolicy()).isEqualTo(IdempotencyFailurePolicy.KEEP);
     }
 
@@ -62,10 +60,12 @@ class IdempotencyPropertiesTest {
         assertThat(p.resolvedFailurePolicy()).isEqualTo(IdempotencyFailurePolicy.RELEASE_ALL);
         assertThat(p.hasConflictingFailurePolicy()).isTrue();
 
-        p.setRetryAfterFailure(true);
-        assertThat(p.hasConflictingFailurePolicy()).isFalse();
-        p.setFailurePolicy(IdempotencyFailurePolicy.RELEASE_TRANSIENT);
-        assertThat(p.hasConflictingFailurePolicy()).isTrue();
+        IdempotencyProperties agreeing = bind(Map.of(
+                "notification.idempotency.retry-after-failure", "true",
+                "notification.idempotency.failure-policy", "RELEASE_ALL"));
+        assertThat(agreeing.hasConflictingFailurePolicy()).isFalse();
+        agreeing.setFailurePolicy(IdempotencyFailurePolicy.RELEASE_TRANSIENT);
+        assertThat(agreeing.hasConflictingFailurePolicy()).isTrue();
     }
 
     @Test
@@ -95,6 +95,18 @@ class IdempotencyPropertiesTest {
         assertThat(IdempotencyFailurePolicy.RELEASE_TRANSIENT.releases(null)).isFalse();
         assertThat(IdempotencyFailurePolicy.RELEASE_TRANSIENT.replaysKeptFailures()).isTrue();
         assertThat(IdempotencyFailurePolicy.KEEP.replaysKeptFailures()).isFalse();
+    }
+
+    /**
+     * The deprecated 1.1.2 accessor, called reflectively as compiled callers link to it;
+     * only property binding uses the alias directly.
+     */
+    private static boolean legacyRetryAfterFailure(IdempotencyProperties p) {
+        try {
+            return (boolean) IdempotencyProperties.class.getMethod("isRetryAfterFailure").invoke(p);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("the deprecated isRetryAfterFailure() accessor must stay", e);
+        }
     }
 
     private static IdempotencyProperties bind(Map<String, String> values) {

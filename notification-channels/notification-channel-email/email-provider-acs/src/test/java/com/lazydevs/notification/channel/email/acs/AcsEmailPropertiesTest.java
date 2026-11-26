@@ -57,8 +57,9 @@ class AcsEmailPropertiesTest {
         AcsEmailProperties legacy = new AcsEmailProperties(null, "endpoint=https://x/;accesskey=a2V5", null,
                 "a@example.com", null, SendMode.WAIT, Duration.ofSeconds(60), 0, null);
         assertThat(legacy.timeoutFailureType()).isEqualTo(FailureType.TRANSIENT);
+        Duration timeout = Duration.ofSeconds(60);
         assertThatThrownBy(() -> new AcsEmailProperties(null, "endpoint=https://x/;accesskey=a2V5", null,
-                "a@example.com", null, SendMode.WAIT, Duration.ofSeconds(60), 0, null, FailureType.PERMANENT))
+                "a@example.com", null, SendMode.WAIT, timeout, 0, null, FailureType.PERMANENT))
                 .isInstanceOf(ProviderConfigurationException.class)
                 .hasMessageContaining("'timeout-failure-type' must be 'transient' or 'ambiguous'");
     }

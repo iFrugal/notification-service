@@ -165,10 +165,12 @@ class ConfiguredRecipientGuardTest {
 
     @Test
     void redirectTo_mustItselfBeAllowed() {
-        assertThatThrownBy(() -> guard("email", rule("qa@elsewhere.io", "@example.com")))
+        RecipientGuardChannel outsideEmail = rule("qa@elsewhere.io", "@example.com");
+        assertThatThrownBy(() -> guard("email", outsideEmail))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("channels.email.redirect-to must itself be allowed");
-        assertThatThrownBy(() -> guard("sms", rule("+15550199", "+15550100")))
+        RecipientGuardChannel outsideSms = rule("+15550199", "+15550100");
+        assertThatThrownBy(() -> guard("sms", outsideSms))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -182,7 +184,8 @@ class ConfiguredRecipientGuardTest {
 
     @Test
     void unknownChannelFailsStartup() {
-        assertThatThrownBy(() -> guard("fax", rule(null)))
+        RecipientGuardChannel fax = rule(null);
+        assertThatThrownBy(() -> guard("fax", fax))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("notification.recipient-guard.channels.fax is not a channel");
     }

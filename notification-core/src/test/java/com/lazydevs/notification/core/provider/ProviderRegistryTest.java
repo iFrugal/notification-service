@@ -24,6 +24,8 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.time.Duration;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -32,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -77,7 +80,7 @@ class ProviderRegistryTest {
             }
             try {
                 gate.await(5, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
+            } catch (InterruptedException _) {
                 Thread.currentThread().interrupt();
             }
         }
@@ -302,7 +305,12 @@ class ProviderRegistryTest {
             nextGate = new CountDownLatch(1);
             ProviderRegistry registry = startedRegistry();
             int threads = 16;
-            ExecutorService pool = Executors.newFixedThreadPool(threads);
+            List<Thread> workers = new CopyOnWriteArrayList<>();
+            ExecutorService pool = Executors.newFixedThreadPool(threads, task -> {
+                Thread worker = new Thread(task);
+                workers.add(worker);
+                return worker;
+            });
             try {
                 CountDownLatch ready = new CountDownLatch(threads);
                 List<Future<NotificationProvider>> results = new ArrayList<>();
@@ -313,8 +321,9 @@ class ProviderRegistryTest {
                     }));
                 }
                 ready.await(5, TimeUnit.SECONDS);
-                // Let the waiting callers pile up behind the build in progress.
-                Thread.sleep(100);
+                // Let every caller pile up: one builds (held at the gate), the rest wait for it.
+                await().atMost(Duration.ofSeconds(5)).until(() -> workers.size() == threads
+                        && workers.stream().allMatch(ProviderRegistryTest::isParked));
                 nextGate.countDown();
 
                 NotificationProvider expected = results.get(0).get(5, TimeUnit.SECONDS);
@@ -426,5 +435,10 @@ class ProviderRegistryTest {
             verify(resolver).resolve(eq("default"), eq("fake"), eq(Channel.EMAIL), any(ProviderConfig.class), any());
             assertThat(registry.getAllProviders()).containsOnlyKeys("default:email:fake");
         }
+    }
+
+    private static boolean isParked(Thread thread) {
+        Thread.State state = thread.getState();
+        return state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING || state == Thread.State.BLOCKED;
     }
 }

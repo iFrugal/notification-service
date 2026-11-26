@@ -31,6 +31,9 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -42,7 +45,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -90,7 +92,9 @@ class DefaultNotificationServiceIdempotencyPolicyTest {
         NotificationRequest first = request("k-reuse", "Ada");
         service.send(first);
 
-        assertThatThrownBy(() -> service.send(request("k-reuse", "Grace")))
+        NotificationRequest retry = request("k-reuse", "Grace");
+
+        assertThatThrownBy(() -> service.send(retry))
                 .isInstanceOf(IdempotencyKeyReusedException.class)
                 .hasFieldOrPropertyWithValue("existingNotificationId", first.getRequestId())
                 .hasFieldOrPropertyWithValue("errorCode", IdempotencyKeyReusedException.ERROR_CODE);
@@ -146,7 +150,9 @@ class DefaultNotificationServiceIdempotencyPolicyTest {
         when(racing.findExisting(key)).thenReturn(Optional.empty()).thenCallRealMethod();
         store.markInProgress(key, "winner", "other-fingerprint");
 
-        assertThatThrownBy(() -> service(racing, Clock.systemUTC()).send(request("k-race", "Ada")))
+        DefaultNotificationService racingService = service(racing, Clock.systemUTC());
+        NotificationRequest retry = request("k-race", "Ada");
+        assertThatThrownBy(() -> racingService.send(retry))
                 .isInstanceOf(IdempotencyKeyReusedException.class)
                 .hasFieldOrPropertyWithValue("existingNotificationId", "winner");
     }
@@ -279,20 +285,25 @@ class DefaultNotificationServiceIdempotencyPolicyTest {
         NotificationRequest first = request("k-keep", "Ada");
         service.send(first);
 
-        assertThatThrownBy(() -> service.send(request("k-keep", "Ada")))
+        NotificationRequest retry = request("k-keep", "Ada");
+
+        assertThatThrownBy(() -> service.send(retry))
                 .isInstanceOf(IdempotencyInProgressException.class)
                 .hasFieldOrPropertyWithValue("inProgressNotificationId", first.getRequestId());
     }
 
     @Test
     void failurePolicyWinsOverTheDeprecatedAlias() {
-        properties.getIdempotency().setRetryAfterFailure(true);
+        new Binder(new MapConfigurationPropertySource(Map.of("notification.idempotency.retry-after-failure", "true")))
+                .bind("notification", Bindable.ofInstance(properties));
         properties.getIdempotency().setFailurePolicy(IdempotencyFailurePolicy.KEEP);
         when(provider.send(any(), any())).thenReturn(SendResult.failure("E", "m", FailureType.TRANSIENT));
         DefaultNotificationService service = service();
         service.send(request("k-conflict", "Ada"));
 
-        assertThatThrownBy(() -> service.send(request("k-conflict", "Ada")))
+        NotificationRequest retry = request("k-conflict", "Ada");
+
+        assertThatThrownBy(() -> service.send(retry))
                 .isInstanceOf(IdempotencyInProgressException.class);
     }
 
@@ -359,7 +370,9 @@ class DefaultNotificationServiceIdempotencyPolicyTest {
         properties.getIdempotency().setInProgressTimeout(Duration.ofMinutes(5));
         store.markInProgress(new IdempotencyKey("acme", null, "k-young"), "busy-req");
 
-        assertThatThrownBy(() -> service().send(request("k-young", "Ada")))
+        DefaultNotificationService service = service();
+        NotificationRequest retry = request("k-young", "Ada");
+        assertThatThrownBy(() -> service.send(retry))
                 .isInstanceOf(IdempotencyInProgressException.class)
                 .hasFieldOrPropertyWithValue("inProgressNotificationId", "busy-req");
     }
@@ -369,7 +382,9 @@ class DefaultNotificationServiceIdempotencyPolicyTest {
         store.markInProgress(new IdempotencyKey("acme", null, "k-unset"), "busy-req");
         DefaultNotificationService later = service(store, Clock.offset(Clock.systemUTC(), Duration.ofDays(1)));
 
-        assertThatThrownBy(() -> later.send(request("k-unset", "Ada")))
+        NotificationRequest retry = request("k-unset", "Ada");
+
+        assertThatThrownBy(() -> later.send(retry))
                 .isInstanceOf(IdempotencyInProgressException.class);
     }
 
@@ -381,7 +396,9 @@ class DefaultNotificationServiceIdempotencyPolicyTest {
         store.markInProgress(new IdempotencyKey("acme", null, "k-legacy-store"), "busy-req");
         DefaultNotificationService later = service(legacy, Clock.offset(Clock.systemUTC(), Duration.ofHours(1)));
 
-        assertThatThrownBy(() -> later.send(request("k-legacy-store", "Ada")))
+        NotificationRequest retry = request("k-legacy-store", "Ada");
+
+        assertThatThrownBy(() -> later.send(retry))
                 .isInstanceOf(IdempotencyInProgressException.class)
                 .hasFieldOrPropertyWithValue("inProgressNotificationId", "busy-req");
     }
@@ -455,7 +472,7 @@ class DefaultNotificationServiceIdempotencyPolicyTest {
         assertThat(response.errorMessage()).isEqualTo("secret detail");
         assertThat(store.findExisting(new IdempotencyKey("acme", null, "k-scrub")).orElseThrow()
                 .response().errorMessage()).isNull();
-        verify(auditService).recordOutcome(eq(response.withErrorMessage(null)));
+        verify(auditService).recordOutcome(response.withErrorMessage(null));
     }
 
     // ---------------------------------------------------------------- helpers

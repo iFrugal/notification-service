@@ -100,7 +100,7 @@ class NotificationTemplateEngineLegacyHelpersTest {
     }
 
     @Test
-    void legacyOn_fileFailureIsAModelError() throws IOException {
+    void legacyOn_fileFailureIsAModelError() {
         TemplateRenderException e = catchThrowableOfType(TemplateRenderException.class,
                 () -> render("${file('/no/such/file.ftl')}", Map.of()));
 
@@ -130,7 +130,7 @@ class NotificationTemplateEngineLegacyHelpersTest {
     }
 
     @Test
-    void legacyOn_helperArgumentCountsAreChecked() throws IOException {
+    void legacyOn_helperArgumentCountsAreChecked() {
         for (String call : List.of("eval()", "file()", "js()", "serde_deserializeToMap()", "serde_serialize()",
                 "trim()")) {
             TemplateRenderException e = catchThrowableOfType(TemplateRenderException.class,

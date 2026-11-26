@@ -128,7 +128,7 @@ class NotificationTemplateEngineEquivalenceTest {
             }
         }.render(request(channel));
 
-        assertThat(owned).isEqualTo(legacy);
+        assertThat(owned).as(name).isEqualTo(legacy);
         assertThat(owned.textBody() != null ? owned.textBody() : owned.htmlBody()).isNotBlank();
     }
 

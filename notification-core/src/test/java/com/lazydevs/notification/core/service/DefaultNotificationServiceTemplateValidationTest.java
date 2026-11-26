@@ -102,7 +102,8 @@ class DefaultNotificationServiceTemplateValidationTest {
         when(templateEngine.renderAndValidate(any()))
                 .thenThrow(new TemplateNotFoundException("acme", "email", "WELCOME"));
 
-        assertThatThrownBy(() -> service.send(request(Channel.EMAIL)))
+        NotificationRequest request = request(Channel.EMAIL);
+        assertThatThrownBy(() -> service.send(request))
                 .isInstanceOf(TemplateNotFoundException.class);
 
         verify(metrics).recordTemplateValidationFailed(Channel.EMAIL, Reason.NOT_FOUND);
@@ -114,7 +115,8 @@ class DefaultNotificationServiceTemplateValidationTest {
         service = service(Optional.empty());
         when(templateEngine.renderAndValidate(any())).thenThrow(modelInvalid());
 
-        assertThatThrownBy(() -> service.send(request(Channel.EMAIL))).isInstanceOf(TemplateRenderException.class);
+        NotificationRequest request = request(Channel.EMAIL);
+        assertThatThrownBy(() -> service.send(request)).isInstanceOf(TemplateRenderException.class);
     }
 
     @Test

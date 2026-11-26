@@ -114,7 +114,7 @@ class NotificationTemplateEngineRenderErrorTest {
         assertThat(e.getReason()).isEqualTo(Reason.MODEL_INVALID);
         assertThat(e.getErrorCode()).isEqualTo("TEMPLATE_MODEL_INVALID");
         assertThat(e.getStatusCode()).isEqualTo(422);
-        assertThat(e.getVariablePath()).isEqualTo(expectedPath);
+        assertThat(e.getVariablePath()).as(name).isEqualTo(expectedPath);
         assertThat(e.getTenantId()).isEqualTo("acme");
         assertThat(e.getTemplateId()).isEqualTo("T");
     }

@@ -125,8 +125,9 @@ class NotificationResponseFailureTypeTest {
                 .withProviderMetadata(metadata);
         metadata.put("k2", "v2");
 
-        assertThat(response.providerMetadata()).containsOnlyKeys("k");
-        assertThatThrownBy(() -> response.providerMetadata().put("x", "y"))
+        Map<String, Object> copy = response.providerMetadata();
+        assertThat(copy).containsOnlyKeys("k");
+        assertThatThrownBy(() -> copy.put("x", "y"))
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThat(response.withProviderMetadata(Map.of()).providerMetadata()).isNull();
         assertThat(response.withErrorMessage("scrubbed").errorMessage()).isEqualTo("scrubbed");
