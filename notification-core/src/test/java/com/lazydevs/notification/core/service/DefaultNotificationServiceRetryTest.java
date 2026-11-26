@@ -145,8 +145,14 @@ class DefaultNotificationServiceRetryTest {
 
         assertThat(response.status()).isEqualTo(NotificationStatus.FAILED);
         assertThat(response.providerMessageId()).isEqualTo("op-7");
-        verify(auditService).updateStatus(request.getRequestId(), NotificationStatus.FAILED,
-                "op-7", "ACS_SEND_FAILED", "rejected");
+        ArgumentCaptor<NotificationResponse> audited = ArgumentCaptor.forClass(NotificationResponse.class);
+        verify(auditService).recordOutcome(audited.capture());
+        assertThat(audited.getValue().requestId()).isEqualTo(request.getRequestId());
+        assertThat(audited.getValue().status()).isEqualTo(NotificationStatus.FAILED);
+        assertThat(audited.getValue().providerMessageId()).isEqualTo("op-7");
+        assertThat(audited.getValue().errorCode()).isEqualTo("ACS_SEND_FAILED");
+        assertThat(audited.getValue().errorMessage()).isEqualTo("rejected");
+        assertThat(audited.getValue().failureType()).isEqualTo(FailureType.PERMANENT);
         ArgumentCaptor<DeadLetterEntry> captor = ArgumentCaptor.forClass(DeadLetterEntry.class);
         verify(deadLetterStore).add(captor.capture());
         assertThat(captor.getValue().response().providerMessageId()).isEqualTo("op-7");

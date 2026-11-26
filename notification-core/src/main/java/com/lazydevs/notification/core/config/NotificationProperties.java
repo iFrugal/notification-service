@@ -1,5 +1,6 @@
 package com.lazydevs.notification.core.config;
 
+import com.lazydevs.notification.core.idempotency.IdempotencyFailurePolicy;
 import com.lazydevs.notification.core.store.StoreType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
@@ -52,6 +53,7 @@ public class NotificationProperties {
     /**
      * Idempotency configuration (see DD-10).
      */
+    @Valid
     private IdempotencyProperties idempotency = new IdempotencyProperties();
 
     /**
@@ -210,18 +212,103 @@ public class NotificationProperties {
         private long maxEntries = 100_000L;
 
         /**
-         * Whether a request may retry under the same idempotency key after
-         * the previous attempt ended {@code FAILED} or {@code REJECTED}.
-         * When {@code true} (the default) the failed record is released so
-         * the retry dispatches again (DD-10 "FAILED is fresh"); when
-         * {@code false} the failed record is kept and a retry under the same
-         * key gets HTTP 409 until the TTL elapses, as in 1.1.0 and 1.1.1.
-         * Has no effect with a custom store that does not implement
-         * {@code IdempotencyStore.release}.
+         * Deprecated alias of {@link #failurePolicy}: {@code true} is
+         * {@code RELEASE_ALL}, {@code false} is {@code KEEP}. Unset
+         * ({@code null}) behaves as {@code true}, the default since 1.1.2.
+         * When both are set and disagree, {@code failure-policy} wins and a
+         * WARN is logged at startup. Has no effect with a custom store that
+         * does not implement {@code IdempotencyStore.release}.
          *
          * @since 1.1.2
+         * @deprecated since 1.3.0, use {@code notification.idempotency.failure-policy}
          */
-        private boolean retryAfterFailure = true;
+        @Deprecated(since = "1.3.0")
+        private Boolean retryAfterFailure;
+
+        /**
+         * What happens to a key after a send under it failed (DD-32):
+         * {@code RELEASE_ALL} (retry dispatches again), {@code KEEP} (retry
+         * gets 409 until the TTL) or {@code RELEASE_TRANSIENT} (release only
+         * after a TRANSIENT failure; other failures are replayed). Unset
+         * follows {@link #retryAfterFailure}, which gives {@code RELEASE_ALL}.
+         *
+         * @since 1.3.0
+         */
+        private IdempotencyFailurePolicy failurePolicy;
+
+        /**
+         * Refuse a request whose key was already used for a different request
+         * (different fingerprint, DD-32) with HTTP 409
+         * ({@code IdempotencyKeyReusedException}). Off by default: the first
+         * response is replayed, as in 1.2.0. A record without a fingerprint
+         * (written by 1.2.0 or earlier) is never compared.
+         *
+         * @since 1.3.0
+         */
+        private boolean rejectKeyReuse = false;
+
+        /**
+         * How long a send may hold a key {@code IN_PROGRESS} before a request
+         * under the same key settles it (DD-32): the record becomes a
+         * {@code FAILED} outcome with error code {@code IN_PROGRESS_TIMEOUT}
+         * and failure type {@code AMBIGUOUS}, which is replayed and never
+         * released, because the first attempt may have been delivered. Unset
+         * (the default) answers with HTTP 409 until the TTL, as in 1.2.0.
+         * Must be positive when set.
+         *
+         * @since 1.3.0
+         */
+        private java.time.Duration inProgressTimeout;
+
+        /**
+         * Whether a failed key is released for a retry, the 1.1.2 view of
+         * {@link #resolvedFailurePolicy()}.
+         *
+         * @return {@code false} only when {@code retry-after-failure} is
+         *         explicitly {@code false}
+         * @deprecated since 1.3.0, use {@link #resolvedFailurePolicy()}
+         */
+        @Deprecated(since = "1.3.0")
+        public boolean isRetryAfterFailure() {
+            return !Boolean.FALSE.equals(retryAfterFailure);
+        }
+
+        /**
+         * The effective failure policy: {@link #failurePolicy} when set,
+         * otherwise {@code KEEP} for {@code retry-after-failure=false} and
+         * {@code RELEASE_ALL} for anything else.
+         *
+         * @return the policy, never {@code null}
+         * @since 1.3.0
+         */
+        public IdempotencyFailurePolicy resolvedFailurePolicy() {
+            if (failurePolicy != null) {
+                return failurePolicy;
+            }
+            return Boolean.FALSE.equals(retryAfterFailure)
+                    ? IdempotencyFailurePolicy.KEEP
+                    : IdempotencyFailurePolicy.RELEASE_ALL;
+        }
+
+        /**
+         * @return {@code true} when {@code failure-policy} and the deprecated
+         *         {@code retry-after-failure} are both set and disagree
+         * @since 1.3.0
+         */
+        public boolean hasConflictingFailurePolicy() {
+            if (failurePolicy == null || retryAfterFailure == null) {
+                return false;
+            }
+            IdempotencyFailurePolicy alias = retryAfterFailure
+                    ? IdempotencyFailurePolicy.RELEASE_ALL
+                    : IdempotencyFailurePolicy.KEEP;
+            return alias != failurePolicy;
+        }
+
+        @AssertTrue(message = "idempotency in-progress-timeout must be positive")
+        public boolean isInProgressTimeoutValid() {
+            return inProgressTimeout == null || inProgressTimeout.isPositive();
+        }
 
         /**
          * Backing store. Deprecated: select the store family with

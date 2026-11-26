@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS notification_idempotency (
     notification_id VARCHAR(255) NOT NULL,
     status          VARCHAR(16)  NOT NULL,
     response        TEXT,
+    fingerprint     VARCHAR(64),
     created_at      TIMESTAMPTZ  NOT NULL,
     recorded_at     TIMESTAMPTZ  NOT NULL,
     expires_at      TIMESTAMPTZ  NOT NULL,

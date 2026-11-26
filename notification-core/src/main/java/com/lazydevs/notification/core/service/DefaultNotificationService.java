@@ -6,12 +6,9 @@ import com.lazydevs.notification.api.channel.NotificationProvider;
 import com.lazydevs.notification.api.channel.RenderedContent;
 import com.lazydevs.notification.api.deadletter.DeadLetterEntry;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
-import com.lazydevs.notification.api.exception.IdempotencyInProgressException;
 import com.lazydevs.notification.api.exception.NotificationException;
 import com.lazydevs.notification.api.exception.RateLimitExceededException;
 import com.lazydevs.notification.api.idempotency.IdempotencyKey;
-import com.lazydevs.notification.api.idempotency.IdempotencyRecord;
-import com.lazydevs.notification.api.idempotency.IdempotencyStatus;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.model.FailureType;
 import com.lazydevs.notification.api.model.NotificationAudit;
@@ -19,8 +16,11 @@ import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
 import com.lazydevs.notification.api.model.SendResult;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
+import com.lazydevs.notification.api.util.MessageScrubber;
 import com.lazydevs.notification.api.util.PiiMasking;
 import com.lazydevs.notification.core.config.NotificationProperties;
+import com.lazydevs.notification.core.idempotency.RequestFingerprint;
+import com.lazydevs.notification.core.metrics.NotificationMetrics;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.retry.RetryExecutor;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
@@ -48,13 +48,18 @@ public class DefaultNotificationService implements NotificationService {
     private final ProviderRegistry providerRegistry;
     private final NotificationTemplateEngine templateEngine;
     private final NotificationAuditService auditService;
-    private final Optional<IdempotencyStore> idempotencyStore;
+    private final Optional<IdempotencyCoordinator> idempotency;
     private final Optional<RateLimiter> rateLimiter;
     private final Optional<RetryExecutor> retryExecutor;
     private final Optional<DeadLetterStore> deadLetterStore;
-    private final Optional<com.lazydevs.notification.core.metrics.NotificationMetrics> metrics;
+    private final Optional<NotificationMetrics> metrics;
+    private final MessageScrubber scrubber;
     private final Executor asyncExecutor;
 
+    /**
+     * The 1.2.0 constructor: {@link NotificationServiceExtensions#defaults()}.
+     */
+    @SuppressWarnings("java:S107") // one parameter per optional collaborator, see DD-10..DD-22
     public DefaultNotificationService(
             NotificationProperties properties,
             ProviderRegistry providerRegistry,
@@ -64,28 +69,47 @@ public class DefaultNotificationService implements NotificationService {
             Optional<RateLimiter> rateLimiter,
             Optional<RetryExecutor> retryExecutor,
             Optional<DeadLetterStore> deadLetterStore,
-            Optional<com.lazydevs.notification.core.metrics.NotificationMetrics> metrics) {
+            Optional<NotificationMetrics> metrics) {
+        this(properties, providerRegistry, templateEngine, auditService, idempotencyStore, rateLimiter,
+                retryExecutor, deadLetterStore, metrics, NotificationServiceExtensions.defaults());
+    }
+
+    /**
+     * @param extensions collaborators added since 1.3.0
+     * @since 1.3.0
+     */
+    @SuppressWarnings("java:S107") // one parameter per optional collaborator, see DD-10..DD-22
+    public DefaultNotificationService(
+            NotificationProperties properties,
+            ProviderRegistry providerRegistry,
+            NotificationTemplateEngine templateEngine,
+            NotificationAuditService auditService,
+            Optional<IdempotencyStore> idempotencyStore,
+            Optional<RateLimiter> rateLimiter,
+            Optional<RetryExecutor> retryExecutor,
+            Optional<DeadLetterStore> deadLetterStore,
+            Optional<NotificationMetrics> metrics,
+            NotificationServiceExtensions extensions) {
         this.properties = properties;
         this.providerRegistry = providerRegistry;
         this.templateEngine = templateEngine;
         this.auditService = auditService;
-        // Optional<IdempotencyStore>: empty when notification.idempotency.enabled=false
-        // (the CaffeineIdempotencyStore @ConditionalOnProperty drops out of the context).
-        this.idempotencyStore = idempotencyStore;
         // Optional<RateLimiter>: empty when notification.rate-limit.enabled=false
-        // — same wiring shape as idempotency, see DD-12.
+        // - same wiring shape as idempotency, see DD-12.
         this.rateLimiter = rateLimiter;
         // Optional<RetryExecutor> + Optional<DeadLetterStore> follow the
-        // same opt-in pattern (DD-13). Empty Optionals → single-attempt
-        // dispatch, no DLQ recording — backwards-compatible default.
+        // same opt-in pattern (DD-13). Empty Optionals: single-attempt
+        // dispatch, no DLQ recording - backwards-compatible default.
         this.retryExecutor = retryExecutor;
         this.deadLetterStore = deadLetterStore;
         // Optional<NotificationMetrics>: empty when Micrometer isn't on
-        // the classpath (DD-22 §"Why Optional<NotificationMetrics>").
-        // Send-path methods call metrics.ifPresent(...) — hot-path-skips
-        // a single method call when metrics are disabled.
+        // the classpath (DD-22). Send-path methods call metrics.ifPresent(...).
         this.metrics = metrics;
+        this.scrubber = extensions.messageScrubber();
         this.asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        // Optional<IdempotencyStore>: empty when notification.idempotency.enabled=false.
+        this.idempotency = idempotencyStore.map(store -> new IdempotencyCoordinator(
+                store, properties, auditService, metrics, scrubber, extensions.clock()));
     }
 
     @Override
@@ -99,60 +123,28 @@ public class DefaultNotificationService implements NotificationService {
         log.debug("Processing notification: requestId={}, channel={}, type={}",
                 request.getRequestId(), request.getChannel(), request.getNotificationType());
 
-        // ============== Idempotency check (DD-10) ==============
-        // Run BEFORE the main try/catch so IdempotencyInProgressException
-        // (a NotificationException subclass) propagates as 409 rather than
-        // being converted into a FAILED response by the broader catch.
+        // ============== Idempotency check (DD-10, DD-32) ==============
+        // Run BEFORE the main try/catch so IdempotencyInProgressException and
+        // IdempotencyKeyReusedException (NotificationException subclasses)
+        // propagate as 409 rather than being converted into a FAILED response.
         //
         // The rate-limit check (DD-12) is interleaved with this block:
-        // * Replays of completed keys → return cached, NO token consumed.
-        // * IN_PROGRESS conflicts → throw 409, NO token consumed.
-        // * Fresh sends (about to mark-in-progress) → DO consume a token.
-        // See DD-12 §"Why this ordering relative to idempotency".
+        // * Replays of completed keys: return cached, NO token consumed.
+        // * IN_PROGRESS conflicts: throw 409, NO token consumed.
+        // * Fresh sends (about to mark-in-progress): DO consume a token, before
+        //   the claim so a denial doesn't leave a phantom IN_PROGRESS slot.
+        // See DD-12 "Why this ordering relative to idempotency".
         IdempotencyKey idemKey = idempotencyKeyFor(request);
         if (idemKey != null) {
-            Optional<IdempotencyRecord> existing = idempotencyStore.get().findExisting(idemKey);
-            if (existing.isPresent()) {
-                IdempotencyRecord rec = existing.get();
-                if (rec.status() == IdempotencyStatus.IN_PROGRESS) {
-                    throw new IdempotencyInProgressException(rec.notificationId());
-                }
-                // status == COMPLETE
-                NotificationResponse cached = rec.response();
-                if (cached != null && isReplayable(cached.status())) {
-                    log.info("Idempotency replay: requestId={}, key={}, originalRequestId={}",
-                            request.getRequestId(), request.getIdempotencyKey(), cached.requestId());
-                    auditService.recordDuplicateHit(request, rec);
-                    metrics.ifPresent(m -> m.recordIdempotencyReplay(request.getTenantId()));
-                    // Stamp as a replay so the controller can surface
-                    // X-Idempotent-Replay: true (DD-10 §REST-API-behaviour).
-                    return NotificationResponse.replayedFrom(cached);
-                }
-                // FAILED / REJECTED — fall through, treat the new request as fresh.
-                log.debug("Idempotency key '{}' had a prior FAILED/REJECTED attempt; proceeding fresh.",
-                        request.getIdempotencyKey());
-                // Rows written by 1.1.0 / 1.1.1 (or left behind when a release
-                // failed) still hold the key; release them so markInProgress
-                // below can win. Compare-and-delete on the failed attempt's
-                // id, so a concurrent retry that already re-claimed the key
-                // keeps its claim and we get the 409 from markInProgress.
-                if (properties.getIdempotency().isRetryAfterFailure()) {
-                    releaseQuietly(idemKey, rec.notificationId());
-                }
-            }
-            // About to do real work — apply the rate limit FIRST, before
-            // markInProgress, so a denial doesn't leave a phantom
-            // IN_PROGRESS slot lingering until TTL.
-            checkRateLimit(request);
-            if (!idempotencyStore.get().markInProgress(idemKey, request.getRequestId())) {
-                // Race lost: another caller registered between our findExisting and markInProgress.
-                IdempotencyRecord concurrent = idempotencyStore.get().findExisting(idemKey)
-                        .orElseThrow(() -> new IllegalStateException(
-                                "Idempotency race lost but record not retrievable; should not happen"));
-                throw new IdempotencyInProgressException(concurrent.notificationId());
+            // The fingerprint is taken from the request as the caller sent it (DD-32).
+            String fingerprint = RequestFingerprint.of(request);
+            Optional<NotificationResponse> replay = idempotency.get()
+                    .claim(request, idemKey, fingerprint, () -> checkRateLimit(request));
+            if (replay.isPresent()) {
+                return replay.get();
             }
         } else {
-            // No idempotency key on this request — apply the rate limit
+            // No idempotency key on this request: apply the rate limit
             // here so non-idempotent traffic still gets throttled.
             checkRateLimit(request);
         }
@@ -250,9 +242,7 @@ public class DefaultNotificationService implements NotificationService {
                 recordDeadLetter(request, response, attempts, response.failureType());
             }
 
-            // Update audit
-            auditService.updateStatus(request.getRequestId(), response.status(),
-                    response.providerMessageId(), response.errorCode(), response.errorMessage());
+            recordAuditOutcome(response);
 
             recordSendMetric(request.getChannel(), response.status(), receivedAt);
             return response;
@@ -269,8 +259,7 @@ public class DefaultNotificationService implements NotificationService {
                     receivedAt)
                     .withFailureType(FailureType.PERMANENT);
 
-            auditService.updateStatus(request.getRequestId(), response.status(),
-                    null, response.errorCode(), response.errorMessage());
+            recordAuditOutcome(response);
 
             // DD-13: configuration / template / provider-resolution
             // failures are PERMANENT — retrying won't help — but still
@@ -290,8 +279,7 @@ public class DefaultNotificationService implements NotificationService {
                     receivedAt)
                     .withFailureType(FailureType.UNKNOWN);
 
-            auditService.updateStatus(request.getRequestId(), response.status(),
-                    null, response.errorCode(), response.errorMessage());
+            recordAuditOutcome(response);
 
             // DD-13: unexpected throw — classify as UNKNOWN so operators
             // can triage from the DLQ admin endpoint.
@@ -309,47 +297,39 @@ public class DefaultNotificationService implements NotificationService {
                         : NotificationResponse.failed(request, null,
                                 "INTERNAL_ERROR", "Dispatch terminated without a response", receivedAt)
                                 .withFailureType(FailureType.UNKNOWN);
-                closeIdempotencyRecord(idemKey, request.getRequestId(), toRecord);
+                idempotency.get().close(request, idemKey, toRecord, this::refundUnsent);
             }
         }
     }
 
     /**
-     * Close the idempotency record claimed by {@code notificationId}. The
-     * outcome is always recorded first, which releases the
-     * {@code IN_PROGRESS} lock. A failed outcome is never replayed (DD-10
-     * "FAILED is fresh"), so when {@code retryAfterFailure} is on the
-     * record is then released and a retry under the same key can claim it
-     * again. A store that cannot release keeps the failed record, which is
-     * the 1.1.x behaviour.
+     * Give back the rate-limit token of a send that is known not to have
+     * reached the provider in a way that could deliver it (a TRANSIENT
+     * failure whose idempotency key was released under
+     * {@code failure-policy=RELEASE_TRANSIENT}, DD-32), so the caller's retry
+     * is not charged twice. The refund itself is wired after the registry
+     * track merges ({@code RateLimiter.refund} and
+     * {@code notification.rate-limit.refund-unsent}); until then this only
+     * logs which bucket it applies to.
      */
-    private void closeIdempotencyRecord(IdempotencyKey idemKey, String notificationId,
-                                        NotificationResponse outcome) {
-        idempotencyStore.get().markComplete(idemKey, outcome);
-        if (!isReplayable(outcome.status()) && properties.getIdempotency().isRetryAfterFailure()) {
-            releaseQuietly(idemKey, notificationId);
-        }
-    }
-
-    /**
-     * Best-effort {@link IdempotencyStore#release}. A store error is logged
-     * and swallowed: the failed record then simply stays, and the next
-     * retry under the key tries the release again.
-     */
-    private void releaseQuietly(IdempotencyKey idemKey, String notificationId) {
-        try {
-            boolean released = idempotencyStore.get().release(idemKey, notificationId);
-            log.debug("Idempotency release after failure: notificationId={}, released={}",
-                    sanitizeForLog(notificationId), released);
-        } catch (RuntimeException e) {
-            log.warn("Idempotency release failed for notificationId={}: {}",
-                    sanitizeForLog(notificationId), e.toString());
+    private void refundUnsent(NotificationRequest request) {
+        if (rateLimiter.isPresent()) {
+            log.debug("Unsent send released its idempotency key: bucket={}", rateLimitKeyFor(request));
         }
     }
 
     /** The provider's classification of a failed result; {@link FailureType#UNKNOWN} when it gave none. */
     private static FailureType failureTypeOf(SendResult result) {
         return result.failureType() != null ? result.failureType() : FailureType.UNKNOWN;
+    }
+
+    /**
+     * Hand the outcome to the audit service with its error message scrubbed
+     * (DD-32): the audit record backs the status view and is persisted.
+     */
+    private void recordAuditOutcome(NotificationResponse response) {
+        auditService.recordOutcome(response.errorMessage() == null ? response
+                : response.withErrorMessage(scrubber.scrub(response.errorMessage())));
     }
 
     /**
@@ -395,7 +375,7 @@ public class DefaultNotificationService implements NotificationService {
      * generic catch) all emit the metric uniformly.
      */
     private void recordSendMetric(com.lazydevs.notification.api.Channel channel,
-                                  com.lazydevs.notification.api.NotificationStatus status,
+                                  NotificationStatus status,
                                   Instant receivedAt) {
         metrics.ifPresent(m -> m.recordSend(channel, status,
                 java.time.Duration.between(receivedAt, Instant.now())));
@@ -417,21 +397,24 @@ public class DefaultNotificationService implements NotificationService {
         if (rateLimiter.isEmpty()) {
             return;
         }
+        RateLimiter.RateLimitKey rlKey = rateLimitKeyFor(request);
+        RateLimiter.Decision decision = rateLimiter.get().tryConsume(rlKey);
+        if (!decision.allowed()) {
+            metrics.ifPresent(m -> m.recordRateLimitDenied(request.getChannel()));
+            throw new RateLimitExceededException(
+                    rlKey.tenantId(), rlKey.callerId(), rlKey.channel(),
+                    decision.retryAfter());
+        }
+    }
+
+    private static RateLimiter.RateLimitKey rateLimitKeyFor(NotificationRequest request) {
         String channel = request.getChannel() != null
                 ? request.getChannel().name().toLowerCase()
                 : "unknown";
         String callerForBucket = StringUtils.hasText(request.getCallerId())
                 ? request.getCallerId()
                 : "anonymous";
-        RateLimiter.RateLimitKey rlKey = new RateLimiter.RateLimitKey(
-                request.getTenantId(), callerForBucket, channel);
-        RateLimiter.Decision decision = rateLimiter.get().tryConsume(rlKey);
-        if (!decision.allowed()) {
-            metrics.ifPresent(m -> m.recordRateLimitDenied(request.getChannel()));
-            throw new RateLimitExceededException(
-                    request.getTenantId(), callerForBucket, channel,
-                    decision.retryAfter());
-        }
+        return new RateLimiter.RateLimitKey(request.getTenantId(), callerForBucket, channel);
     }
 
     /**
@@ -448,22 +431,10 @@ public class DefaultNotificationService implements NotificationService {
      * behaviour.
      */
     private IdempotencyKey idempotencyKeyFor(NotificationRequest request) {
-        if (idempotencyStore.isEmpty() || !StringUtils.hasText(request.getIdempotencyKey())) {
+        if (idempotency.isEmpty() || !StringUtils.hasText(request.getIdempotencyKey())) {
             return null;
         }
         return new IdempotencyKey(request.getTenantId(), request.getCallerId(), request.getIdempotencyKey());
-    }
-
-    /**
-     * Statuses that count as a successful prior outcome — replays for
-     * these statuses return the cached response (HTTP 200). FAILED and
-     * REJECTED fall through to fresh dispatch per DD-10 §Semantics, and
-     * their records are released (see {@link #closeIdempotencyRecord}).
-     */
-    private static boolean isReplayable(NotificationStatus status) {
-        return status == NotificationStatus.SENT
-                || status == NotificationStatus.DELIVERED
-                || status == NotificationStatus.ACCEPTED;
     }
 
     @Override

@@ -89,7 +89,8 @@ public class OpenApiConfig {
                                 * **202** — async send accepted; final outcome will
                                   be reflected in the audit record.
                                 * **409** — idempotency conflict, another request
-                                  with the same key is in flight (DD-10).
+                                  with the same key is in flight (DD-10), or the key
+                                  was used for a different request (DD-32).
                                 * **429** — rate limit exhausted (DD-12); Retry-After
                                   header tells you when to try again.
                                 * **403** — caller-id rejected by strict caller

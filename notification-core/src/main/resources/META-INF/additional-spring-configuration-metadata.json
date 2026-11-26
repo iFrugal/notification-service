@@ -22,8 +22,29 @@
     {
       "name": "notification.idempotency.retry-after-failure",
       "type": "java.lang.Boolean",
-      "description": "Whether a request may retry under the same idempotency key after the previous attempt ended FAILED or REJECTED. When false, the failed record is kept and the retry gets HTTP 409 until the TTL elapses.",
-      "defaultValue": true
+      "description": "Whether a request may retry under the same idempotency key after the previous attempt ended FAILED or REJECTED. When false, the failed record is kept and the retry gets HTTP 409 until the TTL elapses. Alias of failure-policy (true = RELEASE_ALL, false = KEEP); an explicit failure-policy wins.",
+      "defaultValue": true,
+      "deprecation": {
+        "level": "warning",
+        "reason": "Replaced by notification.idempotency.failure-policy, which also offers RELEASE_TRANSIENT.",
+        "replacement": "notification.idempotency.failure-policy"
+      }
+    },
+    {
+      "name": "notification.idempotency.failure-policy",
+      "type": "com.lazydevs.notification.core.idempotency.IdempotencyFailurePolicy",
+      "description": "What happens to an idempotency key after a failed send: RELEASE_ALL (retry dispatches again), KEEP (retry gets HTTP 409 until the TTL) or RELEASE_TRANSIENT (release only after a TRANSIENT failure; other failures are replayed). Unset follows retry-after-failure, which gives RELEASE_ALL."
+    },
+    {
+      "name": "notification.idempotency.reject-key-reuse",
+      "type": "java.lang.Boolean",
+      "description": "Refuse with HTTP 409 a request whose idempotency key was already used for a different request (different fingerprint). Records without a fingerprint are never compared.",
+      "defaultValue": false
+    },
+    {
+      "name": "notification.idempotency.in-progress-timeout",
+      "type": "java.time.Duration",
+      "description": "How long a send may hold a key IN_PROGRESS before a later request under the key settles it as FAILED (IN_PROGRESS_TIMEOUT, AMBIGUOUS), which is replayed and never released. Unset keeps answering HTTP 409 until the TTL."
     },
     {
       "name": "notification.retry.max-retry-after",

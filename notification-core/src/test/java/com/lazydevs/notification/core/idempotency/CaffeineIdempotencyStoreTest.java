@@ -140,17 +140,61 @@ class CaffeineIdempotencyStoreTest {
     }
 
     @Test
-    void markComplete_ofAFailedResponse_storesItWithoutTheErrorMessage() {
+    void markComplete_ofAFailedResponse_storesOnlyAScrubbedErrorMessage() {
         CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(properties);
         IdempotencyKey key = key("acme", "failed-text");
         store.markInProgress(key, "req-1");
 
-        store.markComplete(key, failedResponse("req-1"));
+        store.markComplete(key, failedResponse("req-1").withErrorMessage("mailbox a@example.com full"));
 
         NotificationResponse stored = store.findExisting(key).orElseThrow().response();
-        assertThat(stored.errorMessage()).isNull();
+        assertThat(stored.errorMessage()).isEqualTo("mailbox [email] full");
         assertThat(stored.errorCode()).isEqualTo("SMTP_421");
         assertThat(stored.status()).isEqualTo(NotificationStatus.FAILED);
+    }
+
+    @Test
+    void fingerprint_isStoredOnClaim_andKeptByMarkCompleteAndSettle() {
+        CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(properties);
+        IdempotencyKey key = key("acme", "fp");
+
+        assertThat(store.markInProgress(key, "req-1", "abc")).isTrue();
+        assertThat(store.findExisting(key).orElseThrow().fingerprint()).isEqualTo("abc");
+        store.markComplete(key, sentResponse("req-1"));
+
+        IdempotencyRecord complete = store.findExisting(key).orElseThrow();
+        assertThat(complete.fingerprint()).isEqualTo("abc");
+        assertThat(complete.notificationId()).isEqualTo("req-1");
+    }
+
+    @Test
+    void settleInProgress_isACompareAndSetOnTheInProgressOwner() {
+        CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(properties);
+        IdempotencyKey key = key("acme", "settle");
+        store.markInProgress(key, "req-1", "fp-1");
+
+        assertThat(store.settleInProgress(key, "someone-else", failedResponse("req-1"))).isFalse();
+        assertThat(store.settleInProgress(key, "req-1", failedResponse("req-1"))).isTrue();
+        // Already COMPLETE: a second settle changes nothing.
+        assertThat(store.settleInProgress(key, "req-1", failedResponse("req-1"))).isFalse();
+        assertThat(store.settleInProgress(key("acme", "absent"), "req-1", failedResponse("req-1"))).isFalse();
+        assertThat(store.settleInProgress(key, null, failedResponse("req-1"))).isFalse();
+
+        IdempotencyRecord settled = store.findExisting(key).orElseThrow();
+        assertThat(settled.status()).isEqualTo(IdempotencyStatus.COMPLETE);
+        assertThat(settled.fingerprint()).isEqualTo("fp-1");
+        assertThat(settled.response().status()).isEqualTo(NotificationStatus.FAILED);
+    }
+
+    @Test
+    void markComplete_withoutAPriorClaim_usesTheResponseId() {
+        CaffeineIdempotencyStore store = new CaffeineIdempotencyStore(properties);
+        IdempotencyKey key = key("acme", "no-claim");
+
+        store.markComplete(key, sentResponse("req-9"));
+
+        assertThat(store.findExisting(key).orElseThrow().notificationId()).isEqualTo("req-9");
+        assertThat(store.findExisting(key).orElseThrow().fingerprint()).isNull();
     }
 
     @Test

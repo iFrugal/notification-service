@@ -61,8 +61,13 @@ public class CaffeineIdempotencyStore implements IdempotencyStore {
 
     @Override
     public boolean markInProgress(IdempotencyKey key, String notificationId) {
+        return markInProgress(key, notificationId, null);
+    }
+
+    @Override
+    public boolean markInProgress(IdempotencyKey key, String notificationId, String fingerprint) {
         IdempotencyRecord proposed = new IdempotencyRecord(
-                notificationId, IdempotencyStatus.IN_PROGRESS, null, Instant.now());
+                notificationId, IdempotencyStatus.IN_PROGRESS, null, Instant.now(), fingerprint);
         // ConcurrentMap.putIfAbsent gives us atomic-on-absent semantics
         // without an extra lock; concurrent winners get null back.
         IdempotencyRecord existing = cache.asMap().putIfAbsent(key, proposed);
@@ -74,11 +79,34 @@ public class CaffeineIdempotencyStore implements IdempotencyStore {
         return won;
     }
 
+    /**
+     * Records the outcome. The notification id and the fingerprint of the
+     * in-progress record are kept (atomically, with {@code compute}).
+     */
     @Override
     public void markComplete(IdempotencyKey key, NotificationResponse response) {
-        cache.put(key, new IdempotencyRecord(
-                resolveNotificationId(key, response),
-                IdempotencyStatus.COMPLETE, IdempotencyStore.storedForm(response), Instant.now()));
+        cache.asMap().compute(key, (k, prior) -> new IdempotencyRecord(
+                prior != null ? prior.notificationId() : responseId(response),
+                IdempotencyStatus.COMPLETE, IdempotencyStore.storedForm(response), Instant.now(),
+                prior != null ? prior.fingerprint() : null));
+    }
+
+    /**
+     * Compare-and-set: {@code ConcurrentMap.replace(key, old, new)} replaces
+     * the entry only if it is still the exact in-progress record we checked.
+     */
+    @Override
+    public boolean settleInProgress(IdempotencyKey key, String notificationId, NotificationResponse response) {
+        IdempotencyRecord current = cache.getIfPresent(key);
+        if (current == null
+                || current.status() != IdempotencyStatus.IN_PROGRESS
+                || notificationId == null
+                || !notificationId.equals(current.notificationId())) {
+            return false;
+        }
+        IdempotencyRecord settled = new IdempotencyRecord(current.notificationId(), IdempotencyStatus.COMPLETE,
+                IdempotencyStore.storedForm(response), Instant.now(), current.fingerprint());
+        return cache.asMap().replace(key, current, settled);
     }
 
     /**
@@ -99,18 +127,7 @@ public class CaffeineIdempotencyStore implements IdempotencyStore {
         return cache.asMap().remove(key, current);
     }
 
-    /**
-     * Pick the {@code notificationId} to record on the COMPLETE entry.
-     * Prefer the id from the in-progress record (the first attempt that
-     * claimed the key); fall back to the response's requestId for
-     * defensive correctness when the in-progress entry has been
-     * evicted under TTL pressure.
-     */
-    private String resolveNotificationId(IdempotencyKey key, NotificationResponse response) {
-        IdempotencyRecord prior = cache.getIfPresent(key);
-        if (prior != null) {
-            return prior.notificationId();
-        }
+    private static String responseId(NotificationResponse response) {
         return response != null ? response.requestId() : null;
     }
 

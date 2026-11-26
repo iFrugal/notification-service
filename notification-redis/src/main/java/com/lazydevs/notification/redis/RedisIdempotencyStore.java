@@ -56,6 +56,28 @@ public class RedisIdempotencyStore implements IdempotencyStore {
             return 0
             """, Long.class);
 
+    /**
+     * Compare-and-set for {@link #settleInProgress}: replaces {@code KEYS[1]}
+     * with {@code ARGV[2]} (TTL {@code ARGV[3]} seconds) only if the stored
+     * record is IN_PROGRESS and belongs to {@code ARGV[1]}. Atomic, like
+     * {@link #RELEASE_SCRIPT}.
+     */
+    static final RedisScript<Long> SETTLE_SCRIPT = RedisScript.of("""
+            local value = redis.call('GET', KEYS[1])
+            if not value then
+              return 0
+            end
+            local ok, rec = pcall(cjson.decode, value)
+            if not ok or type(rec) ~= 'table' then
+              return 0
+            end
+            if rec['status'] == 'IN_PROGRESS' and rec['notificationId'] == ARGV[1] then
+              redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+              return 1
+            end
+            return 0
+            """, Long.class);
+
     private final StringRedisTemplate redis;
     private final ObjectMapper json;
     private final String keyPrefix;
@@ -93,8 +115,13 @@ public class RedisIdempotencyStore implements IdempotencyStore {
 
     @Override
     public boolean markInProgress(IdempotencyKey key, String notificationId) {
+        return markInProgress(key, notificationId, null);
+    }
+
+    @Override
+    public boolean markInProgress(IdempotencyKey key, String notificationId, String fingerprint) {
         IdempotencyRecord rec = new IdempotencyRecord(
-                notificationId, IdempotencyStatus.IN_PROGRESS, null, java.time.Instant.now());
+                notificationId, IdempotencyStatus.IN_PROGRESS, null, java.time.Instant.now(), fingerprint);
         byte[] payload;
         try {
             payload = json.writeValueAsBytes(rec);
@@ -121,16 +148,39 @@ public class RedisIdempotencyStore implements IdempotencyStore {
         // record — for replay scenarios DD-10 §"Idempotency replay"
         // requires the cached response to point back at the first
         // requestId, not whatever the new caller sent.
+        // The fingerprint (DD-32) is kept the same way.
         IdempotencyRecord existing = findExisting(key).orElse(null);
         String notificationId = existing != null ? existing.notificationId()
                 : response.requestId();
         IdempotencyRecord rec = new IdempotencyRecord(
                 notificationId, IdempotencyStatus.COMPLETE, IdempotencyStore.storedForm(response),
-                java.time.Instant.now());
+                java.time.Instant.now(), existing != null ? existing.fingerprint() : null);
+        redis.opsForValue().set(redisKey(key), serialise(rec), java.time.Duration.ofSeconds(ttlSeconds));
+    }
+
+    /**
+     * Reads the in-progress record for its fingerprint, then swaps in the
+     * settled record with {@link #SETTLE_SCRIPT}. The fingerprint never
+     * changes while the record belongs to one notification id, so the
+     * script's check on status and id is enough.
+     */
+    @Override
+    public boolean settleInProgress(IdempotencyKey key, String notificationId, NotificationResponse response) {
+        IdempotencyRecord current = findExisting(key).orElse(null);
+        if (notificationId == null || current == null || current.status() != IdempotencyStatus.IN_PROGRESS
+                || !notificationId.equals(current.notificationId())) {
+            return false;
+        }
+        IdempotencyRecord settled = new IdempotencyRecord(notificationId, IdempotencyStatus.COMPLETE,
+                IdempotencyStore.storedForm(response), java.time.Instant.now(), current.fingerprint());
+        Long swapped = redis.execute(SETTLE_SCRIPT, List.of(redisKey(key)), notificationId, serialise(settled),
+                String.valueOf(ttlSeconds));
+        return swapped != null && swapped == 1L;
+    }
+
+    private String serialise(IdempotencyRecord rec) {
         try {
-            redis.opsForValue().set(redisKey(key),
-                    json.writeValueAsString(rec),
-                    java.time.Duration.ofSeconds(ttlSeconds));
+            return json.writeValueAsString(rec);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialise IdempotencyRecord", e);
         }

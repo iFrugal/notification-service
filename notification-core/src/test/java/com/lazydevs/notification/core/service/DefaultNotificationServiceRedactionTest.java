@@ -72,12 +72,17 @@ class DefaultNotificationServiceRedactionTest {
         NotificationResponse response = service(Optional.empty()).send(request("idem-redact"));
 
         assertRedacted(response, "ACS_400");
-        ArgumentCaptor<String> audited = ArgumentCaptor.forClass(String.class);
-        verify(auditService).updateStatus(eq(response.requestId()), eq(NotificationStatus.FAILED),
-                any(), eq("ACS_400"), audited.capture());
-        assertThat(audited.getValue()).isEqualTo(response.errorMessage());
+        ArgumentCaptor<NotificationResponse> audited = ArgumentCaptor.forClass(NotificationResponse.class);
+        verify(auditService).recordOutcome(audited.capture());
+        assertThat(audited.getValue().status()).isEqualTo(NotificationStatus.FAILED);
+        assertThat(audited.getValue().errorCode()).isEqualTo("ACS_400");
+        assertThat(audited.getValue().errorMessage()).isEqualTo(response.errorMessage());
         IdempotencyRecord stored = store.findExisting(new IdempotencyKey("acme", null, "idem-redact")).orElseThrow();
-        assertThat(stored.response().errorMessage()).isNull();
+        // Since 1.3.0 a scrubbed message is stored instead of none (DD-32).
+        assertThat(stored.response().errorMessage())
+                .isEqualTo(response.errorMessage())
+                .doesNotContain("john.doe@example.com")
+                .doesNotContain("15551234590");
         assertThat(stored.response().errorCode()).isEqualTo("ACS_400");
         assertThat(stored.response().status()).isEqualTo(NotificationStatus.FAILED);
     }

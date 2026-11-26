@@ -6,6 +6,7 @@ import com.lazydevs.notification.api.delivery.DeliveryEventListener;
 import com.lazydevs.notification.api.delivery.DeliveryEventPublisher;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
+import com.lazydevs.notification.api.util.MessageScrubber;
 import com.lazydevs.notification.core.caller.CallerRegistry;
 import com.lazydevs.notification.core.delivery.ListenerDeliveryEventPublisher;
 import com.lazydevs.notification.core.metrics.NotificationMetrics;
@@ -15,6 +16,7 @@ import com.lazydevs.notification.core.provider.ProviderRuntimeHints;
 import com.lazydevs.notification.core.retry.RetryExecutor;
 import com.lazydevs.notification.core.service.DefaultNotificationService;
 import com.lazydevs.notification.core.service.NoOpAuditService;
+import com.lazydevs.notification.core.service.NotificationServiceExtensions;
 import com.lazydevs.notification.core.service.NotificationAuditService;
 import com.lazydevs.notification.core.store.StoreTypeValidator;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
@@ -28,6 +30,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.core.io.ResourceLoader;
 
+import java.time.Clock;
 import java.util.Optional;
 
 /**
@@ -97,6 +100,16 @@ public class NotificationCoreAutoConfiguration {
         return new NoOpAuditService();
     }
 
+    /**
+     * Scrubs error messages before they are persisted (DD-32). Replace it by
+     * declaring another {@link MessageScrubber} bean.
+     */
+    @Bean
+    @ConditionalOnMissingBean(MessageScrubber.class)
+    public MessageScrubber notificationMessageScrubber() {
+        return MessageScrubber.placeholders();
+    }
+
     @Bean
     @ConditionalOnMissingBean(NotificationService.class)
     public DefaultNotificationService defaultNotificationService(
@@ -108,8 +121,10 @@ public class NotificationCoreAutoConfiguration {
             Optional<RateLimiter> rateLimiter,
             Optional<RetryExecutor> retryExecutor,
             Optional<DeadLetterStore> deadLetterStore,
-            Optional<NotificationMetrics> metrics) {
+            Optional<NotificationMetrics> metrics,
+            MessageScrubber messageScrubber) {
         return new DefaultNotificationService(properties, providerRegistry, templateEngine, auditService,
-                idempotencyStore, rateLimiter, retryExecutor, deadLetterStore, metrics);
+                idempotencyStore, rateLimiter, retryExecutor, deadLetterStore, metrics,
+                new NotificationServiceExtensions(messageScrubber, Clock.systemUTC()));
     }
 }

@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS notification_idempotency (
     notification_id VARCHAR(255) NOT NULL,
     status          VARCHAR(16)  NOT NULL,
     response        TEXT,
+    fingerprint     VARCHAR(64),
     created_at      TIMESTAMPTZ  NOT NULL,
     recorded_at     TIMESTAMPTZ  NOT NULL,
     expires_at      TIMESTAMPTZ  NOT NULL,
@@ -165,8 +166,21 @@ Payloads are JSON in `TEXT` columns.
 The stores always serialise with their own module-owned Jackson `ObjectMapper`, never the application's bean.
 It registers `JavaTimeModule`, writes dates as ISO-8601 strings, and ignores unknown properties on read.
 Since 1.1.2 an unknown `FailureType` or `DeliveryStatus` constant, in a JSON payload or in the `failure_type` and `status` columns, reads as `UNKNOWN`.
-The idempotency table stores a `FAILED` or `REJECTED` response without its `errorMessage`, because such a response is never replayed.
+The idempotency table never stores the raw `errorMessage` of a `FAILED` or `REJECTED` response.
+Since 1.3.0 it stores the message after `MessageScrubber` (by default email addresses become `[email]` and phone numbers `[phone]`), so a failure kept and replayed under `failure-policy=RELEASE_TRANSIENT` still says what went wrong; 1.2.x stored no message.
 This keeps the stored JSON stable when the host changes its own Jackson configuration, and lets rows written by a newer library version still be read.
+
+### Upgrading from 1.2.x
+
+1.3.0 adds one nullable column to the idempotency table: `fingerprint`, the SHA-256 of the request that claimed the key (DD-32).
+Run this before deploying 1.3.0, adjusting the table name to your prefix and schema:
+
+```sql
+ALTER TABLE notification_idempotency ADD COLUMN IF NOT EXISTS fingerprint VARCHAR(64);
+```
+
+The statement is additive and safe while 1.2.x is still running: 1.2.x neither reads nor writes the column.
+Rows written before the upgrade have no fingerprint, and the service never compares a missing fingerprint, so `reject-key-reuse` cannot refuse them.
 
 ## Grants and row-level security
 

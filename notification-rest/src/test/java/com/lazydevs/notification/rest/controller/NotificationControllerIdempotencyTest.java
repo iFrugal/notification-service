@@ -5,6 +5,7 @@ import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.NotificationService;
 import com.lazydevs.notification.api.NotificationStatus;
 import com.lazydevs.notification.api.exception.IdempotencyInProgressException;
+import com.lazydevs.notification.api.exception.IdempotencyKeyReusedException;
 import com.lazydevs.notification.api.model.EmailRecipient;
 import com.lazydevs.notification.api.model.NotificationRequest;
 import com.lazydevs.notification.api.model.NotificationResponse;
@@ -71,6 +72,28 @@ class NotificationControllerIdempotencyTest {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.notificationId").value("orig-req-12345"))
                 .andExpect(jsonPath("$.status").value("IN_PROGRESS"));
+    }
+
+    @Test
+    void keyReusedForADifferentRequest_returns409WithTheFirstNotificationId() throws Exception {
+        when(notificationService.send(any()))
+                .thenThrow(new IdempotencyKeyReusedException("first-req-1"));
+
+        NotificationRequest body = NotificationRequest.builder()
+                .notificationType("ORDER_CONFIRMATION")
+                .channel(Channel.EMAIL)
+                .recipient(new EmailRecipient(null, "user@example.com", null, null, null, null))
+                .idempotencyKey("idem-reused")
+                .build();
+
+        mockMvc.perform(post("/api/v1/notifications")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Tenant-Id", "acme")
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.notificationId").value("first-req-1"))
+                .andExpect(jsonPath("$.status").value("KEY_REUSED"))
+                .andExpect(jsonPath("$.error").value("IDEMPOTENCY_KEY_REUSED"));
     }
 
     @Test
