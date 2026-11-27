@@ -228,6 +228,6 @@ class NotificationTemplateEngineIncludeTest {
         loader.closeTemplateSource(source);
 
         Resource unreadable = new DefaultResourceLoader().getResource("classpath:/no/such/resource.ftl");
-        assertThat(loader.getLastModified(unreadable)).isEqualTo(-1);
+        assertThat(ResourceLoaderTemplateSource.lastModified(unreadable)).isEqualTo(-1);
     }
 }

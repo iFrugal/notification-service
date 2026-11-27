@@ -9,6 +9,12 @@ import com.lazydevs.notification.api.exception.TemplateNotFoundException;
 import com.lazydevs.notification.api.exception.TemplateRenderException;
 import com.lazydevs.notification.api.exception.TemplateRenderException.Reason;
 import com.lazydevs.notification.api.model.NotificationRequest;
+import com.lazydevs.notification.api.template.TemplateChangeListener;
+import com.lazydevs.notification.api.template.TemplateDocument;
+import com.lazydevs.notification.api.template.TemplateKey;
+import com.lazydevs.notification.api.template.TemplateOrigin;
+import com.lazydevs.notification.api.template.TemplateSource;
+import com.lazydevs.notification.api.template.TemplateStore;
 import com.lazydevs.notification.core.config.NotificationProperties;
 import freemarker.cache.MruCacheStorage;
 import freemarker.cache.NullCacheStorage;
@@ -27,12 +33,9 @@ import freemarker.template.TemplateModelException;
 import lazydevs.persistence.connection.multitenant.TenantContext;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.text.StringEscapeUtils;
-import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.text.NumberFormat;
@@ -49,7 +52,8 @@ import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoField;
 import java.time.temporal.TemporalAccessor;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -64,24 +68,13 @@ import java.util.stream.Collectors;
  * - Its own FreeMarker {@link Configuration} (DD-26): includes resolve against the base
  *   path, render errors are thrown once as {@link TemplateRenderException} and never logged
  *   by FreeMarker, and the persistence-utils legacy helpers are opt-out
+ * - Templates come from a {@link TemplateSource} (by default the files under the base path),
+ *   with an optional {@link TemplateStore} of published overrides consulted first at each
+ *   tenant level, for top-level templates and includes alike (DD-38)
  */
 @Slf4j
-public class NotificationTemplateEngine {
+public class NotificationTemplateEngine implements TemplateChangeListener {
 
-    /** Tenant directory holding the fallback templates. */
-    private static final String DEFAULT_TENANT_DIR = "default";
-
-    /**
-     * Extra path segment that 1.1.1 and earlier inserted under the base path.
-     * Still tried after the correct location for one release; remove in 1.2.
-     */
-    private static final String LEGACY_SEGMENT = "templates/";
-
-    /**
-     * Allowed tenant, channel and template ids. They become path segments under the base
-     * path, so anything that could leave it (separators, "..") is rejected up front.
-     */
-    private static final Pattern SAFE_PATH_SEGMENT = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$");
     /** A run of whitespace or line separators; possessive, so matching never backtracks. */
     private static final Pattern WHITESPACE_RUN = Pattern.compile("[\\s\\u0085\\u2028\\u2029]++");
 
@@ -101,7 +94,9 @@ public class NotificationTemplateEngine {
     private static final String FREEMARKER_TIPS = "\n\n----";
 
     private final NotificationProperties properties;
-    private final ResourceLoader resourceLoader;
+
+    /** Where templates are looked up, in order: the store's published versions (if any), then the source. */
+    private final List<TemplateSource> sources;
 
     /** This engine's own FreeMarker configuration; never shared with other code. */
     private final Configuration configuration;
@@ -111,21 +106,59 @@ public class NotificationTemplateEngine {
      * Bounded by {@code cache-max-size} and expired {@code cache-ttl-seconds} after loading.
      * Included templates are cached by FreeMarker itself with the same limits.
      */
-    private final Cache<TemplateKey, LoadedTemplate> templateCache;
+    private final Cache<CacheKey, LoadedTemplate> templateCache;
 
-    /** Legacy template locations already warned about, so each is logged once. */
-    private final Set<String> warnedLegacyPaths = ConcurrentHashMap.newKeySet();
+    /** Whether a template store is configured. */
+    private final boolean storeConfigured;
 
+    /**
+     * Counts evictions. A load that overlaps one may have read the old version, and a bulk
+     * removal does not see entries still being loaded, so such a load is not left cached.
+     */
+    private final AtomicLong evictions = new AtomicLong();
+
+    /** Unsaved content standing in for one template on this thread; see {@link #renderCandidate}. */
+    private final ThreadLocal<Candidate> candidate = new ThreadLocal<>();
+
+    /**
+     * Templates under {@code notification.template.base-path}, read through {@code resourceLoader},
+     * without a template store; the engine of every release before 1.3.0.
+     */
     public NotificationTemplateEngine(NotificationProperties properties, ResourceLoader resourceLoader) {
         this(properties, resourceLoader, Ticker.systemTicker());
+    }
+
+    /**
+     * Templates from {@code source}, with the published versions of {@code store} consulted
+     * first at each tenant level (DD-38).
+     *
+     * @param source where built-in templates are read, usually a {@link ResourceLoaderTemplateSource}
+     * @param store  template store, or {@code null} for none
+     * @throws IllegalStateException when a store is given and
+     *                               {@code notification.template.legacy-helpers} is not {@code false}
+     */
+    public NotificationTemplateEngine(NotificationProperties properties, TemplateSource source, TemplateStore store) {
+        this(properties, source, store, Ticker.systemTicker());
     }
 
     /**
      * Visible for tests, which drive cache expiry with a fake {@link Ticker}.
      */
     NotificationTemplateEngine(NotificationProperties properties, ResourceLoader resourceLoader, Ticker ticker) {
+        this(properties, new ResourceLoaderTemplateSource(resourceLoader, properties), null, ticker);
+    }
+
+    NotificationTemplateEngine(NotificationProperties properties, TemplateSource source, TemplateStore store,
+                               Ticker ticker) {
+        Objects.requireNonNull(source, "source");
+        if (store != null && properties.getTemplate().isLegacyHelpers()) {
+            throw new IllegalStateException("A template store needs notification.template.legacy-helpers=false: "
+                    + "stored templates are edited at runtime, and the legacy helpers eval, file and js would let "
+                    + "an editor run code or read files (DD-38). Set notification.template.legacy-helpers=false.");
+        }
         this.properties = properties;
-        this.resourceLoader = resourceLoader;
+        this.storeConfigured = store != null;
+        this.sources = store == null ? List.of(source) : List.of(new StoreTemplateSource(store), source);
         this.templateCache = buildCache(properties.getTemplate(), ticker);
         this.configuration = buildConfiguration();
         if (properties.getTemplate().isLegacyHelpers()) {
@@ -152,8 +185,7 @@ public class NotificationTemplateEngine {
         config.setTemplateExceptionHandler(new VariablePathRecorder());
         config.setLogTemplateExceptions(false);
         config.setWrapUncheckedExceptions(true);
-        config.setTemplateLoader(
-                new BasePathTemplateLoader(resourceLoader, basePath(), NotificationTemplateEngine::isSafeSegment));
+        config.setTemplateLoader(new BasePathTemplateLoader(sources, NotificationTemplateEngine::isSafeSegment));
         config.setTemplateNameFormat(TemplateNameFormat.DEFAULT_2_4_0);
         config.setLocalizedLookup(false);
         config.setNewBuiltinClassResolver(template.isLegacyHelpers()
@@ -180,7 +212,7 @@ public class NotificationTemplateEngine {
         }
     }
 
-    private static Cache<TemplateKey, LoadedTemplate> buildCache(NotificationProperties.TemplateProperties template,
+    private static Cache<CacheKey, LoadedTemplate> buildCache(NotificationProperties.TemplateProperties template,
                                                          Ticker ticker) {
         Caffeine<Object, Object> builder = Caffeine.newBuilder().ticker(ticker);
         if (template.getCacheTtlSeconds() > 0) {
@@ -208,10 +240,84 @@ public class NotificationTemplateEngine {
 
         // Resolve and load template
         LoadedTemplate template = resolveTemplate(tenantId, channel, templateId);
+        return renderLoaded(tenantId, channel, templateId, template, request.getTemplateData());
+    }
+
+    /**
+     * Render template source that is not (yet) stored, for previews and validation (DD-38),
+     * for {@code key}'s tenant and channel exactly as the send path would, with the SAFER
+     * {@code ?new} class resolver. Errors carry the line in the source as written, and the
+     * column when the send path's section markers and HTML wrapping left that line unchanged.
+     *
+     * @param key      the template the source is meant for
+     * @param source   FreeMarker source
+     * @param model    data model; {@code null} is an empty model
+     * @param validate also refuse an email with a blank subject or an empty body
+     *                 ({@link Reason#EMPTY_OUTPUT}), as {@link #renderAndValidate} does
+     * @throws TemplateRenderException when the source does not parse, does not fit the model or,
+     *                                 with {@code validate}, renders an unsendable email
+     */
+    public RenderedContent renderSource(TemplateKey key, String source, Map<String, Object> model, boolean validate) {
+        Objects.requireNonNull(key, "key");
+        String text = source == null ? "" : StoreTemplateSource.normaliseLineBreaks(source);
+        String tenantId = key.tenantDirectory();
+        Channel channel = channelOf(key.channel());
+        RenderedContent content = renderLoaded(tenantId, channel, key.templateId(),
+                new LoadedTemplate(key.name(), text, TemplateOrigin.STORE), model);
+        if (validate && channel == Channel.EMAIL) {
+            String problem = emailProblem(content);
+            if (problem != null) {
+                throw new TemplateRenderException(Reason.EMPTY_OUTPUT, tenantId, content.templateId(), null,
+                        "Template " + content.templateId() + " rendered an email whose " + problem, null);
+            }
+        }
+        return content;
+    }
+
+    /**
+     * Run {@code render} with {@code source} standing in for {@code key}'s template on this
+     * thread, for previews through a {@link ChannelContentRenderer} (DD-38): every lookup of
+     * exactly that tenant, channel and template id, as {@link #render} and {@link #renderRaw}
+     * make them, gets the unsaved source instead, uncached and with the SAFER {@code ?new}
+     * class resolver. The request must name {@code key.tenantDirectory()} as its tenant.
+     *
+     * @return what {@code render} returns
+     */
+    public <T> T renderCandidate(TemplateKey key, String source, Supplier<T> render) {
+        Objects.requireNonNull(key, "key");
+        Candidate previous = candidate.get();
+        candidate.set(new Candidate(key, source == null ? "" : StoreTemplateSource.normaliseLineBreaks(source)));
+        try {
+            return render.get();
+        } finally {
+            if (previous == null) {
+                candidate.remove();
+            } else {
+                candidate.set(previous);
+            }
+        }
+    }
+
+    /** The channel a key's lower-case channel names; a channel this version does not know renders as text. */
+    private static Channel channelOf(String channel) {
+        for (Channel candidate : Channel.values()) {
+            if (candidate.name().equalsIgnoreCase(channel)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private static Integer positive(int value) {
+        return value > 0 ? value : null;
+    }
+
+    private RenderedContent renderLoaded(String tenantId, Channel channel, String templateId, LoadedTemplate template,
+                                         Map<String, Object> data) {
         String templateContent = template.source();
 
         // Enrich data with helper functions
-        Map<String, Object> enrichedData = enrichWithHelpers(request.getTemplateData());
+        Map<String, Object> enrichedData = enrichWithHelpers(data);
 
         // Swap the section markers in the template source for per-render random tokens,
         // so a marker that arrives in template data is plain text and cannot move a section.
@@ -235,10 +341,16 @@ public class NotificationTemplateEngine {
             htmlBody = html;
         }
 
-        String renderedContent = process(new RenderTarget(tenantId, templateId, template.name()), source, enrichedData);
+        String renderedContent;
+        try {
+            renderedContent = process(new RenderTarget(tenantId, templateId, template.name(), template.origin()),
+                    source, enrichedData);
+        } catch (TemplateRenderException e) {
+            throw withSourceColumn(e, templateContent, source);
+        }
 
         // Parse the rendered content based on channel
-        return parseRenderedContent(channel, renderedContent, templateId, markers, htmlBody);
+        return parseRenderedContent(renderedContent, templateId, markers, htmlBody);
     }
 
     /**
@@ -268,7 +380,8 @@ public class NotificationTemplateEngine {
                 : request.getNotificationType();
         LoadedTemplate template = resolveTemplate(tenantId, request.getChannel(), templateId);
         String source = prepareSource.apply(template.source());
-        String output = process(new RenderTarget(tenantId, templateId, template.name()), source,
+        String output = process(new RenderTarget(tenantId, templateId, template.name(), template.origin()),
+                source,
                 enrichWithHelpers(request.getTemplateData()));
         return new RawOutput(tenantId, templateId, output);
     }
@@ -335,6 +448,10 @@ public class NotificationTemplateEngine {
         Environment env = null;
         try {
             Template template = new Template(target.name(), source, configuration);
+            if (target.origin() == TemplateOrigin.STORE) {
+                // Stored templates are edited at runtime: never let ?new instantiate arbitrary classes
+                template.setNewBuiltinClassResolver(TemplateClassResolver.SAFER_RESOLVER);
+            }
             StringWriter out = new StringWriter();
             env = template.createProcessingEnvironment(model, out);
             VariablePathRecorder.bind(env, model);
@@ -343,12 +460,38 @@ public class NotificationTemplateEngine {
         } catch (TemplateException e) {
             boolean templateProblem = isTemplateProblem(e);
             String path = templateProblem || env == null ? null : VariablePathRecorder.variablePath(env, e);
+            boolean own = target.name().equals(e.getTemplateSourceName());
             throw renderFailure(target, templateProblem ? Reason.INVALID_TEMPLATE : Reason.MODEL_INVALID,
-                    path, describe(e), e);
+                    path, describe(e), e, own ? e.getLineNumber() : null, own ? e.getColumnNumber() : null);
+        } catch (ParseException e) {
+            // The template's own source is not valid FreeMarker (includes fail as TemplateException)
+            throw renderFailure(target, Reason.INVALID_TEMPLATE, null, oneLine(e.getMessage()), e,
+                    positive(e.getLineNumber()), positive(e.getColumnNumber()));
         } catch (IOException e) {
-            // A ParseException: the source is not valid FreeMarker (the writer cannot fail)
+            // The writer cannot fail; kept for the checked signature
             throw renderFailure(target, Reason.INVALID_TEMPLATE, null, oneLine(e.getMessage()), e);
         }
+    }
+
+    /**
+     * The render ran on {@code processed}, the template source with the section markers
+     * swapped for tokens and the HTML output format inserted. Lines are the same as in
+     * {@code original}; a column is only kept when its line was not changed.
+     */
+    private static TemplateRenderException withSourceColumn(TemplateRenderException e, String original,
+                                                            String processed) {
+        Integer line = e.getLineNumber();
+        if (line == null || e.getColumnNumber() == null || original.equals(processed)
+                || Objects.equals(lineOf(original, line), lineOf(processed, line))) {
+            return e;
+        }
+        return new TemplateRenderException(e.getReason(), e.getTenantId(), e.getTemplateId(), e.getVariablePath(),
+                e.getMessage(), e.getCause(), line, null);
+    }
+
+    private static String lineOf(String text, int line) {
+        String[] lines = text.split("\\R", -1);
+        return line >= 1 && line <= lines.length ? lines[line - 1] : null;
     }
 
     /**
@@ -403,9 +546,15 @@ public class NotificationTemplateEngine {
 
     private static TemplateRenderException renderFailure(RenderTarget target, Reason reason, String path,
                                                          String description, Exception cause) {
+        return renderFailure(target, reason, path, description, cause, null, null);
+    }
+
+    private static TemplateRenderException renderFailure(RenderTarget target, Reason reason, String path,
+                                                         String description, Exception cause,
+                                                         Integer line, Integer column) {
         return new TemplateRenderException(reason, target.tenantId(), target.templateId(), path,
                 "Template " + target.templateId() + " for tenant " + target.tenantId() + " could not be rendered: "
-                        + description, cause);
+                        + description, cause, line, column);
     }
 
     /**
@@ -496,11 +645,12 @@ public class NotificationTemplateEngine {
      * Resolve template content with fallback logic.
      * Paths are relative to {@code notification.template.base-path}
      * (default {@code classpath:/templates/}).
-     * Resolution order:
-     * 1. {basePath}{tenantId}/{channel}/{templateId}.ftl
-     * 2. {basePath}templates/{tenantId}/{channel}/{templateId}.ftl (pre-1.1.2 location, logs a WARN)
-     * 3. {basePath}default/{channel}/{templateId}.ftl
-     * 4. {basePath}templates/default/{channel}/{templateId}.ftl (pre-1.1.2 location, logs a WARN)
+     * Resolution order, first hit wins:
+     * 1. the store's published version for the tenant, when a store is configured (DD-38)
+     * 2. {basePath}{tenantId}/{channel}/{templateId}.ftl
+     *    (then {basePath}templates/..., the pre-1.1.2 location, which logs a WARN)
+     * 3. the store's published version for the default layer
+     * 4. {basePath}default/{channel}/{templateId}.ftl (then the pre-1.1.2 location)
      */
     private LoadedTemplate resolveTemplate(String tenantId, Channel channel, String templateId) {
         // Validate before any path or cache key is built from the ids
@@ -510,55 +660,43 @@ public class NotificationTemplateEngine {
 
         String cacheKey = channel.name().toLowerCase() + "/" + templateId;
 
+        Candidate unsaved = candidate.get();
+        if (unsaved != null && unsaved.matches(tenantId, channel.name().toLowerCase(), templateId)) {
+            return new LoadedTemplate(unsaved.key().name(), unsaved.source(), TemplateOrigin.STORE);
+        }
+
         // Check cache; a TemplateNotFoundException from the loader is not cached
         if (properties.getTemplate().isCacheEnabled()) {
-            return templateCache.get(new TemplateKey(tenantId, cacheKey),
-                    key -> loadTemplateOrThrow(tenantId, channel, templateId));
+            CacheKey key = new CacheKey(tenantId, cacheKey);
+            LoadedTemplate loaded = templateCache.get(key, k -> {
+                long before = evictions.get();
+                LoadedTemplate template = loadTemplateOrThrow(tenantId, channel, templateId);
+                return evictions.get() == before ? template : template.raced();
+            });
+            if (loaded.racedEviction()) {
+                // Used for this render, but read again by the next one
+                templateCache.asMap().remove(key, loaded);
+            }
+            return loaded;
         }
         return loadTemplateOrThrow(tenantId, channel, templateId);
     }
 
     private LoadedTemplate loadTemplateOrThrow(String tenantId, Channel channel, String templateId) {
-        // Try tenant-specific template
-        LoadedTemplate content = loadTemplateWithLegacyFallback(tenantId, channel.name().toLowerCase(), templateId);
-
-        // Fallback to default
-        if (content == null) {
-            content = loadTemplateWithLegacyFallback(DEFAULT_TENANT_DIR, channel.name().toLowerCase(), templateId);
-        }
-
-        if (content == null) {
-            throw new TemplateNotFoundException(tenantId, channel.name().toLowerCase(), templateId);
-        }
-
-        return content;
-    }
-
-    /**
-     * Load {@code <tenantDir>/<channelDir>/<templateId>.ftl} relative to the base path. If it
-     * is missing, try the location 1.1.1 and earlier used by mistake
-     * ({@code <basePath>templates/<path>}) so custom layouts that relied on it keep working
-     * for one release, and warn once per file. Both paths are built from validated segments.
-     */
-    private LoadedTemplate loadTemplateWithLegacyFallback(String tenantDir, String channelDir, String templateId) {
-        requireSafeSegment("tenantId", tenantDir);
-        requireSafeSegment("channel", channelDir);
-        requireSafeSegment("templateId", templateId);
-        String path = tenantDir + "/" + channelDir + "/" + templateId + ".ftl";
-
-        LoadedTemplate content = loadTemplate(path);
-        if (content == null) {
-            String legacyPath = LEGACY_SEGMENT + path;
-            content = loadTemplate(legacyPath);
-            if (content != null && warnedLegacyPaths.add(legacyPath)) {
-                String basePath = basePath();
-                log.warn("Template {}{} was loaded from its pre-1.1.2 location, which repeats 'templates/' "
-                                + "under notification.template.base-path={}. Move it to {}{} or set the base path "
-                                + "to {}{}; this fallback will be removed in 1.2.",
-                        basePath, legacyPath, basePath, basePath, path, basePath, LEGACY_SEGMENT);
+        TemplateKey requested = TemplateKey.of(tenantId, channel.name().toLowerCase(), templateId);
+        List<TemplateKey> levels = requested.isDefaultLayer()
+                ? List.of(requested)
+                : List.of(requested, requested.defaultLayer());
+        for (TemplateKey level : levels) {
+            for (TemplateSource source : sources) {
+                Optional<TemplateDocument> document = source.find(level);
+                if (document.isPresent()) {
+                    TemplateDocument found = document.get();
+                    return new LoadedTemplate(found.name(), found.content(), found.origin(), false);
+                }
             }
         }
-        return content;
+        throw new TemplateNotFoundException(tenantId, channel.name().toLowerCase(), templateId);
     }
 
     /**
@@ -582,11 +720,7 @@ public class NotificationTemplateEngine {
      * of an included template's name.
      */
     static boolean isSafeSegment(String value) {
-        return value != null
-                && SAFE_PATH_SEGMENT.matcher(value).matches()
-                && !value.contains("..")
-                && !value.contains("/")
-                && !value.contains("\\");
+        return TemplateKey.isValidSegment(value);
     }
 
     /**
@@ -604,39 +738,13 @@ public class NotificationTemplateEngine {
     }
 
     /**
-     * The configured base path, with a trailing slash so relative paths append cleanly.
-     */
-    private String basePath() {
-        String basePath = properties.getTemplate().getBasePath();
-        if (basePath == null) {
-            return "";
-        }
-        return basePath.isEmpty() || basePath.endsWith("/") ? basePath : basePath + "/";
-    }
-
-    private LoadedTemplate loadTemplate(String path) {
-        try {
-            String fullPath = basePath() + path;
-            Resource resource = resourceLoader.getResource(fullPath);
-            if (resource.exists()) {
-                try (BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8))) {
-                    return new LoadedTemplate(path, reader.lines().collect(Collectors.joining("\n")));
-                }
-            }
-        } catch (Exception e) {
-            log.debug("Failed to load template from {}: {}", path, e.getMessage());
-        }
-        return null;
-    }
-
-    /**
      * Parse rendered content based on channel.
      * Supports special markers for subject/body separation.
      */
-    private RenderedContent parseRenderedContent(Channel channel, String content, String templateId,
-                                                 SectionMarkers markers, Boolean htmlBody) {
-        if (channel == Channel.EMAIL) {
+    private RenderedContent parseRenderedContent(String content, String templateId, SectionMarkers markers,
+                                                 Boolean htmlBody) {
+        if (markers != null) {
+            // Section markers exist exactly for email
             return parseEmailContent(content, templateId, markers, htmlBody);
         } else {
             return RenderedContent.text(content.trim());
@@ -756,6 +864,7 @@ public class NotificationTemplateEngine {
      * cleared completely.
      */
     public void clearCache(String tenantId) {
+        evictions.incrementAndGet();
         templateCache.asMap().keySet().removeIf(key -> Objects.equals(key.tenantId(), tenantId));
         configuration.clearTemplateCache();
         log.debug("Cleared template cache for tenant: {}", tenantId);
@@ -765,9 +874,40 @@ public class NotificationTemplateEngine {
      * Clear all template caches.
      */
     public void clearAllCache() {
+        evictions.incrementAndGet();
         templateCache.invalidateAll();
         configuration.clearTemplateCache();
         log.debug("Cleared all template caches");
+    }
+
+    /**
+     * Drop what is cached for one template (DD-38): for a tenant key, that tenant's copy; for
+     * a default-layer key, every tenant's copy, since any of them may have fallen back to it.
+     * Included templates are cached by FreeMarker by name, so its cache is cleared completely.
+     */
+    public void evict(TemplateKey key) {
+        evictions.incrementAndGet();
+        String template = key.channel() + "/" + key.templateId();
+        templateCache.asMap().keySet().removeIf(cached -> cached.template().equals(template)
+                && (key.isDefaultLayer() || Objects.equals(key.tenantId(), cached.tenantId())));
+        configuration.clearTemplateCache();
+    }
+
+    /** {@link #evict}; called by the template change feed and after a local publish. */
+    @Override
+    public void templateChanged(TemplateKey key) {
+        evict(key);
+    }
+
+    /** {@link #clearAllCache}; called when the change feed may have missed changes. */
+    @Override
+    public void allTemplatesChanged() {
+        clearAllCache();
+    }
+
+    /** Whether a template store is configured (DD-38). */
+    public boolean isStoreConfigured() {
+        return storeConfigured;
     }
 
     /**
@@ -1073,23 +1213,41 @@ public class NotificationTemplateEngine {
         return value == null ? "" : String.valueOf(value);
     }
 
+    /** Unsaved source for one template; see {@link #renderCandidate}. */
+    private record Candidate(TemplateKey key, String source) {
+        boolean matches(String tenantId, String channel, String templateId) {
+            return key.tenantDirectory().equals(tenantId) && key.channel().equals(channel)
+                    && key.templateId().equals(templateId);
+        }
+    }
+
     /**
-     * Template cache key.
+     * Template cache key: the requested tenant and {@code channel/templateId}.
      */
-    record TemplateKey(String tenantId, String template) {
+    record CacheKey(String tenantId, String template) {
     }
 
     /**
      * A top-level template: its name relative to the base path, which relative includes
-     * resolve against, and its source.
+     * resolve against, its source and where it came from.
      */
-    record LoadedTemplate(String name, String source) {
+    record LoadedTemplate(String name, String source, TemplateOrigin origin, boolean racedEviction) {
+
+        LoadedTemplate(String name, String source, TemplateOrigin origin) {
+            this(name, source, origin, false);
+        }
+
+        /** This template, marked as loaded while an eviction ran. */
+        LoadedTemplate raced() {
+            return new LoadedTemplate(name, source, origin, true);
+        }
     }
 
     /**
-     * What is being rendered, for error reporting: tenant, template id and the template name.
+     * What is being rendered, for error reporting: tenant, template id, the template name and
+     * where it came from.
      */
-    record RenderTarget(String tenantId, String templateId, String name) {
+    record RenderTarget(String tenantId, String templateId, String name, TemplateOrigin origin) {
     }
 
     /**

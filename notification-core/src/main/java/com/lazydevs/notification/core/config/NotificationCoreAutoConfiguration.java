@@ -12,6 +12,8 @@ import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.push.PushDeviceRegistry;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.util.MessageScrubber;
+import com.lazydevs.notification.api.template.TemplateStore;
+import com.lazydevs.notification.api.template.TemplateSource;
 import com.lazydevs.notification.api.webhook.WebhookHandler;
 import com.lazydevs.notification.core.audit.StoreBackedAuditService;
 import com.lazydevs.notification.core.caller.CallerRegistry;
@@ -32,6 +34,8 @@ import com.lazydevs.notification.core.push.PushContentRenderer;
 import com.lazydevs.notification.core.push.PushTargetExpansion;
 import com.lazydevs.notification.core.template.ChannelContentRenderer;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
+import com.lazydevs.notification.core.template.ResourceLoaderTemplateSource;
+import com.lazydevs.notification.core.template.store.TemplateStoreType;
 import com.lazydevs.notification.core.webhook.WebhookDispatcher;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -114,10 +118,34 @@ public class NotificationCoreAutoConfiguration {
         return new ProviderRegistry(properties, providerResolver, deliveryEventPublisher);
     }
 
+    /**
+     * Built-in templates: the files under {@code notification.template.base-path}. Replace it
+     * by declaring another {@link TemplateSource} bean (DD-38).
+     */
+    @Bean
+    @ConditionalOnMissingBean(TemplateSource.class)
+    public ResourceLoaderTemplateSource notificationTemplateSource(NotificationProperties properties,
+                                                                   ResourceLoader resourceLoader) {
+        return new ResourceLoaderTemplateSource(resourceLoader, properties);
+    }
+
+    /**
+     * The template engine over the {@link TemplateSource}, with the {@link TemplateStore}, when
+     * one is configured, consulted first at each tenant level (DD-38).
+     */
     @Bean
     public NotificationTemplateEngine notificationTemplateEngine(NotificationProperties properties,
-                                                                 ResourceLoader resourceLoader) {
-        return new NotificationTemplateEngine(properties, resourceLoader);
+                                                                 TemplateSource templateSource,
+                                                                 ObjectProvider<TemplateStore> templateStore) {
+        TemplateStore store = templateStore.getIfUnique();
+        TemplateStoreType type = properties.getTemplate().getStore().getType();
+        if (store == null && type != null && type != TemplateStoreType.NONE) {
+            throw new IllegalStateException("notification.template.store.type=" + type.name().toLowerCase()
+                    + " but no TemplateStore bean exists"
+                    + (type == TemplateStoreType.JDBC
+                    ? ": add notification-store-jdbc to the classpath and define a DataSource" : ""));
+        }
+        return new NotificationTemplateEngine(properties, templateSource, store);
     }
 
     @Bean

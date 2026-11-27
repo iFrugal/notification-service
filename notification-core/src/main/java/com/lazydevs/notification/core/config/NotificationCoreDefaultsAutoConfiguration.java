@@ -7,6 +7,7 @@ import com.lazydevs.notification.api.idempotency.IdempotencyStore;
 import com.lazydevs.notification.api.push.PushDeviceRegistry;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.retry.RetryPredicate;
+import com.lazydevs.notification.api.template.TemplateStore;
 import com.lazydevs.notification.core.audit.InMemoryNotificationAuditStore;
 import com.lazydevs.notification.core.deadletter.InMemoryDeadLetterStore;
 import com.lazydevs.notification.core.delivery.InMemoryDeliveryEventStore;
@@ -18,6 +19,7 @@ import com.lazydevs.notification.core.retry.RetryExecutor;
 import com.lazydevs.notification.core.store.ConditionalOnStoreType;
 import com.lazydevs.notification.core.store.StoreFeature;
 import com.lazydevs.notification.core.store.StoreType;
+import com.lazydevs.notification.core.template.store.InMemoryTemplateStore;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -139,5 +141,16 @@ public class NotificationCoreDefaultsAutoConfiguration {
     public RetryExecutor retryExecutor(NotificationProperties properties,
                                        Optional<RetryPredicate> customPredicate) {
         return new RetryExecutor(properties, customPredicate);
+    }
+
+    /**
+     * In-memory template store for {@code notification.template.store.type=memory} (DD-38).
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "notification.template.store", name = "type", havingValue = "memory")
+    @ConditionalOnMissingBean(TemplateStore.class)
+    public InMemoryTemplateStore inMemoryTemplateStore(NotificationProperties properties) {
+        return new InMemoryTemplateStore(
+                Math.toIntExact(properties.getTemplate().getStore().getMaxContentSize().toBytes()));
     }
 }
