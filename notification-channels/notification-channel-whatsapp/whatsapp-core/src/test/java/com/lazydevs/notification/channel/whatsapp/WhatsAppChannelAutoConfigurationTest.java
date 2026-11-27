@@ -1,7 +1,9 @@
 package com.lazydevs.notification.channel.whatsapp;
 
 import com.lazydevs.notification.api.Channel;
+import com.lazydevs.notification.core.config.NotificationProperties;
 import com.lazydevs.notification.core.template.ChannelContentRenderer;
+import com.lazydevs.notification.core.template.store.InMemoryTemplateStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.aot.hint.RuntimeHints;
 import org.springframework.aot.hint.predicate.RuntimeHintsPredicates;
@@ -37,6 +39,21 @@ class WhatsAppChannelAutoConfigurationTest {
                     assertThat(binding.body()).containsExactly("customerName");
                     assertThat(binding.buttons()).containsExactly(
                             new WhatsAppTemplateBinding.Button(0, "url", "token"));
+                });
+    }
+
+    @Test
+    void templateStore_wrapsTheYamlRegistry() {
+        runner.withBean(InMemoryTemplateStore.class, () -> new InMemoryTemplateStore(1024))
+                .withBean(NotificationProperties.class, NotificationProperties::new)
+                .withPropertyValues("notification.whatsapp.templates.default.order.name=order_yaml",
+                        "notification.whatsapp.templates.default.order.language=en")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(WhatsAppTemplateRegistry.class);
+                    assertThat(context).hasSingleBean(StoreBackedWhatsAppTemplateRegistry.class);
+                    assertThat(context.getBean(WhatsAppTemplateRegistry.class).find("acme", "order"))
+                            .map(WhatsAppTemplateBinding::name).contains("order_yaml");
                 });
     }
 
