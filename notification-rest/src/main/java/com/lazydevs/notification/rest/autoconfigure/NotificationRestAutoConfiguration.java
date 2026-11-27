@@ -11,18 +11,22 @@ import com.lazydevs.notification.core.config.NotificationProperties;
 import com.lazydevs.notification.core.provider.ProviderRegistry;
 import com.lazydevs.notification.core.service.NotificationAuditService;
 import com.lazydevs.notification.core.template.NotificationTemplateEngine;
+import com.lazydevs.notification.core.template.admin.TemplateAdminService;
 import com.lazydevs.notification.rest.controller.AdminController;
 import com.lazydevs.notification.rest.controller.GlobalExceptionHandler;
 import com.lazydevs.notification.rest.controller.NotificationController;
 import com.lazydevs.notification.rest.filter.CallerAdmissionFilter;
 import com.lazydevs.notification.rest.filter.TenantFilter;
 import com.lazydevs.notification.rest.openapi.OpenApiConfig;
+import com.lazydevs.notification.rest.template.ActorResolver;
+import com.lazydevs.notification.rest.template.TemplateAdminController;
 import com.lazydevs.notification.core.webhook.WebhookDispatcher;
 import com.lazydevs.notification.rest.webhook.LoggingDeliveryEventListener;
 import com.lazydevs.notification.rest.webhook.SesWebhookHandler;
 import com.lazydevs.notification.rest.webhook.TwilioWebhookHandler;
 import com.lazydevs.notification.rest.webhook.WebhookController;
 import jakarta.servlet.Filter;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -57,7 +61,8 @@ import java.util.Optional;
  * Bean names match the class-derived names the scanned components used to have.
  */
 @AutoConfiguration(after = NotificationCoreDefaultsAutoConfiguration.class,
-        afterName = "com.lazydevs.notification.redis.autoconfigure.NotificationRedisAutoConfiguration")
+        afterName = {"com.lazydevs.notification.redis.autoconfigure.NotificationRedisAutoConfiguration",
+                "com.lazydevs.notification.core.config.NotificationTemplateStoreAutoConfiguration"})
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @ConditionalOnBooleanProperty("notification.rest.enabled")
 @EnableConfigurationProperties(NotificationProperties.class)
@@ -178,6 +183,34 @@ public class NotificationRestAutoConfiguration {
         @ConditionalOnMissingBean(DeliveryEventListener.class)
         public LoggingDeliveryEventListener loggingDeliveryEventListener() {
             return new LoggingDeliveryEventListener();
+        }
+    }
+
+    /**
+     * Template admin API (DD-38), opt-in on top of REST with
+     * {@code notification.rest.admin.templates.enabled=true}. Needs a template store; startup
+     * fails without one rather than exposing endpoints that cannot work.
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnBooleanProperty("notification.rest.admin.templates.enabled")
+    static class TemplateAdminConfiguration {
+
+        /** The authenticated principal's name; declare an {@link ActorResolver} bean to read it elsewhere. */
+        @Bean
+        @ConditionalOnMissingBean(ActorResolver.class)
+        public ActorResolver templateAdminActorResolver() {
+            return ActorResolver.principal();
+        }
+
+        @Bean
+        public TemplateAdminController templateAdminController(ObjectProvider<TemplateAdminService> service,
+                                                               ActorResolver actorResolver) {
+            TemplateAdminService admin = service.getIfAvailable(() -> {
+                throw new IllegalStateException("notification.rest.admin.templates.enabled=true needs a template "
+                        + "store: set notification.template.store.type to memory or jdbc, or declare a TemplateStore "
+                        + "bean");
+            });
+            return new TemplateAdminController(admin, actorResolver);
         }
     }
 }
