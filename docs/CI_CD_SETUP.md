@@ -59,6 +59,10 @@ Once the above is set up:
 
 1. Go to **Actions → Release to Maven Central → Run workflow**.
 2. (Optional) Fill in `release-version` and `development-version` — or leave blank to let `maven-release-plugin` auto-derive.
+   The step "Check release notes exist for the version" fails the run unless `docs/RELEASE_NOTES_<version>.md` exists for the version that would be released.
+   That version is `release-version` when set, otherwise the root pom version without `-SNAPSHOT`.
+   It also fails when the git tag `<version>` already exists.
+   So a release of a version other than the pom SNAPSHOT needs `release-version` set and its notes file merged first.
 3. Tick `dry-run: true` for the first run to validate the wiring without publishing.
 4. Approve the deployment in the `maven-central` environment when prompted.
 5. The workflow will:
@@ -74,7 +78,7 @@ Central will show the release as "validated" within a few minutes. Promotion to 
 ## When a release goes wrong
 
 - **`release:prepare` fails** after having committed version bumps: run locally `./mvnw release:rollback`, then investigate.
-- **`release:perform` fails** while uploading to Central: the tag exists but no artifacts. You can safely retry by running the workflow again with the same version; Central will reject duplicates with a clear error.
+- **`release:perform` fails** while uploading to Central: the tag exists but no artifacts. Delete the tag (and revert the version commits if needed) before retrying with the same version, because the release guard refuses a version whose tag already exists.
 - **Signature verification fails on Central**: your key is probably not propagated to the keyservers yet — wait 15 minutes, retry.
 - **`central.waitUntil=uploaded` times out**: Central is slow occasionally; retry the workflow, it's idempotent.
 
