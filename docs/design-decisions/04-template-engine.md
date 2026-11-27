@@ -241,7 +241,7 @@ resources/
 ### Why Hybrid Template Storage:
 1. **Classpath default**: Standard templates ship with application
 2. **Tenant override in classpath**: For known tenants at deploy time
-3. **Database (future)**: For runtime tenant template management
+3. **Database**: For runtime tenant template management. Superseded by [DD-38](./38-template-store-and-admin-api.md): an opt-in template store of published overrides, layered over the classpath files rather than replacing them
 
 ## Alternatives Considered
 

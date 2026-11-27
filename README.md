@@ -44,6 +44,7 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
   - [Option 1: Spring Bean](#option-1-spring-bean)
   - [Option 2: FQCN (Reflection)](#option-2-fqcn-reflection)
 - [Templates](#templates)
+  - [Template store and admin API](#template-store-and-admin-api)
 - [Multi-Tenancy](#multi-tenancy)
 - [Recipient guard](#recipient-guard)
 - [Audit](#audit)
@@ -75,6 +76,7 @@ Can be used as a **Spring Boot Starter** (library) or deployed as a **standalone
 - **Delivery event store**: Opt-in bounded `DeliveryEventStore` SPI for `GET /admin/delivery-events` queryable history; in-memory Caffeine default + Redis backend (DD-17); `?requestId=…` joins via audit so operators query by the id they already know (DD-18)
 - **Observability**: Per-SPI actuator health indicators with near-full DLQ alerting via `OUT_OF_SERVICE` (DD-21); Micrometer metrics across the send path (sends/retries/rate-limit/DLQ/delivery) for Prometheus or any Micrometer-compatible registry (DD-22)
 - **Template Engine**: FreeMarker templates with tenant-specific overrides
+- **Template store and admin API**: Opt-in runtime overrides of the template files, per tenant or for every tenant, with drafts, validated publish, versions, one-click restore, an audit trail, cross-replica cache eviction, and an optional REST API (DD-38)
 - **Pluggable Providers**: Add custom providers via Spring Bean or FQCN
 - **Dual Deployment**: Use as library (starter) or standalone Docker service
 - **REST & Kafka**: Accept notifications via REST API or Kafka consumer
@@ -687,6 +689,8 @@ notification:
 The cache settings apply to included templates too.
 `POST /api/v1/admin/cache/templates/clear` still clears the cache for one tenant (`?tenantId=acme`) or for all tenants; included templates are shared, so their cache is cleared completely either way.
 
+The template store settings (`notification.template.store.*`) are described in [Template store and admin API](#template-store-and-admin-api).
+
 ---
 
 ## REST API
@@ -1202,6 +1206,7 @@ Content-Type: application/json
 | `/api/v1/admin/delivery-events` | GET | Recent provider delivery callbacks; filter by `providerName` + `providerMessageId` (DD-17) |
 | `/api/v1/admin/health` | GET | Provider health status |
 | `/api/v1/admin/cache/templates/clear` | POST | Clear template cache |
+| `/api/v1/admin/templates/**` | GET, POST, PUT, DELETE | Template store admin API, off unless `notification.rest.admin.templates.enabled=true` (DD-38); see [Template store and admin API](#template-store-and-admin-api) |
 
 ---
 
@@ -1613,6 +1618,63 @@ Each refusal increments `notification.template.validation.failed.total{channel, 
 </html>
 ```
 
+### Template store and admin API
+
+Since 1.3.0 an opt-in template store lets you change templates at runtime, for the default layer or one tenant, without giving up the files in git (DD-38).
+The files stay the built-in baseline; the store holds published overrides, with drafts, versions, restore, reset and an audit trail.
+
+```yaml
+notification:
+  template:
+    legacy-helpers: false            # required: startup fails with a store otherwise
+    store:
+      type: jdbc                     # none (default), memory or jdbc (needs notification-store-jdbc)
+      poll-interval: 15s             # how fast other replicas see a publish
+      max-content-size: 256KB        # limit for the content and for the sample model
+      editable-channels: [email, sms, push]   # WhatsApp bindings are read-only by default
+  rest:
+    admin:
+      templates:
+        enabled: true                # optional REST API; or call TemplateAdminService yourself
+```
+
+Resolution, first hit wins: the tenant's published override, the tenant's file, the default layer's published override, the default file.
+An `<#include>` or `<#import>` is looked up by its exact name: the published override of that name (for names shaped like `<tenant>/<channel>/<id>.ftl`), then the file; it does not fall back from a tenant to the default layer.
+A relative include resolves against the name of the layer that served the including template, so a default template that a tenant inherits includes default-layer partials.
+Drafts are never sent.
+
+| Piece | Where | What it does |
+|---|---|---|
+| `TemplateSource` | `notification-api` | Where built-in templates come from; the default reads `base-path` exactly as before. Declare a bean to replace it. |
+| `TemplateStore` | `notification-api` | Overrides with drafts (optimistic `revision`), versions and events. `InMemoryTemplateStore` in core, `JdbcTemplateStore` in `notification-store-jdbc`. |
+| `TemplateAdminService` | `notification-core` | list, get (with the layering), preview, validate, saveDraft, publish, restore, discard, reset, versions, events. Framework-free. |
+| `TemplateChangeFeed` | `notification-api` | Tells other replicas which keys changed; `JdbcTemplateChangeFeed` polls the event table. |
+| `TemplateAdminController` | `notification-rest` | The service over HTTP under `<base-path>/admin/templates`, with an `ActorResolver` hook for the audit trail. |
+
+- **Publishing validates.** A publish needs a note and is refused (HTTP 422, `VALIDATION_FAILED`) unless the draft parses, renders with the sample model stored with it and, for email, has a subject and a body. Problems carry the line, the column and the variable path.
+- **Restore is not validated again**, so a bad publish can always be rolled back.
+- **Preview** renders unsaved content as the send path would and returns the email's subject, HTML and text parts.
+- **Safety.** Stored templates render with FreeMarker's `SAFER_RESOLVER`, and no store starts with the legacy helpers on.
+- **Authentication** is the host's: the library takes the actor's name from `ActorResolver` (default: the servlet principal) and refuses writes without one (HTTP 401). Secure `/admin/templates` like the other admin endpoints (DD-08).
+- **Replicas.** The publishing process evicts its cache at once; the others within one poll interval.
+- **WhatsApp.** With a store, the `WhatsAppTemplateRegistry` reads JSON bindings published under channel `whatsapp` before the YAML ones, and only returns one while its approval status is `APPROVED` or not tracked.
+- **Off by default.** Without `notification.template.store.type`, nothing of this is registered and the engine renders exactly as before.
+
+| Method | Path under `/api/v1/admin/templates` | Operation |
+|---|---|---|
+| GET | `?channel=` | List templates seen from the default layer |
+| GET | `/tenant-overrides?channel=&templateId=` | Tenant overrides across tenants, without content |
+| GET | `/{channel}/{templateId}?tenantId=` | One layer: effective source, built-in and inherited content, published, draft, sample model |
+| POST | `/{channel}/{templateId}/preview`, `/validate` | Render unsaved content; `{ok, subject, html, text, problems}` |
+| PUT, DELETE | `/{channel}/{templateId}/draft` | Save (`expectedRevision`, 409 on conflict, 413 over the limit) or discard the draft |
+| POST | `/{channel}/{templateId}/publish` | Publish the draft (`draftRevision`, `note`) |
+| POST | `/{channel}/{templateId}/versions/{version}/restore` | Publish a copy of an earlier version |
+| POST | `/{channel}/{templateId}/reset` | Archive the override; the layer falls back to the next one |
+| GET | `/{channel}/{templateId}/versions`, `/events` | History and audit trail, newest first |
+
+Every endpoint takes `tenantId` as a query parameter; absent is the default layer.
+The JDBC tables, the reference DDL and the row-level-security functions are in the [`notification-store-jdbc` README](notification-store-jdbc/README.md#template-store).
+
 ---
 
 ## Multi-Tenancy
@@ -1804,6 +1866,7 @@ The host application supplies the `DataSource` and the JDBC driver.
 - **No rate limiter:** rate limiting stays on the in-memory Bucket4j limiter, or on Redis with `notification.redis.rate-limit.enabled=true`.
 - **Audit (since 1.2.1):** with `notification.audit.enabled=true` the audit records go to `<prefix>audit`; without it that table is not needed.
 - **Push devices (since 1.2.3):** with `notification.push.devices.enabled=true` the device registry is `<prefix>push_device`; without it that table is not needed.
+- **Template store (since 1.3.0):** with `notification.template.store.type=jdbc` the store uses `<prefix>template_version` and `<prefix>template_event` and a polling change feed; see [Template store and admin API](#template-store-and-admin-api). Without it those tables are not needed.
 - **Upgrading a 1.2.x schema:** the idempotency table gains an optional `fingerprint` column (DD-32).
   Without it the store logs one WARN at startup with the `ALTER TABLE` statement and keeps working without fingerprints; with `notification.idempotency.reject-key-reuse=true` startup fails with that statement instead.
 
