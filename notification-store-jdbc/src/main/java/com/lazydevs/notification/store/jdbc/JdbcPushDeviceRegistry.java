@@ -96,6 +96,7 @@ public class JdbcPushDeviceRegistry implements PushDeviceRegistry, JdbcPurgeable
     private final String evictSql;
     private final String activeSql;
     private final String activeForAppSql;
+    private final String devicesSql;
     private final String unregisterSql;
     private final String unregisterTokenSql;
     private final String unregisterAllSql;
@@ -148,6 +149,7 @@ public class JdbcPushDeviceRegistry implements PushDeviceRegistry, JdbcPurgeable
         String select = "SELECT id, " + COLUMNS + " FROM " + t + " WHERE " + SCOPE + " AND user_id = :userId";
         this.activeSql = select + active + newestFirst;
         this.activeForAppSql = select + " AND app_id = :appId" + active + newestFirst;
+        this.devicesSql = select + live + newestFirst;
         this.unregisterSql = "DELETE FROM " + t + " WHERE " + SCOPE
                 + " AND user_id = :userId AND installation_id = :installationId RETURNING token_hash";
         this.unregisterTokenSql = "DELETE FROM " + t + " WHERE " + SCOPE + " AND token_sha256 = :sha"
@@ -288,6 +290,19 @@ public class JdbcPushDeviceRegistry implements PushDeviceRegistry, JdbcPurgeable
                 .param(P_TENANT, JdbcStoreSupport.currentTenant(), Types.VARCHAR)
                 .param(P_USER, userId.strip(), Types.VARCHAR)
                 .param("stale", staleMillis)
+                .query((rs, rowNum) -> mapStored(rs, rowNum).device())
+                .list();
+    }
+
+    /** Every device of the user that has not expired; an expired device only waits for the purger. */
+    @Override
+    public List<PushDevice> devices(String userId) {
+        if (userId == null) {
+            return List.of();
+        }
+        return jdbc.sql(devicesSql)
+                .param(P_TENANT, JdbcStoreSupport.currentTenant(), Types.VARCHAR)
+                .param(P_USER, userId.strip(), Types.VARCHAR)
                 .query((rs, rowNum) -> mapStored(rs, rowNum).device())
                 .list();
     }

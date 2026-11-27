@@ -188,6 +188,62 @@ public abstract class PushDeviceRegistryContractTest {
     }
 
     @Test
+    void devices_listEveryDeviceOfTheUser_staleOnesIncluded_mostRecentlySeenFirst() {
+        registry.register(new PushDeviceRegistration(null, "u1", "inst-1", "recruiter", PushPlatform.ANDROID,
+                "t1", null, null, null));
+        ageDevices(STEP);
+        register("u1", "inst-2", "t2");
+        register("u2", "inst-3", "t3");
+        ageDevices(STALE_AFTER);
+        registry.register(new PushDeviceRegistration(null, "u1", "inst-4", "candidate", PushPlatform.IOS,
+                "t4", null, null, null));
+        ageDevices(STEP);
+
+        List<PushDevice> devices = registry.devices("u1");
+
+        assertThat(devices).extracting(PushDevice::token).containsExactly("t4", "t2", "t1");
+        assertThat(devices).extracting(PushDevice::appId).containsExactly("candidate", null, "recruiter");
+        assertThat(tokensOf("u1")).containsExactly("t4");
+        // The helper judges staleness exactly as activeDevices does.
+        Instant now = now();
+        assertThat(devices).filteredOn(d -> d.isActive(STALE_AFTER, now))
+                .isEqualTo(registry.activeDevices("u1", null));
+        assertThat(devices).extracting(d -> d.isActive(STALE_AFTER, now)).containsExactly(true, false, false);
+    }
+
+    @Test
+    void devices_ofAnUnknownUser_areEmpty() {
+        register("u1", "inst-1", "t1");
+
+        assertThat(registry.devices("nobody")).isEmpty();
+        assertThat(registry.devices(null)).isEmpty();
+        assertThat(registry.devices(" u1 ")).extracting(PushDevice::token).containsExactly("t1");
+    }
+
+    @Test
+    void devices_areThoseOfTheCurrentScopeOnly() {
+        TenantContext.setTenantId("acme");
+        register("u1", "inst-1", "acme-token");
+        TenantContext.setTenantId("globex");
+        register("u1", "inst-2", "globex-token");
+        TenantContext.reset();
+        register("u1", "inst-3", "pool-token");
+        registry.register(new PushDeviceRegistration("acme", "u1", "inst-4", null, PushPlatform.WEB,
+                "acme-token-2", null, null, null));
+        ageDevices(STEP);
+
+        assertThat(registry.devices("u1")).extracting(PushDevice::token).containsExactly("pool-token");
+        TenantContext.setTenantId("acme");
+        assertThat(registry.devices("u1")).extracting(PushDevice::token)
+                .containsExactly("acme-token-2", "acme-token");
+        assertThat(registry.devices("u1")).extracting(PushDevice::tenantId).containsOnly("acme");
+        TenantContext.setTenantId("globex");
+        assertThat(registry.devices("u1")).extracting(PushDevice::token).containsExactly("globex-token");
+        TenantContext.setTenantId("initech");
+        assertThat(registry.devices("u1")).isEmpty();
+    }
+
+    @Test
     void unregister_removesOneInstallation_andIsIdempotent() {
         register("u1", "inst-1", "t1");
         register("u1", "inst-2", "t2");

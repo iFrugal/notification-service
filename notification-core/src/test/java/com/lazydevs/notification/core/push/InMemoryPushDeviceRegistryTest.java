@@ -58,6 +58,7 @@ class InMemoryPushDeviceRegistryTest extends PushDeviceRegistryContractTest {
         assertThat(registry.unregisterToken(" ")).isFalse();
         assertThat(registry.unregisterAll(null)).isZero();
         assertThat(registry.activeDevices(null, null)).isEmpty();
+        assertThat(registry.devices(null)).isEmpty();
         assertThat(registry.removeByTokenHash(null, "x")).isZero();
     }
 

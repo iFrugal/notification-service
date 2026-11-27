@@ -2,6 +2,7 @@ package com.lazydevs.notification.api.push;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -85,5 +86,19 @@ class PushDeviceTest {
                 PushTokens.hash(TOKEN), "de-DE", "Europe/Berlin", Map.of("model", "x"), now, now));
         assertThat(new PushDevice(null, "u", "i", null, PushPlatform.WEB, TOKEN, null, null, null, null, now, now)
                 .tokenHash()).isEqualTo(PushTokens.hash(TOKEN));
+    }
+
+    @Test
+    void isActive_whileSeenWithinStaleAfter_inclusive() {
+        Instant seen = Instant.parse("2026-01-01T00:00:00Z");
+        Duration staleAfter = Duration.ofDays(60);
+        PushDevice device = new PushDevice(null, "u", "i", null, PushPlatform.IOS, TOKEN, null, null, null, null,
+                seen, seen);
+
+        assertThat(device.isActive(staleAfter, seen)).isTrue();
+        assertThat(device.isActive(staleAfter, seen.plus(staleAfter))).isTrue();
+        assertThat(device.isActive(staleAfter, seen.plus(staleAfter).plusMillis(1))).isFalse();
+        assertThatThrownBy(() -> device.isActive(null, seen)).hasMessageContaining("staleAfter");
+        assertThatThrownBy(() -> device.isActive(staleAfter, null)).hasMessageContaining("now");
     }
 }

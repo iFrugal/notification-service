@@ -131,6 +131,11 @@ class PushAutoConfigurationTest {
             }
 
             @Override
+            public List<PushDevice> devices(String userId) {
+                return List.of();
+            }
+
+            @Override
             public int removeByTokenHash(String tokenHash, String reason) {
                 return 0;
             }
