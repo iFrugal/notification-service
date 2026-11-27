@@ -1,5 +1,6 @@
 package com.lazydevs.notification.api.push;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
@@ -61,6 +62,22 @@ public record PushDevice(
         return new PushDevice(tenantId, registration.userId(), registration.installationId(),
                 registration.appId(), registration.platform(), registration.token(), registration.tokenHash(),
                 registration.locale(), registration.timezone(), registration.attributes(), now, now);
+    }
+
+    /**
+     * Whether the device was seen within {@code staleAfter} before {@code now}, so a
+     * notification to its user reaches it: the rule {@link PushDeviceRegistry#activeDevices}
+     * applies. A device seen exactly {@code staleAfter} ago is still active.
+     *
+     * @param staleAfter {@code notification.push.devices.stale-after}, positive
+     * @param now        the time to judge at
+     * @return whether the device is active at {@code now}
+     * @since 1.3.1
+     */
+    public boolean isActive(Duration staleAfter, Instant now) {
+        Objects.requireNonNull(staleAfter, "staleAfter");
+        Objects.requireNonNull(now, "now");
+        return !lastSeenAt.isBefore(now.minus(staleAfter));
     }
 
     /** Shows the token hash, never the token. */

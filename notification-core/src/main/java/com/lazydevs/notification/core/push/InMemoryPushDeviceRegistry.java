@@ -121,12 +121,26 @@ public class InMemoryPushDeviceRegistry implements PushDeviceRegistry {
             return List.of();
         }
         String user = userId.strip();
-        Instant activeSince = clock.instant().minus(staleAfter);
+        Instant now = clock.instant();
         synchronized (lock) {
             return scopes.getOrDefault(currentTenant(), Map.of()).values().stream()
                     .filter(d -> d.userId().equals(user))
                     .filter(d -> appId == null || appId.strip().equals(d.appId()))
-                    .filter(d -> !d.lastSeenAt().isBefore(activeSince))
+                    .filter(d -> d.isActive(staleAfter, now))
+                    .sorted(MOST_RECENT_FIRST)
+                    .toList();
+        }
+    }
+
+    @Override
+    public List<PushDevice> devices(String userId) {
+        if (userId == null) {
+            return List.of();
+        }
+        String user = userId.strip();
+        synchronized (lock) {
+            return scopes.getOrDefault(currentTenant(), Map.of()).values().stream()
+                    .filter(d -> d.userId().equals(user))
                     .sorted(MOST_RECENT_FIRST)
                     .toList();
         }

@@ -21,11 +21,18 @@ import java.util.List;
  *       for the same installation is a token rotation), then removes the least recently
  *       seen devices of the user beyond {@code max-devices-per-user}
  *       (reason {@link PushDeviceRemovalReasons#EVICTED}).</li>
- *   <li>{@link #activeDevices} leaves out devices not seen within {@code stale-after}.</li>
+ *   <li>{@link #activeDevices} leaves out devices not seen within {@code stale-after}
+ *       ({@link PushDevice#isActive}); {@link #devices} lists every device of a user,
+ *       stale ones included.</li>
  *   <li>The unregister operations are idempotent: removing what is not there is not an error.</li>
  *   <li>Every removal is logged at INFO with the token hash and the reason; the token
  *       itself is never logged.</li>
  * </ul>
+ *
+ * <p><b>Tokens.</b> The devices returned carry their push token: the registry is the
+ * trust boundary. Callers must never expose {@link PushDevice#token()} to end users or
+ * write it to logs; show {@link PushDevice#installationId()} or
+ * {@link PushDevice#tokenHash()} instead.
  *
  * <p>Implementations are thread-safe. The library ships an in-memory registry
  * (notification-core) and a JDBC registry (notification-store-jdbc); both are opt-in
@@ -78,6 +85,20 @@ public interface PushDeviceRegistry {
      * @return the devices, possibly empty
      */
     List<PushDevice> activeDevices(String userId, String appId);
+
+    /**
+     * Every device of the user in the current scope, of every app, active and stale alike,
+     * most recently seen first; for example to show a person the devices signed in to their
+     * account. {@link PushDevice#isActive} tells which of them a notification would reach.
+     *
+     * <p>The devices carry their push token. Callers must never expose
+     * {@link PushDevice#token()} to end users or write it to logs.
+     *
+     * @param userId the user; {@code null} lists nothing
+     * @return the devices, possibly empty
+     * @since 1.3.1
+     */
+    List<PushDevice> devices(String userId);
 
     /**
      * Remove every device whose token has this {@link PushTokens#hash(String) hash}, for

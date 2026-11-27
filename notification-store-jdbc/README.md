@@ -361,6 +361,7 @@ The dead-letter and delivery-event stores log and swallow that failure, as their
   Advisory locks need no grant.
   A deadlock or serialization failure (two registrations swapping tokens between two devices) or a unique key collision re-runs the whole transaction, up to three attempts.
 - `last_seen_at` is database time, one `clock_timestamp()` reading taken after both locks are held; `activeDevices` leaves out devices not seen within `stale-after`.
+- `devices(userId)` (since 1.3.1) lists every device of the user in the current scope, stale ones included, most recently seen first; like `activeDevices` it leaves out expired rows that wait for the purger.
 - `expires_at` is `last_seen_at + purge-after` (default 270 days), so `JdbcStorePurger` deletes long-gone devices with the other stores; `purgeStale(olderThan)` deletes by last-seen time in the current scope.
 - Every removal is logged at INFO with the count and the reason, never the token or its hash.
 

@@ -23,8 +23,9 @@ An application that declares its own `ChannelContentRenderer` for `PUSH` must se
 
 ### Device registry SPI (`notification-api`, package `api.push`)
 
-- `PushDeviceRegistry`: `register`, `unregister(userId, installationId)`, `unregisterToken`, `unregisterAll(userId)`, `activeDevices(userId, appId)`, `removeByTokenHash(tokenHash, reason)` and `purgeStale(olderThan)`.
+- `PushDeviceRegistry`: `register`, `unregister(userId, installationId)`, `unregisterToken`, `unregisterAll(userId)`, `activeDevices(userId, appId)`, `devices(userId)` (since 1.3.1), `removeByTokenHash(tokenHash, reason)` and `purgeStale(olderThan)`.
 - `PushDeviceRegistration` (the input; values stripped and checked against the column lengths) and `PushDevice` (the stored device), both with a `toString()` that shows the token hash only; `PushPlatform` (`ANDROID`, `IOS`, `WEB`).
+- `PushDevice.isActive(staleAfter, now)` (since 1.3.1) is the staleness rule `activeDevices` applies: seen at or after `now - staleAfter`.
 - `PushTokens.hash(token)` is now the one definition of `sha256:<first 16 hex of SHA-256(token)>`; the FCM module delegates to it with unchanged output.
 - `PushDeviceRemovalReasons`: `unregistered`, `moved`, `evicted`, `invalid_target`, `stale`.
 
@@ -35,6 +36,10 @@ Semantics every implementation shares, pinned by `PushDeviceRegistryContractTest
 - **Register** is an upsert on `(scope, userId, installationId)`, in one transaction: remove the same token from any other user or installation in the scope (`moved`, the shared phone), insert or refresh the device (`lastSeenAt` is now; a new token for the same installation is a token rotation), then remove the user's least recently seen devices beyond `max-devices-per-user` (`evicted`).
   The device just registered always stays.
 - **Active devices** are those seen within `stale-after`, most recently seen first.
+- **All devices** of a user, `devices(userId)` (since 1.3.1), are every device of the user in the scope, of every app, active and stale alike, most recently seen first; an unknown user has none.
+  It lets a host show a person the devices signed in to their account; `PushDevice.isActive` marks which of them notifications reach.
+  The devices carry their tokens, because the registry is the trust boundary: a caller must never show a token to an end user or log it, and shows the installation id or the token hash instead.
+  The JDBC registry leaves out expired devices that wait for the purger, as `activeDevices` does.
 - **Unregister** operations are idempotent.
 - **Every removal** is logged at INFO with the reason only, never the token or its hash (a hash is still a stable identifier of a person's device).
 

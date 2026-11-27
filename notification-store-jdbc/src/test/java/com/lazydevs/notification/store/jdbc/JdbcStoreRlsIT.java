@@ -233,6 +233,7 @@ class JdbcStoreRlsIT {
         // Even a registry asked for the other tenant's scope sees nothing through the policy.
         TenantContext.setTenantId("globex");
         assertThat(acmeDevices.activeDevices("u1", null)).isEmpty();
+        assertThat(acmeDevices.devices("u1")).isEmpty();
         assertThat(acmeDevices.unregisterAll("u1")).isZero();
         assertThat(acmeDevices.removeByTokenHash(PushTokens.hash("shared-token"), "invalid_target")).isZero();
         PushDeviceRegistration foreign = new PushDeviceRegistration("globex", "u2", "inst-2", null,
@@ -241,6 +242,7 @@ class JdbcStoreRlsIT {
 
         TenantContext.setTenantId("acme");
         assertThat(acmeDevices.activeDevices("u1", null)).extracting("tenantId").containsExactly("acme");
+        assertThat(acmeDevices.devices("u1")).extracting("tenantId").containsExactly("acme");
         assertThat(acmeDevices.removeByTokenHash(PushTokens.hash("shared-token"), "invalid_target")).isEqualTo(1);
         assertThat(countAll(TABLES.pushDevice())).isEqualTo(1);
     }

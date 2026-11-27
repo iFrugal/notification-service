@@ -238,6 +238,7 @@ notification:
 | What | How |
 |------|-----|
 | Register a device | `PushDeviceRegistry.register(PushDeviceRegistration)`; the scope is `TenantContext` (none = pool) |
+| List a person's devices (1.3.1) | `PushDeviceRegistry.devices(userId)`: active and stale, newest first; `PushDevice.isActive(staleAfter, now)` tells them apart. Never show or log `token()` |
 | Send to a user | `PushRecipient.forUser(userId)` or `forUser(userId, appId)` |
 | No active device | `FAILED` / `NO_DEVICES` / `PERMANENT`, no provider call, no dead letter |
 | Dead token | Removed by `PushDeviceCleanupListener` from the FCM `INVALID_TARGET` event |
