@@ -38,7 +38,7 @@ import java.util.Set;
  * Each failure is a {@link NotificationException}, which the pipeline answers with a
  * permanent failure.
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 public final class PushTargetExpansion {
 

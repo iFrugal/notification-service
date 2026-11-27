@@ -62,7 +62,7 @@ import static com.lazydevs.notification.store.jdbc.JdbcStoreSupport.timestamp;
  *       its hash.</li>
  * </ul>
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 @Slf4j
 public class JdbcPushDeviceRegistry implements PushDeviceRegistry, JdbcPurgeableStore {

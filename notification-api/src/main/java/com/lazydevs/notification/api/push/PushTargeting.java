@@ -4,7 +4,7 @@ package com.lazydevs.notification.api.push;
  * Error codes and metadata keys of user-addressed push (DD-37): a
  * {@link com.lazydevs.notification.api.model.PushRecipient} with a {@code userId}.
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 public final class PushTargeting {
 

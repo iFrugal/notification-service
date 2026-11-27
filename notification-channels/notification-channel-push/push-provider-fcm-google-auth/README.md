@@ -23,7 +23,7 @@ You do not need it for a service-account JSON key, as a file or inline: `push-pr
 |---------------|--------|
 | `adc` | Application Default Credentials, in the library's order: the file named by `GOOGLE_APPLICATION_CREDENTIALS`, the gcloud well-known file (`gcloud auth application-default login`), then the Google Cloud runtime (the metadata server of GKE, Cloud Run, Compute Engine and App Engine). |
 | `external-account:<path>` | A workload identity federation credential configuration (`"type": "external_account"`), as written by `gcloud iam workload-identity-pools create-cred-config`: a subject token from a file, a URL, an executable, or AWS, exchanged at Google's Security Token Service, with or without service account impersonation. |
-| `external-account-supplier:<name>` (since 1.4.0) | Workload identity federation without a file: the subject token comes from the `FcmSubjectTokenSupplier` bean of that name, which also names the pool audience and the service account to impersonate. |
+| `external-account-supplier:<name>` (since 1.2.3) | Workload identity federation without a file: the subject token comes from the `FcmSubjectTokenSupplier` bean of that name, which also names the pool audience and the service account to impersonate. |
 
 ```yaml
 notification:
@@ -68,7 +68,7 @@ The library resolves ADC once per JVM and keeps the result for every tenant that
 `timeout` bounds every HTTP call of the library (the library's own connect plus read timeout, at most `timeout`), and `token-refresh-margin` decides when the token is refreshed.
 `token-endpoint` does not apply and logs a warning: the credential configuration names its own endpoints.
 
-## Workload identity federation with a supplier (since 1.4.0)
+## Workload identity federation with a supplier (since 1.2.3)
 
 `credentials: external-account-supplier:<name>` builds the identity pool credentials in code, with google-auth-library's `IdentityPoolSubjectTokenSupplier`, so there is no credential configuration file and nothing on disk to refresh (DD-37).
 Declare an `FcmSubjectTokenSupplier` bean; `FcmGoogleAuthAutoConfiguration` hands every such bean to the token provider factory.

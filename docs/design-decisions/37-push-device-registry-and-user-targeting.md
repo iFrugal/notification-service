@@ -4,7 +4,7 @@
 
 ## Context
 
-Up to 1.3.0 the FCM provider (DD-24) sent to whatever device tokens the caller named.
+Up to 1.2.2 the FCM provider (DD-24) sent to whatever device tokens the caller named.
 Every application that sends push had to build the same pieces around it:
 
 - a table of each user's devices, with the shared-phone case (one token moving from one user to another), a cap per user and staleness;

@@ -30,7 +30,7 @@ import java.util.Objects;
  *                        with the template engine (since 1.2.2)
  * @param pushTargets     resolves push recipients that address a user into the
  *                        user's device tokens (DD-37); {@code null} means
- *                        {@link PushTargetExpansion#disabled()} (since 1.4.0)
+ *                        {@link PushTargetExpansion#disabled()} (since 1.2.3)
  * @since 1.2.1
  */
 public record NotificationServiceExtensions(MessageScrubber messageScrubber, Clock clock,
@@ -48,9 +48,9 @@ public record NotificationServiceExtensions(MessageScrubber messageScrubber, Clo
     }
 
     /**
-     * The 1.3.0 constructor: no push user targeting.
+     * The 1.2.2 constructor: no push user targeting.
      *
-     * @since 1.3.0
+     * @since 1.2.2
      */
     public NotificationServiceExtensions(MessageScrubber messageScrubber, Clock clock,
                                          DeliveryEventStore deliveryEvents, RecipientGuard recipientGuard,
@@ -81,7 +81,7 @@ public record NotificationServiceExtensions(MessageScrubber messageScrubber, Clo
     /**
      * @param expansion resolves push user targets; {@code null} disables user targeting
      * @return these extensions with {@code expansion} in place of the current one
-     * @since 1.4.0
+     * @since 1.2.3
      */
     public NotificationServiceExtensions withPushTargets(PushTargetExpansion expansion) {
         return new NotificationServiceExtensions(messageScrubber, clock, deliveryEvents, recipientGuard,

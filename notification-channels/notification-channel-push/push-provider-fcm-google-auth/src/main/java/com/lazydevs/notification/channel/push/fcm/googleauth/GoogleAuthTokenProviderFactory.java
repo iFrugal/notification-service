@@ -16,7 +16,7 @@ import java.util.Map;
 
 /**
  * The {@link FcmAccessTokenProviderFactory} for {@code credentials: adc},
- * {@code credentials: external-account:<path>} and (since 1.4.0)
+ * {@code credentials: external-account:<path>} and (since 1.2.3)
  * {@code credentials: external-account-supplier:<name>}, registered in
  * {@code META-INF/services}: putting this module on the classpath is all it takes.
  *
@@ -46,7 +46,7 @@ public final class GoogleAuthTokenProviderFactory implements FcmAccessTokenProvi
     /**
      * @param suppliers the subject token suppliers {@code external-account-supplier:<name>} may name
      * @throws IllegalStateException when two suppliers share a name or one has none
-     * @since 1.4.0
+     * @since 1.2.3
      */
     public GoogleAuthTokenProviderFactory(List<FcmSubjectTokenSupplier> suppliers) {
         Map<String, FcmSubjectTokenSupplier> byName = new LinkedHashMap<>();

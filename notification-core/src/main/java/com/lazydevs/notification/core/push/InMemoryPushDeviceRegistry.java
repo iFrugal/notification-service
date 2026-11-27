@@ -28,7 +28,7 @@ import java.util.function.Predicate;
  * one lock, which is ample for registration traffic. The clock decides
  * {@code createdAt}, {@code lastSeenAt} and staleness.
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 @Slf4j
 public class InMemoryPushDeviceRegistry implements PushDeviceRegistry {

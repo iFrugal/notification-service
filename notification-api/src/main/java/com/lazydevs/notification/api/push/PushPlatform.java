@@ -3,7 +3,7 @@ package com.lazydevs.notification.api.push;
 /**
  * Platform of a registered push device (DD-37).
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 public enum PushPlatform {
 

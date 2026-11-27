@@ -22,7 +22,7 @@ import java.util.Objects;
  * @param attributes     free-form string attributes, never {@code null}
  * @param createdAt      when the installation was first registered
  * @param lastSeenAt     when the installation last registered (or refreshed its token)
- * @since 1.4.0
+ * @since 1.2.3
  */
 public record PushDevice(
         String tenantId,

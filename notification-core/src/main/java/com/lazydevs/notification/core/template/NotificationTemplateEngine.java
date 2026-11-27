@@ -258,7 +258,7 @@ public class NotificationTemplateEngine {
      * @return the tenant and template id rendered, and the output
      * @throws com.lazydevs.notification.api.exception.TemplateNotFoundException when there is no template
      * @throws TemplateRenderException when the template is invalid or does not fit the data
-     * @since 1.4.0
+     * @since 1.2.3
      */
     public RawOutput renderRaw(NotificationRequest request, UnaryOperator<String> prepareSource) {
         Objects.requireNonNull(prepareSource, "prepareSource");
@@ -279,7 +279,7 @@ public class NotificationTemplateEngine {
      * @param tenantId   the tenant whose template was rendered (its own or the default one)
      * @param templateId the template id rendered
      * @param output     the rendered text, untrimmed
-     * @since 1.4.0
+     * @since 1.2.3
      */
     public record RawOutput(String tenantId, String templateId, String output) {
     }

@@ -15,7 +15,7 @@ import java.util.Map;
  * one is set; each push provider validates the combination it supports and
  * rejects the rest as a permanent failure.
  *
- * <p>A {@code userId} target (since 1.4.0, DD-37) addresses every active device the
+ * <p>A {@code userId} target (since 1.2.3, DD-37) addresses every active device the
  * push device registry holds for the user, optionally only those of {@code appId}.
  * The send pipeline replaces it with those devices' tokens before the provider is
  * called ({@link #withDeviceTokens(List)}), so a stored request keeps the user id
@@ -38,8 +38,8 @@ import java.util.Map;
  * @param deviceTokens several device tokens to send the same message to (optional;
  *                     since 1.2.0). Omitted from JSON when {@code null} or empty.
  * @param userId       the user whose registered devices receive the message (optional;
- *                     since 1.4.0). Omitted from JSON when {@code null}.
- * @param appId        with {@code userId}: only devices of this app (optional; since 1.4.0).
+ *                     since 1.2.3). Omitted from JSON when {@code null}.
+ * @param appId        with {@code userId}: only devices of this app (optional; since 1.2.3).
  *                     Omitted from JSON when {@code null}.
  */
 public record PushRecipient(
@@ -88,7 +88,7 @@ public record PushRecipient(
      *
      * @param userId the user, not blank
      * @return the recipient
-     * @since 1.4.0
+     * @since 1.2.3
      */
     public static PushRecipient forUser(String userId) {
         return forUser(userId, null);
@@ -100,7 +100,7 @@ public record PushRecipient(
      * @param userId the user, not blank
      * @param appId  only devices of this app; {@code null} for every app
      * @return the recipient
-     * @since 1.4.0
+     * @since 1.2.3
      */
     public static PushRecipient forUser(String userId, String appId) {
         if (userId == null || userId.isBlank()) {
@@ -112,7 +112,7 @@ public record PushRecipient(
 
     /**
      * @return whether this recipient addresses a user's registered devices
-     * @since 1.4.0
+     * @since 1.2.3
      */
     @JsonIgnore
     public boolean isUserTarget() {
@@ -126,7 +126,7 @@ public record PushRecipient(
      *
      * @param tokens the device tokens, not empty
      * @return the copy
-     * @since 1.4.0
+     * @since 1.2.3
      */
     public PushRecipient withDeviceTokens(List<String> tokens) {
         if (tokens == null || tokens.isEmpty()) {

@@ -22,7 +22,7 @@ import java.util.Objects;
  * @param locale         BCP-47 locale of the device, may be {@code null}
  * @param timezone       IANA time zone of the device, may be {@code null}
  * @param attributes     free-form string attributes, such as the app version; never {@code null} after construction
- * @since 1.4.0
+ * @since 1.2.3
  */
 public record PushDeviceRegistration(
         String tenantId,

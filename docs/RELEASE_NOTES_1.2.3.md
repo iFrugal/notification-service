@@ -1,7 +1,9 @@
-# notification-service 1.4.0
+# notification-service 1.2.3
 
-1.4.0 builds on 1.3.0: everything in the [1.3.0 release notes](./RELEASE_NOTES_1.3.0.md) applies, and a 1.2 deployment upgrading to 1.4.0 should read those and the [1.2.1 notes](./RELEASE_NOTES_1.2.1.md) first.
-Push reuses 1.3.0's per-channel content renderer hook and `RenderedContent.payload`.
+This release was published as 1.2.3 because the release ran without `release-version`; its additive changes would normally make it a minor release, and the artifacts on Maven Central are 1.2.3.
+
+1.2.3 builds on 1.2.2: everything in the [1.2.2 release notes](./RELEASE_NOTES_1.2.2.md) applies, and a 1.2 deployment upgrading to 1.2.3 should read those and the [1.2.1 notes](./RELEASE_NOTES_1.2.1.md) first.
+Push reuses 1.2.2's per-channel content renderer hook and `RenderedContent.payload`.
 
 ## Highlights
 
@@ -35,7 +37,7 @@ The upgrade is additive: without `notification.push.devices.enabled`, without a 
   A push template that contains the literal text `[TITLE]`, `[/TITLE]`, `[BODY]`, `[/BODY]`, `[/DATA]` or `[DATA key="..."]` is now parsed into sections; any other template renders exactly as before.
   Malformed sections (unclosed, nested, repeated, or a bad data key) fail with `TemplateRenderException` reason `INVALID_TEMPLATE` (`TEMPLATE_INVALID`).
   Sections are supported only in the top-level template; in a template that includes or imports a file, a marker left in the output (from that file or from template data) fails the same way instead of being sent as text.
-  An application that declared its own `ChannelContentRenderer` for `PUSH` in 1.3.0 must set `notification.push.template-sections.enabled=false`, or startup fails with two renderers for one channel.
+  An application that declared its own `ChannelContentRenderer` for `PUSH` in 1.2.2 must set `notification.push.template-sections.enabled=false`, or startup fails with two renderers for one channel.
 
 ## API additions and compatibility
 
@@ -46,7 +48,7 @@ Two additions can still break source code:
   The 1.1 (11-argument) and 1.2 (13-argument) constructors are kept, so constructor calls compile and behave as before, and JSON written by 1.3 reads unchanged.
   A record pattern that deconstructs `PushRecipient(...)` with 13 components no longer compiles.
 - **`NotificationServiceExtensions`** gains a seventh component, `PushTargetExpansion pushTargets`.
-  The 1.3.0 6-argument and the 1.2.1 5-argument constructors, `defaults()` and `of(...)` are kept and mean "no user targeting"; a 6-component record pattern no longer compiles.
+  The 1.2.2 6-argument and the 1.2.1 5-argument constructors, `defaults()` and `of(...)` are kept and mean "no user targeting"; a 6-component record pattern no longer compiles.
 
 Other additions:
 
@@ -79,7 +81,7 @@ New error codes:
 - **The Redis store family has no registry.**
   With `notification.push.devices.enabled=true` and Redis selected for it, startup fails unless you declare your own `PushDeviceRegistry` bean.
 - **Remove your own dead-token listener** once the registry holds the tokens: `PushDeviceCleanupListener` does the same job (switch it off with `notification.push.devices.cleanup-on-invalid-target=false` if you keep yours).
-- **Roll every node to 1.4.0 before sending user-addressed push.**
+- **Roll every node to 1.2.3 before sending user-addressed push.**
   A 1.3 node that replays a stored request with a `userId` ignores the unknown property and sends to no target, which fails with `FCM_INVALID_TARGET_SPEC`.
 
 ## Configuration to set

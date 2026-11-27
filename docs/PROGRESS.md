@@ -18,9 +18,9 @@ collaborator) can pick up where the last one left off.
 ## Status snapshot
 
 - **Repository:** `iFrugal/notification-service`
-- **Working version (current):** `1.2.3-SNAPSHOT`
-- **Latest released on Maven Central:** `1.2.2` (the WhatsApp release)
-- **Next release:** `1.3.0` (run the release workflow with `release-version: 1.3.0`, because the tree is at `1.2.3-SNAPSHOT`; the release workflow refuses a version without `docs/RELEASE_NOTES_<version>.md`)
+- **Working version (current):** `1.2.4-SNAPSHOT`
+- **Latest released on Maven Central:** `1.2.3` (the push release; the WhatsApp release is `1.2.2`)
+- **Next release:** `1.3.0` (run the release workflow with `release-version: 1.3.0`, because the tree is at `1.2.4-SNAPSHOT`; the release workflow refuses a version without `docs/RELEASE_NOTES_<version>.md`)
 - **Java:** 25 LTS · **Spring Boot:** 4.1.1 · **Build:** Maven 3.9.9 (`./mvnw`)
 - **CI/CD:** GitHub Actions (build, release, deploy, dependabot, codeql)
 - **Quality gate:** SonarCloud (`iFrugal_notification-service`)
@@ -478,10 +478,10 @@ Built as three stacked branches: `feat/1.2.0-api` (PR-A), `feat/1.2.0-fcm` (PR-B
 - [x] PR-C: release notes, architecture, feature matrix and README
 - [ ] Merge the stack, then run "Release to Maven Central" with `release-version: 1.2.0`, dry-run first; every node must run 1.1.2 before 1.2.0
 
-### Phase 22 - 1.4.0: push device registry and user targeting (DD-37)
+### Phase 22 - 1.2.3: push device registry and user targeting (DD-37)
 
-Release notes: [`RELEASE_NOTES_1.4.0.md`](./RELEASE_NOTES_1.4.0.md).
-Branch `feat/1.5.0-push`, on top of the WhatsApp 1.3.0 branch (`feat/1.4.0-whatsapp-meta`, PR #78), whose renderer hook it reuses.
+Release notes: [`RELEASE_NOTES_1.2.3.md`](./RELEASE_NOTES_1.2.3.md).
+Merged as PR #81 on top of the WhatsApp release 1.2.2 (PR #78), whose renderer hook it reuses; published as 1.2.3.
 
 - [x] `PushDeviceRegistry` SPI, `PushDevice`, `PushDeviceRegistration`, `PushTokens.hash` as the one token hash
 - [x] `InMemoryPushDeviceRegistry` and `JdbcPushDeviceRegistry` (`<prefix>push_device`, purge, RLS case), one contract test in the core test-jar
@@ -490,7 +490,7 @@ Branch `feat/1.5.0-push`, on top of the WhatsApp 1.3.0 branch (`feat/1.4.0-whats
 - [x] `PushContentRenderer`: `[TITLE]`, `[BODY]`, `[DATA key]` sections through the engine's lookup
 - [x] FCM: per-request multi-token policy, rendered data merged under caller data, `FcmRuntimeHints`
 - [x] google-auth: `external-account-supplier:<name>` with the `FcmSubjectTokenSupplier` SPI
-- [ ] Merge after PR #78, then release 1.4.0; `JdbcPushDeviceRegistryIT` and the RLS case run in CI (Testcontainers)
+- [x] Merged after PR #78 and released as 1.2.3; `JdbcPushDeviceRegistryIT` and the RLS case run in CI (Testcontainers)
 
 ### Out-of-scope / parked
 

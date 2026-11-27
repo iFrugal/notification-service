@@ -16,7 +16,7 @@ import java.util.List;
  * registered by name and costs nothing when that module is absent. The FCM JSON is built and
  * read as Jackson trees, so no DTO needs a binding hint.
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 public class FcmRuntimeHints implements RuntimeHintsRegistrar {
 

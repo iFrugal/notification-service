@@ -96,7 +96,7 @@ class DefaultBeansRegistrationTest {
             assertThat(context).hasNotFailed();
             assertThat(context.getBeanFactory().getBeanDefinition("metaWhatsappProvider").isPrototype()).isTrue();
             assertThat(context).hasSingleBean(WhatsAppTemplateRegistry.class);
-            // One renderer per channel: WhatsApp's and (since 1.4.0, DD-37) the push sections renderer.
+            // One renderer per channel: WhatsApp's and (since 1.2.3, DD-37) the push sections renderer.
             assertThat(context.getBeansOfType(ChannelContentRenderer.class).values())
                     .extracting(ChannelContentRenderer::channel)
                     .containsExactlyInAnyOrder(Channel.WHATSAPP, Channel.PUSH);
