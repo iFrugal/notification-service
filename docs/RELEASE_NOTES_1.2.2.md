@@ -1,6 +1,8 @@
-# notification-service 1.3.0
+# notification-service 1.2.2
 
-1.3.0 builds on 1.2.1: everything in the [1.2.1 release notes](./RELEASE_NOTES_1.2.1.md) applies, and a 1.2 deployment upgrading to 1.3.0 should read those first.
+This release was published as 1.2.2 because the release ran without `release-version`; its additive changes would normally make it a minor release, and the artifacts on Maven Central are 1.2.2.
+
+1.2.2 builds on 1.2.1: everything in the [1.2.1 release notes](./RELEASE_NOTES_1.2.1.md) applies, and a 1.2 deployment upgrading to 1.2.2 should read those first.
 The WhatsApp channel uses 1.2.1's send pipeline as it is: validate before dispatch, the idempotency fingerprint and release policy, the recipient guard, the status view, lazy provider initialisation and the rate-limit bands.
 
 ## Highlights
@@ -24,12 +26,12 @@ The WhatsApp channel uses 1.2.1's send pipeline as it is: validate before dispat
 
 | Coordinates | What it is |
 |-------------|------------|
-| `com.github.ifrugal:whatsapp-core:1.3.0` | Template registry, parameter rules and the `WHATSAPP` renderer ([README](../notification-channels/notification-channel-whatsapp/whatsapp-core/README.md)) |
-| `com.github.ifrugal:whatsapp-provider-meta:1.3.0` | The Meta WhatsApp Cloud API provider, `WHATSAPP:meta`, and its status webhook ([README](../notification-channels/notification-channel-whatsapp/whatsapp-provider-meta/README.md)) |
+| `com.github.ifrugal:whatsapp-core:1.2.2` | Template registry, parameter rules and the `WHATSAPP` renderer ([README](../notification-channels/notification-channel-whatsapp/whatsapp-core/README.md)) |
+| `com.github.ifrugal:whatsapp-provider-meta:1.2.2` | The Meta WhatsApp Cloud API provider, `WHATSAPP:meta`, and its status webhook ([README](../notification-channels/notification-channel-whatsapp/whatsapp-provider-meta/README.md)) |
 
 Both are in `notification-service-bom`.
 The artifactIds `whatsapp-provider-meta` and `notification-channel-whatsapp` existed on Maven Central for versions 1.0.0 to 1.0.2 as empty artifacts with no classes.
-1.3.0 is the first release of `whatsapp-provider-meta` with an implementation; do not use the older versions.
+1.2.2 is the first release of `whatsapp-provider-meta` with an implementation; do not use the older versions.
 
 ## Behaviour changes
 
@@ -78,7 +80,7 @@ Other additions:
 
 ## Upgrade notes
 
-- **Roll every node to 1.3.0 before it receives WhatsApp callbacks, or keep readers tolerant.**
+- **Roll every node to 1.2.2 before it receives WhatsApp callbacks, or keep readers tolerant.**
   The Redis and JDBC stores (since 1.1.2) read an unknown `DeliveryStatus` as `UNKNOWN`; a store that keeps the status as a string needs no migration.
 - **Review `switch` statements over `DeliveryStatus`** as described above.
 - **Templates are approved at Meta, not in this library.**

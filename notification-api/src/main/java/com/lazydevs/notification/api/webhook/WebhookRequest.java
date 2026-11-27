@@ -26,7 +26,7 @@ import java.util.TreeMap;
  * @param body            the raw request body, never {@code null}
  * @param requestUrl      the full URL the provider called, including the query
  *                        string, as needed by schemes that sign the URL; may be {@code null}
- * @since 1.3.0
+ * @since 1.2.2
  */
 public record WebhookRequest(
         String method,

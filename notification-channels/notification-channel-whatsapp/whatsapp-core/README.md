@@ -1,7 +1,7 @@
 # whatsapp-core
 
 The vendor-neutral part of the `WHATSAPP` channel: it turns a notification request into a WhatsApp template message that a WhatsApp provider sends.
-Available since 1.3.0.
+Available since 1.2.2.
 See [DD-35](../../../docs/design-decisions/35-whatsapp-channel-and-meta-provider.md).
 
 You normally get it through a provider module, for example [`whatsapp-provider-meta`](../whatsapp-provider-meta/README.md):
@@ -64,7 +64,7 @@ To keep the bindings somewhere else, such as a database, declare a `WhatsAppTemp
 1. A `WhatsAppRecipient` with `whatsappTemplateName` set is sent as it says: its `languageCode` (required) and its `headerParameters`, `bodyParameters` and `buttonParameters`.
    Each `buttonParameters` entry is a map with `index` (defaults to its position), `sub_type` (defaults to `url`) and the value under `text`, `payload`, `coupon_code` or `value`.
 2. Otherwise the binding of `templateId` (or `notificationType`) for the request's tenant, then for `default`.
-3. Otherwise the FreeMarker template engine, as before 1.3.0; it fails with `TEMPLATE_NOT_FOUND` when there is no `.ftl` either.
+3. Otherwise the FreeMarker template engine, as before 1.2.2; it fails with `TEMPLATE_NOT_FOUND` when there is no `.ftl` either.
 
 ## Parameter rules
 

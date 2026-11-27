@@ -1,4 +1,4 @@
-# Decision 26: WhatsApp Channel and the Meta Cloud API Provider
+# Decision 35: WhatsApp Channel and the Meta Cloud API Provider
 
 ## Status: DECIDED
 

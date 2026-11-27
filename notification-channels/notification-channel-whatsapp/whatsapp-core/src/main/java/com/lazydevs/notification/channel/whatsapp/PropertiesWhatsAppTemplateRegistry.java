@@ -13,7 +13,7 @@ import java.util.Optional;
  * <p>Every binding is validated when the registry is built, so a typo in the
  * YAML fails the startup instead of the first send.
  *
- * @since 1.3.0
+ * @since 1.2.2
  */
 public class PropertiesWhatsAppTemplateRegistry implements WhatsAppTemplateRegistry {
 

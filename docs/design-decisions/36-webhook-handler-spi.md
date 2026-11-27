@@ -1,4 +1,4 @@
-# Decision 27: Webhook Handler SPI
+# Decision 36: Webhook Handler SPI
 
 ## Status: DECIDED
 

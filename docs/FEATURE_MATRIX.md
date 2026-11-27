@@ -143,7 +143,7 @@ notification:
 
 ### 2c. WhatsApp channel
 
-The Meta WhatsApp Cloud API ships as `whatsapp-provider-meta` since 1.3.0, on top of the vendor-neutral `whatsapp-core` (DD-35).
+The Meta WhatsApp Cloud API ships as `whatsapp-provider-meta` since 1.2.2, on top of the vendor-neutral `whatsapp-core` (DD-35).
 Messages are templates approved at the provider; `whatsapp-core` maps the request's `templateId` (else `notificationType`) onto the approved template and fills its parameters from `templateData`, instead of rendering a FreeMarker file.
 
 | Provider | Artifact | When to use | Required properties |
@@ -156,7 +156,7 @@ Messages are templates approved at the provider; `whatsapp-core` maps the reques
 <dependency>
     <groupId>com.github.ifrugal</groupId>
     <artifactId>whatsapp-provider-meta</artifactId>
-    <version>1.3.0</version>
+    <version>1.2.2</version>
 </dependency>
 ```
 
@@ -251,7 +251,7 @@ Sections are supported only in the top-level template, not in an `<#include>`d o
 
 ### 2e. Planned providers
 
-FCM (HTTP v1 API) shipped in 1.2.0 and the Meta WhatsApp Cloud API with a signed webhook in 1.3.0.
+FCM (HTTP v1 API) shipped in 1.2.0 and the Meta WhatsApp Cloud API with a signed webhook in 1.2.2.
 AWS SNS SMS, Twilio or MSG91 WhatsApp and Apple APNs are planned but not scheduled yet.
 The `SmsProvider`, `WhatsAppProvider` and `PushProvider` SPIs are the extension points in the meantime.
 
@@ -261,7 +261,7 @@ The artifactIds `sms-provider-sns`, `whatsapp-provider-twilio`, `whatsapp-provid
 They are not published from 1.1.0 on.
 If your build declares any of them, remove the dependency; you lose nothing, because they never contained code.
 The aggregator poms `notification-channel-whatsapp` and `notification-channel-push` are dropped for the same reason.
-The exceptions are `push-provider-fcm` (and its aggregator `notification-channel-push`), published again from 1.2.0 with the real FCM provider, and `whatsapp-provider-meta` (and its aggregator `notification-channel-whatsapp`), published again from 1.3.0 with the real Meta provider; versions 1.0.0 to 1.0.2 of them are still empty.
+The exceptions are `push-provider-fcm` (and its aggregator `notification-channel-push`), published again from 1.2.0 with the real FCM provider, and `whatsapp-provider-meta` (and its aggregator `notification-channel-whatsapp`), published again from 1.2.2 with the real Meta provider; versions 1.0.0 to 1.0.2 of them are still empty.
 
 ---
 
@@ -545,7 +545,7 @@ notification:
       enabled: true
       topic-arn: arn:aws:sns:us-east-1:0:my-ses-topic
       signature-verification: true
-    meta:                          # needs whatsapp-provider-meta (since 1.3.0)
+    meta:                          # needs whatsapp-provider-meta (since 1.2.2)
       enabled: true
       app-secret: ${META_APP_SECRET}        # your-app-secret
       verify-token: ${META_VERIFY_TOKEN}    # your own value, entered in the Meta app

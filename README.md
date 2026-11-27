@@ -133,14 +133,14 @@ Push has a built-in FCM provider and WhatsApp a built-in Meta Cloud API provider
 | `notification-store-jdbc` | PostgreSQL-backed stores over plain SQL (`notification.store.type=jdbc`) |
 | `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `email-provider-acs`, `sms-provider-twilio`, `push-provider-fcm`, the FCM credentials adapter `push-provider-fcm-google-auth`, `whatsapp-core` and `whatsapp-provider-meta` |
 | `notification-spring-boot-starter` | The dependency to add in library mode; every module brings its own auto-configuration |
-| `notification-server` | Standalone application with Dockerfile; bundles every built-in provider (ACS and FCM since 1.2.0, WhatsApp since 1.3.0) |
+| `notification-server` | Standalone application with Dockerfile; bundles every built-in provider (ACS and FCM since 1.2.0, WhatsApp since 1.2.2) |
 | `notification-service-bom` | Bill of materials: import it once and leave the versions off every other notification-service dependency (since 1.2.0) |
 
 ### Planned providers
 
 The channel SPIs `SmsProvider`, `WhatsAppProvider` and `PushProvider` live in `notification-api` and exist today.
 You can send on any of these channels now by implementing the SPI yourself (see [Adding Custom Providers](#adding-custom-providers)).
-The built-in providers below are planned and have no published artifact (Firebase Cloud Messaging shipped in 1.2.0, see [Push providers](#push-providers), and the Meta WhatsApp Cloud API in 1.3.0, see [WhatsApp providers](#whatsapp-providers)):
+The built-in providers below are planned and have no published artifact (Firebase Cloud Messaging shipped in 1.2.0, see [Push providers](#push-providers), and the Meta WhatsApp Cloud API in 1.2.2, see [WhatsApp providers](#whatsapp-providers)):
 
 | Channel | Provider | Status |
 |---------|----------|--------|

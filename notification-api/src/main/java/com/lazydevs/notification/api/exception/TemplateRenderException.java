@@ -42,7 +42,7 @@ public class TemplateRenderException extends NotificationException {
          * or a button index out of range. {@link TemplateRenderException#getVariablePath()}
          * names the variable.
          *
-         * @since 1.3.0
+         * @since 1.2.2
          */
         PARAMETER_INVALID("TEMPLATE_PARAMETER_INVALID");
 

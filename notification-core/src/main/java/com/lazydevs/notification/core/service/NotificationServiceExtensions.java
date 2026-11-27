@@ -27,7 +27,7 @@ import java.util.Objects;
  *                        {@code notification.idempotency.failure-policy}
  * @param renderers       per-channel content renderers, at most one per channel
  *                        (DD-35); {@code null} means none, every channel renders
- *                        with the template engine (since 1.3.0)
+ *                        with the template engine (since 1.2.2)
  * @param pushTargets     resolves push recipients that address a user into the
  *                        user's device tokens (DD-37); {@code null} means
  *                        {@link PushTargetExpansion#disabled()} (since 1.4.0)
@@ -71,7 +71,7 @@ public record NotificationServiceExtensions(MessageScrubber messageScrubber, Clo
     /**
      * @param channelRenderers per-channel content renderers, at most one per channel
      * @return these extensions with {@code channelRenderers} in place of the current ones
-     * @since 1.3.0
+     * @since 1.2.2
      */
     public NotificationServiceExtensions withRenderers(List<ChannelContentRenderer> channelRenderers) {
         return new NotificationServiceExtensions(messageScrubber, clock, deliveryEvents, recipientGuard,

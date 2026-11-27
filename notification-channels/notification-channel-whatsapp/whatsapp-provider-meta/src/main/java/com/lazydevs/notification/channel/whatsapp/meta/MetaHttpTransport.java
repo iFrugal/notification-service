@@ -11,7 +11,7 @@ package com.lazydevs.notification.channel.whatsapp.meta;
  * They must not retry on their own; the provider classifies every failure and
  * the library's retry executor decides.
  *
- * @since 1.3.0
+ * @since 1.2.2
  */
 @FunctionalInterface
 public interface MetaHttpTransport {

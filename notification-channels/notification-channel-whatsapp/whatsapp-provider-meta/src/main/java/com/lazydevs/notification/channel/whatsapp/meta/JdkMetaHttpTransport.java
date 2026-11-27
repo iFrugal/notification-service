@@ -23,7 +23,7 @@ import java.util.Objects;
  * connect timeout) is {@code requestSent=false}; a request timeout, any other
  * I/O failure and an interrupt are {@code requestSent=true}.
  *
- * @since 1.3.0
+ * @since 1.2.2
  */
 public final class JdkMetaHttpTransport implements MetaHttpTransport {
 
