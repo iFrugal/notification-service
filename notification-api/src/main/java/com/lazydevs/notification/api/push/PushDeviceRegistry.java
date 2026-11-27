@@ -31,7 +31,7 @@ import java.util.List;
  * (notification-core) and a JDBC registry (notification-store-jdbc); both are opt-in
  * with {@code notification.push.devices.enabled=true}.
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 public interface PushDeviceRegistry {
 

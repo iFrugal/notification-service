@@ -24,8 +24,8 @@ A new exception in `notification-api`, `TemplateRenderException extends Notifica
 
 | Field | Meaning |
 |-------|---------|
-| `getReason()` | `NOT_FOUND`, `INVALID_TEMPLATE`, `MODEL_INVALID` or `EMPTY_OUTPUT`; since 1.3.0 also `PARAMETER_INVALID` for a channel's parameter rules (DD-35) |
-| `getErrorCode()` | `TEMPLATE_NOT_FOUND`, `TEMPLATE_INVALID`, `TEMPLATE_MODEL_INVALID` or `TEMPLATE_EMPTY_OUTPUT`; since 1.3.0 also `TEMPLATE_PARAMETER_INVALID` |
+| `getReason()` | `NOT_FOUND`, `INVALID_TEMPLATE`, `MODEL_INVALID` or `EMPTY_OUTPUT`; since 1.2.2 also `PARAMETER_INVALID` for a channel's parameter rules (DD-35) |
+| `getErrorCode()` | `TEMPLATE_NOT_FOUND`, `TEMPLATE_INVALID`, `TEMPLATE_MODEL_INVALID` or `TEMPLATE_EMPTY_OUTPUT`; since 1.2.2 also `TEMPLATE_PARAMETER_INVALID` |
 | `getTenantId()`, `getTemplateId()` | what was rendered; `null` when an id was rejected as unsafe, so it is never echoed |
 | `getVariablePath()` | for `MODEL_INVALID`, the data-model path of the missing or invalid value, for example `order.items[2].price`; `null` when not determinable (DD-26) |
 | `getStatusCode()` | 422 |

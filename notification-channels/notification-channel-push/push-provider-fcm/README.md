@@ -125,7 +125,7 @@ Set exactly one of these on the `PushRecipient`; anything else fails with `FCM_I
 | `fid` | `message.fid` (Firebase installation id) |
 | `topic` | `message.topic`; a `/topics/` prefix is removed |
 | `condition` | `message.condition` |
-| `userId` (since 1.4.0) | none: the send pipeline replaces it with the user's registered device tokens (`deviceTokens`) before FCM is called, see DD-37; one that reaches the provider unresolved fails with `FCM_INVALID_TARGET_SPEC` |
+| `userId` (since 1.2.3) | none: the send pipeline replaces it with the user's registered device tokens (`deviceTokens`) before FCM is called, see DD-37; one that reaches the provider unresolved fails with `FCM_INVALID_TARGET_SPEC` |
 
 ## Message mapping
 
@@ -140,7 +140,7 @@ Set exactly one of these on the `PushRecipient`; anything else fails with `FCM_I
 | `clickAction` | `android.notification.click_action`, `apns.payload.aps.category`, and `webpush.fcm_options.link` when it is an https URL |
 
 For the `PUSH` channel a template without sections renders plain text, so the rendered text becomes the body and `PushRecipient.title` the title.
-Since 1.4.0 a push template may carry `[TITLE]`, `[BODY]` and `[DATA key="..."]` sections (DD-37): the `[TITLE]` section becomes the title, before `PushRecipient.title`, and the data sections are merged under the recipient's `data`.
+Since 1.2.3 a push template may carry `[TITLE]`, `[BODY]` and `[DATA key="..."]` sections (DD-37): the `[TITLE]` section becomes the title, before `PushRecipient.title`, and the data sections are merged under the recipient's `data`.
 Sections are supported only in the top-level template: a marker in a file pulled in with `<#include>` or `<#import>` is not parsed, and the render fails with `TemplateRenderException` reason `INVALID_TEMPLATE` instead of sending the marker as text.
 In a template that includes or imports a file, a marker that arrives in template data fails the same way.
 
@@ -194,7 +194,7 @@ The provider metadata of the result carries per-token results, identified by has
 
 A partial result is `AMBIGUOUS` under `all` because a retry would notify the devices that already got the message a second time.
 
-Since 1.4.0 one request can choose its own policy with the metadata key `push.multi-token-policy` (`any` or `all`; anything else fails with `FCM_INVALID_OVERRIDE`).
+Since 1.2.3 one request can choose its own policy with the metadata key `push.multi-token-policy` (`any` or `all`; anything else fails with `FCM_INVALID_OVERRIDE`).
 A push addressed to a user gets it from `notification.push.user-targets.multi-token-policy` (default `any`) unless the caller set it, so one dead device does not fail the user's notification; the dead device is then removed from the registry by its `INVALID_TARGET` event.
 The message id is the name of the first sent token, or `fcm-local:<uuid>` when none was sent.
 A send waits at most `timeout` for a concurrency slot, so a long list needs `concurrency` high enough to work through it: a token that got no slot fails with `FCM_CONCURRENCY_LIMIT` (`TRANSIENT`).
@@ -333,7 +333,7 @@ The module's own tests do exactly that with a `com.sun.net.httpserver` stub that
 ## GraalVM native image
 
 The module binds no JSON to classes and uses no reflection of its own.
-Since 1.4.0 `FcmRuntimeHints`, imported by the auto-configuration, includes the `FcmAccessTokenProviderFactory` service file in the image and registers the public constructors of the shipped factories (the google-auth one by name), so the `ServiceLoader` lookup works the same in a native image; the built-in service-account factory is also used directly when no entry is found.
+Since 1.2.3 `FcmRuntimeHints`, imported by the auto-configuration, includes the `FcmAccessTokenProviderFactory` service file in the image and registers the public constructors of the shipped factories (the google-auth one by name), so the `ServiceLoader` lookup works the same in a native image; the built-in service-account factory is also used directly when no entry is found.
 Native support is not yet claimed or tested in CI.
 Smoke plan for a native build of your application:
 

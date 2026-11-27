@@ -8,7 +8,7 @@ PostgreSQL-backed implementations of five notification-service SPIs, written as 
 | `DeadLetterStore` | `JdbcDeadLetterStore` |
 | `DeliveryEventStore` (also a `DeliveryEventListener`) | `JdbcDeliveryEventStore` |
 | `NotificationAuditStore` (since 1.2.1, the status view) | `JdbcNotificationAuditStore` |
-| `PushDeviceRegistry` (since 1.4.0, `notification.push.devices.enabled=true`, DD-37) | `JdbcPushDeviceRegistry` |
+| `PushDeviceRegistry` (since 1.2.3, `notification.push.devices.enabled=true`, DD-37) | `JdbcPushDeviceRegistry` |
 
 There is no ORM, no JPA or Hibernate, and no migration tool.
 The library never executes DDL and never needs a superuser, a table owner, or `BYPASSRLS`: every statement is plain DML on the configured tables.
@@ -301,7 +301,7 @@ How `tenant_id` is filled:
 Under row-level security the session tenant must match the tenant written, otherwise the insert is refused.
 The dead-letter and delivery-event stores log and swallow that failure, as their SPIs require; the idempotency store lets it propagate; the audit store lets it propagate to the core audit service, which logs and swallows it so the send itself never fails.
 
-## Push devices (since 1.4.0)
+## Push devices (since 1.2.3)
 
 `JdbcPushDeviceRegistry` keeps users' push devices in `<prefix>push_device` (DD-37), when `notification.push.devices.enabled=true`.
 
@@ -352,7 +352,7 @@ Under row-level security a purge only reaches the rows its session can see, so r
 ## GraalVM native image
 
 The stores use no reflection apart from Jackson on the model types they serialise.
-`JdbcStoreRuntimeHints`, imported by the auto-configuration, registers binding hints for `NotificationRequest` (with its attachments and recipient subtypes), `NotificationResponse` and (since 1.4.0) `PushDevice`.
+`JdbcStoreRuntimeHints`, imported by the auto-configuration, registers binding hints for `NotificationRequest` (with its attachments and recipient subtypes), `NotificationResponse` and (since 1.2.3) `PushDevice`.
 
 ## Testing
 

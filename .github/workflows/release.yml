@@ -45,6 +45,35 @@ jobs:
             exit 1
           fi
 
+      - name: Check release notes exist for the version
+        env:
+          INPUT_RELEASE_VERSION: ${{ inputs.release-version }}
+        run: |
+          set -euo pipefail
+
+          VERSION="$(echo "${INPUT_RELEASE_VERSION}" | tr -d '[:space:]')"
+          if [[ -z "${VERSION}" ]]; then
+            # No release-version: maven-release-plugin releases the root pom version minus -SNAPSHOT.
+            VERSION="$(sed -n '/^    <artifactId>notification-service<\/artifactId>/,/<\/version>/s/.*<version>\(.*\)<\/version>.*/\1/p' pom.xml | head -1)"
+            VERSION="${VERSION%-SNAPSHOT}"
+          fi
+          if [[ -z "${VERSION}" ]]; then
+            echo "::error::Could not work out the version that would be released."
+            exit 1
+          fi
+
+          NOTES="docs/RELEASE_NOTES_${VERSION}.md"
+          if [[ ! -f "${NOTES}" ]]; then
+            echo "::error::This run would release ${VERSION}, but ${NOTES} does not exist. Set release-version to the version the notes are for (a blank release-version derives it from the pom SNAPSHOT), or add ${NOTES} before releasing."
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
+            echo "::error::The git tag ${VERSION} already exists, so ${VERSION} was already released. Set release-version to the next version."
+            exit 1
+          fi
+          echo "Releasing ${VERSION}: ${NOTES} exists and tag ${VERSION} is free."
+
       - name: Set up JDK 25 + Maven Central credentials
         # Intentionally NOT using setup-java's gpg-private-key input — it uses
         # a strict `gpg --import` that fails with cryptic "exit code 2" when

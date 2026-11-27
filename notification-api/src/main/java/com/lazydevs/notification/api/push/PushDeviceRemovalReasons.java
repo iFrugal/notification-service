@@ -4,7 +4,7 @@ package com.lazydevs.notification.api.push;
  * Why a {@link PushDeviceRegistry} removed a device (DD-37). Every removal is
  * logged at INFO with the token hash and one of these reasons, never the token.
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 public final class PushDeviceRemovalReasons {
 

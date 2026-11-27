@@ -45,7 +45,7 @@ import java.util.function.Function;
  * the {@code templateData} key, or the recipient field such as
  * {@code recipient.bodyParameters[0]}, and the provider is never called.
  *
- * @since 1.3.0
+ * @since 1.2.2
  */
 public class WhatsAppContentRenderer implements ChannelContentRenderer {
 

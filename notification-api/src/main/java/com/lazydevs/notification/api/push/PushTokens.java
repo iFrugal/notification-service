@@ -19,7 +19,7 @@ import java.util.Objects;
  * <p>Within one tenant scope a 64-bit hash collision is the only way two
  * tokens share a hash: about 3 in 100 million per lookup at a million devices.
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 public final class PushTokens {
 

@@ -86,7 +86,7 @@ public enum DeliveryStatus {
      * <p>Readers from 1.2.x and earlier read it as {@link #UNKNOWN} when they
      * enable {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE}.
      *
-     * @since 1.3.0
+     * @since 1.2.2
      */
     SENT,
 
@@ -98,7 +98,7 @@ public enum DeliveryStatus {
      * <p>Readers from 1.2.x and earlier read it as {@link #UNKNOWN} when they
      * enable {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE}.
      *
-     * @since 1.3.0
+     * @since 1.2.2
      */
     READ
 }

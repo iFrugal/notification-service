@@ -27,7 +27,7 @@ import java.util.Objects;
  * {@code MessageSid} and {@code MessageStatus}, and 200
  * {@code {"status":"accepted"}} with one event otherwise.
  *
- * @since 1.3.0 (the same endpoint was a controller method before)
+ * @since 1.2.2 (the same endpoint was a controller method before)
  */
 @Slf4j
 public class TwilioWebhookHandler implements WebhookHandler {

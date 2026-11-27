@@ -22,7 +22,7 @@ import java.util.Objects;
  * @param headerParameters header text parameters, in placeholder order
  * @param bodyParameters   body text parameters, in placeholder order
  * @param buttons          dynamic button parameters
- * @since 1.3.0
+ * @since 1.2.2
  */
 public record WhatsAppTemplateMessage(
         String name,

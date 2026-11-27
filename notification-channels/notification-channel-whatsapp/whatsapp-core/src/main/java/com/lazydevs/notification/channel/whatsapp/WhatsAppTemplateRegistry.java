@@ -14,7 +14,7 @@ import java.util.Optional;
  *
  * <p>Implementations must be thread-safe; {@link #find} runs on every send.
  *
- * @since 1.3.0
+ * @since 1.2.2
  */
 @FunctionalInterface
 public interface WhatsAppTemplateRegistry {

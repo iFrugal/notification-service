@@ -19,7 +19,7 @@ import java.io.IOException;
  * never log it. An {@link IOException} fails the token fetch, which the send reports as a
  * failure without sending.
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 public interface FcmSubjectTokenSupplier {
 

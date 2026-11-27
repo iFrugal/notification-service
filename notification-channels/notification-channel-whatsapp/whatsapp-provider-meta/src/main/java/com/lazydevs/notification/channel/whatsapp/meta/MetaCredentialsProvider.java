@@ -13,7 +13,7 @@ package com.lazydevs.notification.channel.whatsapp.meta;
  * <p>Implementations must be thread-safe. An exception thrown here fails the
  * send with {@code CREDENTIALS_UNAVAILABLE} ({@code TRANSIENT}: nothing was sent).
  *
- * @since 1.3.0
+ * @since 1.2.2
  */
 @FunctionalInterface
 public interface MetaCredentialsProvider {

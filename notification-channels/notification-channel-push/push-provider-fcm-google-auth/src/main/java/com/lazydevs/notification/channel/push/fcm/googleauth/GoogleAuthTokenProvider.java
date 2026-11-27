@@ -169,7 +169,7 @@ public final class GoogleAuthTokenProvider implements FcmAccessTokenProvider {
 
     /**
      * Workload identity federation with a subject token supplier and no configuration file
-     * ({@code credentials: external-account-supplier:<name>}, since 1.4.0): identity pool
+     * ({@code credentials: external-account-supplier:<name>}, since 1.2.3): identity pool
      * credentials built with the supplier's audience, token type, token URL and, when it names
      * one, the service account to impersonate. No network call until the first {@link #token()}.
      *

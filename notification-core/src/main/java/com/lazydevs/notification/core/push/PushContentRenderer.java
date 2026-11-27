@@ -35,7 +35,7 @@ import java.util.regex.Pattern;
  *       token built from a fresh random UUID, and the output is split on those tokens only.
  *       A marker that arrives in template data is plain text and cannot open, close or
  *       move a section.</li>
- *   <li>Without any section the output is the body, exactly as before 1.4.0: the title
+ *   <li>Without any section the output is the body, exactly as before 1.2.3: the title
  *       then comes from {@code PushRecipient.title}.</li>
  *   <li>With sections, the body is the {@code [BODY]} section, else the text outside the
  *       sections; title, body and data values are trimmed. Text is plain: nothing is
@@ -59,7 +59,7 @@ import java.util.regex.Pattern;
  * <p>Registered for {@link Channel#PUSH} unless
  * {@code notification.push.template-sections.enabled=false}.
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 public class PushContentRenderer implements ChannelContentRenderer {
 

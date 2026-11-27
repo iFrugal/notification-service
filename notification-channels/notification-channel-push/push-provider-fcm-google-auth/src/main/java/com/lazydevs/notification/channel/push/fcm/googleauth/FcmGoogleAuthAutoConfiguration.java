@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Bean;
  * factories before the {@code ServiceLoader} ones, and keeps one instance per class, so this
  * one replaces the supplier-less instance {@code ServiceLoader} creates.
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 @AutoConfiguration(before = FcmPushProviderAutoConfiguration.class)
 public class FcmGoogleAuthAutoConfiguration {

@@ -26,7 +26,7 @@ import com.lazydevs.notification.api.model.NotificationRequest;
  * exception is thrown to the caller with nothing stored; otherwise it runs on
  * the dispatch path and its exception becomes a failed response.
  *
- * @since 1.3.0
+ * @since 1.2.2
  */
 public interface ChannelContentRenderer {
 

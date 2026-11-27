@@ -16,7 +16,7 @@ import java.util.Map;
  * @param title the rendered title, {@code null} without a {@code [TITLE]} section
  * @param body  the rendered body, may be {@code null}
  * @param data  the rendered data sections by key, in template order, never {@code null}
- * @since 1.4.0
+ * @since 1.2.3
  */
 public record PushContent(String title, String body, Map<String, String> data) {
 

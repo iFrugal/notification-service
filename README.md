@@ -133,14 +133,14 @@ Push has a built-in FCM provider and WhatsApp a built-in Meta Cloud API provider
 | `notification-store-jdbc` | PostgreSQL-backed stores over plain SQL (`notification.store.type=jdbc`) |
 | `notification-channels/*` | Built-in providers: `email-provider-smtp`, `email-provider-ses`, `email-provider-acs`, `sms-provider-twilio`, `push-provider-fcm`, the FCM credentials adapter `push-provider-fcm-google-auth`, `whatsapp-core` and `whatsapp-provider-meta` |
 | `notification-spring-boot-starter` | The dependency to add in library mode; every module brings its own auto-configuration |
-| `notification-server` | Standalone application with Dockerfile; bundles every built-in provider (ACS and FCM since 1.2.0, WhatsApp since 1.3.0) |
+| `notification-server` | Standalone application with Dockerfile; bundles every built-in provider (ACS and FCM since 1.2.0, WhatsApp since 1.2.2) |
 | `notification-service-bom` | Bill of materials: import it once and leave the versions off every other notification-service dependency (since 1.2.0) |
 
 ### Planned providers
 
 The channel SPIs `SmsProvider`, `WhatsAppProvider` and `PushProvider` live in `notification-api` and exist today.
 You can send on any of these channels now by implementing the SPI yourself (see [Adding Custom Providers](#adding-custom-providers)).
-The built-in providers below are planned and have no published artifact (Firebase Cloud Messaging shipped in 1.2.0, see [Push providers](#push-providers), and the Meta WhatsApp Cloud API in 1.3.0, see [WhatsApp providers](#whatsapp-providers)):
+The built-in providers below are planned and have no published artifact (Firebase Cloud Messaging shipped in 1.2.0, see [Push providers](#push-providers), and the Meta WhatsApp Cloud API in 1.2.2, see [WhatsApp providers](#whatsapp-providers)):
 
 | Channel | Provider | Status |
 |---------|----------|--------|
@@ -415,7 +415,7 @@ ACS authentication, pick one:
 | Provider name | Artifact | Notes |
 |---------------|----------|-------|
 | `fcm` | `push-provider-fcm` | Firebase Cloud Messaging HTTP v1, no Google library; see the [module README](notification-channels/notification-channel-push/push-provider-fcm/README.md) |
-| (adapter) | `push-provider-fcm-google-auth` | Adds `credentials: adc`, `credentials: external-account:<path>` and (since 1.4.0) keyless `credentials: external-account-supplier:<name>` to `fcm`; see the [module README](notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) |
+| (adapter) | `push-provider-fcm-google-auth` | Adds `credentials: adc`, `credentials: external-account:<path>` and (since 1.2.3) keyless `credentials: external-account-supplier:<name>` to `fcm`; see the [module README](notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) |
 
 **Push quick start.**
 Add the provider (and the adapter only if you use `adc` or `external-account:`):
@@ -488,7 +488,7 @@ class DeadPushTokenListener implements DeliveryEventListener {
 
 The listener runs on the thread that called `send`, after the send completed, so it can read the current tenant.
 
-**Push to a user (since 1.4.0, DD-37).**
+**Push to a user (since 1.2.3, DD-37).**
 Instead of tracking tokens yourself, let the library keep each user's devices and address the user:
 
 ```yaml
@@ -517,7 +517,7 @@ notificationService.send(NotificationRequest.builder()
 - Security: a device token is personal data and a credential to reach a device.
   The library logs and prints only its hash (`sha256:` and 16 hex), indexes only its full SHA-256, and keeps it out of idempotency, audit and dead-letter records; protect the `push_device` table like other personal data, and give the registry endpoints you build your own authentication.
 
-**Push templates with a title and data (since 1.4.0).**
+**Push templates with a title and data (since 1.2.3).**
 A push template may carry sections; without them it renders as before:
 
 ```
@@ -1754,7 +1754,7 @@ Operators can read DLQ entries with `redis-cli LRANGE
 
 ## JDBC store
 
-`notification-store-jdbc` provides PostgreSQL-backed `IdempotencyStore`, `DeadLetterStore`, `DeliveryEventStore`, (since 1.2.1) `NotificationAuditStore` and (since 1.4.0) `PushDeviceRegistry` implementations, written as plain SQL over Spring's `JdbcClient`.
+`notification-store-jdbc` provides PostgreSQL-backed `IdempotencyStore`, `DeadLetterStore`, `DeliveryEventStore`, (since 1.2.1) `NotificationAuditStore` and (since 1.2.3) `PushDeviceRegistry` implementations, written as plain SQL over Spring's `JdbcClient`.
 There is no ORM and no migration tool, and the library never runs DDL.
 Full details are in the [module README](notification-store-jdbc/README.md).
 
@@ -1803,7 +1803,7 @@ The host application supplies the `DataSource` and the JDBC driver.
 - **Dead-letter replay:** claims are leased with `FOR UPDATE SKIP LOCKED`, so replicas replaying the same tenant never send one entry twice.
 - **No rate limiter:** rate limiting stays on the in-memory Bucket4j limiter, or on Redis with `notification.redis.rate-limit.enabled=true`.
 - **Audit (since 1.2.1):** with `notification.audit.enabled=true` the audit records go to `<prefix>audit`; without it that table is not needed.
-- **Push devices (since 1.4.0):** with `notification.push.devices.enabled=true` the device registry is `<prefix>push_device`; without it that table is not needed.
+- **Push devices (since 1.2.3):** with `notification.push.devices.enabled=true` the device registry is `<prefix>push_device`; without it that table is not needed.
 - **Upgrading a 1.2.x schema:** the idempotency table gains an optional `fingerprint` column (DD-32).
   Without it the store logs one WARN at startup with the `ALTER TABLE` statement and keeps working without fingerprints; with `notification.idempotency.reject-key-reuse=true` startup fails with that statement instead.
 
@@ -1813,7 +1813,7 @@ The host application supplies the `DataSource` and the JDBC driver.
 
 The core registers GraalVM reflection hints for the built-in provider classes and, at AOT build time, for every provider class your configuration names with `fqcn`.
 `notification-store-jdbc` registers hints for the JSON it stores.
-Since 1.4.0 `push-provider-fcm` registers its `ServiceLoader` file and token provider factories (`FcmRuntimeHints`).
+Since 1.2.3 `push-provider-fcm` registers its `ServiceLoader` file and token provider factories (`FcmRuntimeHints`).
 Native image support is not yet claimed or tested in CI; verify a native build of your own application before relying on it.
 
 ---

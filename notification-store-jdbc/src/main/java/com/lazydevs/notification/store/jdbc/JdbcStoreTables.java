@@ -73,7 +73,7 @@ public record JdbcStoreTables(String schema, String tablePrefix) {
     /**
      * Qualified name of the push device table (DD-37).
      *
-     * @since 1.4.0
+     * @since 1.2.3
      */
     public String pushDevice() {
         return qualified("push_device");

@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
  *       service-account JSON.</li>
  *   <li>{@code credentials} - a service-account JSON file path, inline service-account
  *       JSON (starts with <code>{</code>), {@code adc}, {@code external-account:<path>} or
- *       {@code external-account-supplier:<name>} (since 1.4.0). The last three need
+ *       {@code external-account-supplier:<name>} (since 1.2.3). The last three need
  *       {@code com.github.ifrugal:push-provider-fcm-google-auth}.
  *       {@code credentials-path} is a deprecated alias.</li>
  *   <li>{@code validate-only} - send with {@code validate_only: true}: FCM validates
@@ -119,7 +119,7 @@ public record FcmSettings(
     public static final String CREDENTIALS_EXTERNAL_ACCOUNT = "external-account:";
     /**
      * Credentials prefix for workload identity federation with a subject token supplier bean,
-     * {@code external-account-supplier:<name>} (adapter module; since 1.4.0).
+     * {@code external-account-supplier:<name>} (adapter module; since 1.2.3).
      */
     public static final String CREDENTIALS_EXTERNAL_ACCOUNT_SUPPLIER = "external-account-supplier:";
     /** Maven coordinates of the module that supports {@code adc} and {@code external-account:}. */

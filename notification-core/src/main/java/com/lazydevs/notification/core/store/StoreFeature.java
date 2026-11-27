@@ -44,7 +44,7 @@ public enum StoreFeature {
      * have a registry; with the Redis family the application supplies its own
      * {@code PushDeviceRegistry}.
      *
-     * @since 1.4.0
+     * @since 1.2.3
      */
     PUSH_DEVICES("push.devices", false);
 

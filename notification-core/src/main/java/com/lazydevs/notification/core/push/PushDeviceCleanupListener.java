@@ -30,7 +30,7 @@ import java.util.regex.Pattern;
  * <p>Never throws, as the {@link DeliveryEventListener} contract asks: a registry failure is
  * logged and the device stays until the next bounce or the purge.
  *
- * @since 1.4.0
+ * @since 1.2.3
  */
 @Slf4j
 public class PushDeviceCleanupListener implements DeliveryEventListener {

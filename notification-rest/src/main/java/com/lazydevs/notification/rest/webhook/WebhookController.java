@@ -69,10 +69,10 @@ public class WebhookController {
      * @param properties the notification properties (Twilio and SES settings)
      * @param listeners  the delivery event listeners, may be {@code null}
      * @param metrics    the metrics, when Micrometer is present
-     * @deprecated since 1.3.0; build a {@link WebhookDispatcher} with the handlers you need
+     * @deprecated since 1.2.2; build a {@link WebhookDispatcher} with the handlers you need
      *             and use {@link #WebhookController(WebhookDispatcher)}
      */
-    @Deprecated(since = "1.3.0", forRemoval = true)
+    @Deprecated(since = "1.2.2", forRemoval = true)
     public WebhookController(NotificationProperties properties,
                              List<DeliveryEventListener> listeners,
                              Optional<NotificationMetrics> metrics) {

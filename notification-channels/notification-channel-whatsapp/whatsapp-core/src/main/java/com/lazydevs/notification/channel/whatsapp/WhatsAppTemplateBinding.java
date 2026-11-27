@@ -14,7 +14,7 @@ import java.util.Locale;
  * @param header   variables of the header text, in placeholder order; never {@code null}
  * @param body     variables of the body text, in placeholder order; never {@code null}
  * @param buttons  dynamic button parameters; never {@code null}
- * @since 1.3.0
+ * @since 1.2.2
  */
 public record WhatsAppTemplateBinding(
         String name,
