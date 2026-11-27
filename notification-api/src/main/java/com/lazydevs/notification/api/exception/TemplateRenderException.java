@@ -62,6 +62,8 @@ public class TemplateRenderException extends NotificationException {
     private final String tenantId;
     private final String templateId;
     private final String variablePath;
+    private final Integer lineNumber;
+    private final Integer columnNumber;
 
     /**
      * @param reason       why rendering failed
@@ -78,6 +80,26 @@ public class TemplateRenderException extends NotificationException {
     }
 
     /**
+     * With the location of the failure in the rendered template's own source.
+     *
+     * @param lineNumber   1-based line, or {@code null} when unknown or in another template
+     * @param columnNumber 1-based column, or {@code null} when unknown
+     * @since 1.3.0
+     */
+    @SuppressWarnings("java:S107") // the 1.2.1 constructor's arguments plus the location
+    public TemplateRenderException(Reason reason, String tenantId, String templateId, String variablePath,
+                                   String message, Throwable cause, Integer lineNumber, Integer columnNumber) {
+        super(reason.errorCode(), message, cause);
+        statusCode(HTTP_UNPROCESSABLE_ENTITY);
+        this.reason = reason;
+        this.tenantId = tenantId;
+        this.templateId = templateId;
+        this.variablePath = variablePath;
+        this.lineNumber = lineNumber;
+        this.columnNumber = columnNumber;
+    }
+
+    /**
      * For subclasses that keep an older HTTP status ({@link TemplateNotFoundException} keeps 404).
      */
     protected TemplateRenderException(Reason reason, String tenantId, String templateId, String variablePath,
@@ -88,6 +110,8 @@ public class TemplateRenderException extends NotificationException {
         this.tenantId = tenantId;
         this.templateId = templateId;
         this.variablePath = variablePath;
+        this.lineNumber = null;
+        this.columnNumber = null;
     }
 
     public Reason getReason() {
@@ -109,5 +133,24 @@ public class TemplateRenderException extends NotificationException {
      */
     public String getVariablePath() {
         return variablePath;
+    }
+
+    /**
+     * 1-based line of the failure in the rendered template's own source; {@code null} when
+     * unknown or when the failure is in an included template.
+     *
+     * @since 1.3.0
+     */
+    public Integer getLineNumber() {
+        return lineNumber;
+    }
+
+    /**
+     * 1-based column of the failure on {@link #getLineNumber()}; {@code null} when unknown.
+     *
+     * @since 1.3.0
+     */
+    public Integer getColumnNumber() {
+        return columnNumber;
     }
 }
