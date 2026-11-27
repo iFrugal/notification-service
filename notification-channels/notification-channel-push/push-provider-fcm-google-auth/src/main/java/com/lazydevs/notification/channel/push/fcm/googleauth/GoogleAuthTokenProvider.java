@@ -6,6 +6,7 @@ import com.google.auth.http.HttpTransportFactory;
 import com.google.auth.oauth2.AccessToken;
 import com.google.auth.oauth2.ExternalAccountCredentials;
 import com.google.auth.oauth2.GoogleCredentials;
+import com.google.auth.oauth2.IdentityPoolCredentials;
 import com.google.auth.oauth2.ServiceAccountCredentials;
 import com.lazydevs.notification.api.Channel;
 import com.lazydevs.notification.api.exception.ProviderConfigurationException;
@@ -38,8 +39,9 @@ import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * FCM access tokens from the Google auth library: Application Default Credentials
- * ({@code credentials: adc}) or a workload identity federation configuration
- * ({@code credentials: external-account:<path>}).
+ * ({@code credentials: adc}), a workload identity federation configuration
+ * ({@code credentials: external-account:<path>}) or workload identity federation with a
+ * {@link FcmSubjectTokenSupplier} ({@code credentials: external-account-supplier:<name>}).
  *
  * <ul>
  *   <li>The credentials are loaded with the type-specific loaders
@@ -60,6 +62,11 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <p>No access token, subject token or key is ever logged; error messages carry the
  * library's description of the failure, which names endpoints and OAuth error codes only.
+ * When an {@link FcmSubjectTokenSupplier} fails, the message names the supplier and the
+ * simple class name of its exception and never includes that exception's message or the
+ * messages of its causes. The host's exception is kept as the cause of the
+ * {@link FcmAuthenticationException}: it is the host's own exception, and the host is
+ * responsible for what its message and causes contain.
  *
  * @since 1.2.0
  */
@@ -158,6 +165,55 @@ public final class GoogleAuthTokenProvider implements FcmAccessTokenProvider {
                 factory -> ExternalAccountCredentials.fromStream(new ByteArrayInputStream(json), factory),
                 "the external account configuration '" + config + "' is not usable",
                 "; it must be an 'external_account' credential configuration");
+    }
+
+    /**
+     * Workload identity federation with a subject token supplier and no configuration file
+     * ({@code credentials: external-account-supplier:<name>}, since 1.4.0): identity pool
+     * credentials built with the supplier's audience, token type, token URL and, when it names
+     * one, the service account to impersonate. No network call until the first {@link #token()}.
+     *
+     * @param supplier      the subject token supplier
+     * @param transport     the tenant's transport; every token call goes through it
+     * @param clock         the clock to judge token expiry with
+     * @param refreshMargin refresh this long before the token expires
+     * @param timeout       the longest timeout of one HTTP call
+     * @return the provider
+     * @throws ProviderConfigurationException when the supplier's settings are unusable
+     */
+    public static GoogleAuthTokenProvider externalAccountSupplier(FcmSubjectTokenSupplier supplier,
+                                                                  FcmHttpTransport transport, Clock clock,
+                                                                  Duration refreshMargin, Duration timeout) {
+        Objects.requireNonNull(supplier, "supplier");
+        String name = supplier.name();
+        String spec = FcmSettings.CREDENTIALS_EXTERNAL_ACCOUNT_SUPPLIER + name;
+        if (!hasText(supplier.audience())) {
+            throw invalid("the subject token supplier '" + name + "' names no audience");
+        }
+        return load(spec, false, transport, clock, refreshMargin, timeout,
+                factory -> {
+                    IdentityPoolCredentials.Builder builder = IdentityPoolCredentials.newBuilder()
+                            .setSubjectTokenSupplier(_ -> subjectToken(supplier, name))
+                            .setAudience(supplier.audience())
+                            .setSubjectTokenType(supplier.subjectTokenType())
+                            .setTokenUrl(supplier.tokenUrl())
+                            .setHttpTransportFactory(factory);
+                    String impersonationUrl = supplier.serviceAccountImpersonationUrl();
+                    if (hasText(impersonationUrl)) {
+                        builder.setServiceAccountImpersonationUrl(impersonationUrl);
+                    }
+                    return builder.build();
+                },
+                "the subject token supplier '" + name + "' is not usable", "");
+    }
+
+    /** The supplier's token; its failure is wrapped so that no text of the host's exception reaches a message. */
+    private static String subjectToken(FcmSubjectTokenSupplier supplier, String name) throws IOException {
+        try {
+            return supplier.subjectToken();
+        } catch (Exception e) {
+            throw new SubjectTokenSupplierException(name, e);
+        }
     }
 
     /**
@@ -260,7 +316,7 @@ public final class GoogleAuthTokenProvider implements FcmAccessTokenProvider {
             throw failure(e);
         } catch (RuntimeException e) {
             throw new FcmAuthenticationException("FCM access token from " + description + " credentials failed: "
-                    + describe(e), FailureType.UNKNOWN, e);
+                    + detail(e), FailureType.UNKNOWN, e);
         }
         if (token == null || !hasText(token.getTokenValue())) {
             throw new FcmAuthenticationException("FCM access token from " + description
@@ -284,7 +340,7 @@ public final class GoogleAuthTokenProvider implements FcmAccessTokenProvider {
         FcmTransportException noAnswer = cause(e, FcmTransportException.class);
         if (noAnswer != null) {
             // The token call carries no notification, so a missing answer is always safe to retry.
-            return new FcmAuthenticationException(prefix + ": the endpoint did not answer: " + describe(e),
+            return new FcmAuthenticationException(prefix + ": the endpoint did not answer: " + detail(e),
                     FailureType.TRANSIENT, e);
         }
         int status = observed.lastErrorStatus();
@@ -305,7 +361,7 @@ public final class GoogleAuthTokenProvider implements FcmAccessTokenProvider {
             Retryable retryable = cause(e, Retryable.class);
             type = retryable != null && retryable.isRetryable() ? FailureType.TRANSIENT : FailureType.UNKNOWN;
         }
-        String message = prefix + (status > 0 ? ": HTTP " + status : "") + ": " + describe(e);
+        String message = prefix + (status > 0 ? ": HTTP " + status : "") + ": " + detail(e);
         if (type == FailureType.PERMANENT) {
             message += "; check the credential configuration and the IAM bindings of the identity";
         }
@@ -322,6 +378,16 @@ public final class GoogleAuthTokenProvider implements FcmAccessTokenProvider {
             }
         }
         return null;
+    }
+
+    /**
+     * The description of a token fetch failure: for a failed subject token supplier only our own
+     * wrapper's message (the supplier's name and the host exception's class), else
+     * {@link #describe(Throwable)}.
+     */
+    private static String detail(Throwable t) {
+        SubjectTokenSupplierException supplierFailure = cause(t, SubjectTokenSupplierException.class);
+        return supplierFailure != null ? supplierFailure.getMessage() : describe(t);
     }
 
     /** The messages of the cause chain that add something, on one line, truncated. */
@@ -352,6 +418,20 @@ public final class GoogleAuthTokenProvider implements FcmAccessTokenProvider {
     @Override
     public String toString() {
         return "GoogleAuthTokenProvider[" + description + "]";
+    }
+
+    /**
+     * A subject token supplier failed. The message names the supplier and the class of the host's
+     * exception only; the host's exception is the cause.
+     */
+    static final class SubjectTokenSupplierException extends IOException {
+
+        private static final long serialVersionUID = 1L;
+
+        SubjectTokenSupplierException(String supplierName, Exception cause) {
+            super("the subject token supplier '" + supplierName + "' failed with "
+                    + cause.getClass().getSimpleName(), cause);
+        }
     }
 
     /** Remembers the status of the last non-2xx answer of a token fetch, for the classification. */

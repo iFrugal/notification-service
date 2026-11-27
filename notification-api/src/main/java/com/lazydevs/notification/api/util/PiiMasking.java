@@ -233,6 +233,9 @@ public final class PiiMasking {
     }
 
     private static String maskPush(PushRecipient push) {
+        if (push.isUserTarget()) {
+            return "user=" + maskIdentifier(push.userId());
+        }
         if (hasText(push.deviceToken())) {
             return "token=" + maskIdentifier(push.deviceToken());
         }

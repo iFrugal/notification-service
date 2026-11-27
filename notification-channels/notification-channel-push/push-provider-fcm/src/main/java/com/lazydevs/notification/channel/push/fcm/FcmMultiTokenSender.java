@@ -139,6 +139,15 @@ final class FcmMultiTokenSender {
      * Send the same message to every token of {@code deviceTokens}.
      */
     SendResult sendMulti(ObjectNode message, Target target, DeliveryEventPublisher publisher) {
+        return sendMulti(message, target, settings.multiTokenPolicy(), publisher);
+    }
+
+    /**
+     * {@link #sendMulti(ObjectNode, Target, DeliveryEventPublisher)} with the multi-token
+     * policy of one request in place of the tenant's.
+     */
+    SendResult sendMulti(ObjectNode message, Target target, FcmSettings.MultiTokenPolicy policy,
+                         DeliveryEventPublisher publisher) {
         List<Outcome> outcomes = sendAll(message, target);
 
         List<Map<String, Object>> results = new ArrayList<>(outcomes.size());
@@ -166,10 +175,10 @@ final class FcmMultiTokenSender {
         metadata.put(METADATA_FAILURE_COUNT, failed);
 
         String messageId = firstName != null ? firstName : localId();
-        SendResult result = aggregate(outcomes, sent, failed, messageId, metadata);
+        SendResult result = aggregate(outcomes, sent, failed, messageId, metadata, policy);
         if (failed > 0) {
             log.warn("FCM multi-token send: {} of {} tokens sent, {} failed, policy={}, result={}, messageId={}",
-                    sent, outcomes.size(), failed, settings.multiTokenPolicy(),
+                    sent, outcomes.size(), failed, policy,
                     result.success() ? "success" : result.failureType(), messageId);
         } else {
             log.debug("FCM multi-token send: all {} tokens sent, messageId={}", outcomes.size(), messageId);
@@ -183,9 +192,9 @@ final class FcmMultiTokenSender {
         return result;
     }
 
-    private SendResult aggregate(List<Outcome> outcomes, int sent, int failed, String messageId,
-                                 Map<String, Object> metadata) {
-        if (failed == 0 || (sent > 0 && settings.multiTokenPolicy() == FcmSettings.MultiTokenPolicy.ANY)) {
+    private static SendResult aggregate(List<Outcome> outcomes, int sent, int failed, String messageId,
+                                        Map<String, Object> metadata, FcmSettings.MultiTokenPolicy policy) {
+        if (failed == 0 || (sent > 0 && policy == FcmSettings.MultiTokenPolicy.ANY)) {
             return SendResult.success(messageId, Map.copyOf(metadata));
         }
         List<FcmFailure> failures = outcomes.stream().filter(o -> !o.sent()).map(Outcome::failure).toList();

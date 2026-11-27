@@ -4,6 +4,7 @@ import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.guard.RecipientGuard;
 import com.lazydevs.notification.api.idempotency.IdempotencyReleasePolicy;
 import com.lazydevs.notification.api.util.MessageScrubber;
+import com.lazydevs.notification.core.push.PushTargetExpansion;
 import com.lazydevs.notification.core.template.ChannelContentRenderer;
 
 import java.time.Clock;
@@ -27,18 +28,35 @@ import java.util.Objects;
  * @param renderers       per-channel content renderers, at most one per channel
  *                        (DD-35); {@code null} means none, every channel renders
  *                        with the template engine (since 1.3.0)
+ * @param pushTargets     resolves push recipients that address a user into the
+ *                        user's device tokens (DD-37); {@code null} means
+ *                        {@link PushTargetExpansion#disabled()} (since 1.4.0)
  * @since 1.2.1
  */
 public record NotificationServiceExtensions(MessageScrubber messageScrubber, Clock clock,
                                             DeliveryEventStore deliveryEvents, RecipientGuard recipientGuard,
                                             IdempotencyReleasePolicy releasePolicy,
-                                            List<ChannelContentRenderer> renderers) {
+                                            List<ChannelContentRenderer> renderers,
+                                            PushTargetExpansion pushTargets) {
 
     public NotificationServiceExtensions {
         Objects.requireNonNull(messageScrubber, "messageScrubber");
         Objects.requireNonNull(clock, "clock");
         recipientGuard = recipientGuard == null ? RecipientGuard.allowAll() : recipientGuard;
         renderers = renderers == null ? List.of() : renderers.stream().filter(Objects::nonNull).toList();
+        pushTargets = pushTargets == null ? PushTargetExpansion.disabled() : pushTargets;
+    }
+
+    /**
+     * The 1.3.0 constructor: no push user targeting.
+     *
+     * @since 1.3.0
+     */
+    public NotificationServiceExtensions(MessageScrubber messageScrubber, Clock clock,
+                                         DeliveryEventStore deliveryEvents, RecipientGuard recipientGuard,
+                                         IdempotencyReleasePolicy releasePolicy,
+                                         List<ChannelContentRenderer> renderers) {
+        this(messageScrubber, clock, deliveryEvents, recipientGuard, releasePolicy, renderers, null);
     }
 
     /**
@@ -57,7 +75,17 @@ public record NotificationServiceExtensions(MessageScrubber messageScrubber, Clo
      */
     public NotificationServiceExtensions withRenderers(List<ChannelContentRenderer> channelRenderers) {
         return new NotificationServiceExtensions(messageScrubber, clock, deliveryEvents, recipientGuard,
-                releasePolicy, channelRenderers);
+                releasePolicy, channelRenderers, pushTargets);
+    }
+
+    /**
+     * @param expansion resolves push user targets; {@code null} disables user targeting
+     * @return these extensions with {@code expansion} in place of the current one
+     * @since 1.4.0
+     */
+    public NotificationServiceExtensions withPushTargets(PushTargetExpansion expansion) {
+        return new NotificationServiceExtensions(messageScrubber, clock, deliveryEvents, recipientGuard,
+                releasePolicy, renderers, expansion);
     }
 
     /**

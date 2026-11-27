@@ -36,7 +36,17 @@ public enum StoreFeature {
      *
      * @since 1.2.1
      */
-    AUDIT("audit", false);
+    AUDIT("audit", false),
+
+    /**
+     * The push device registry (DD-37), switched on with
+     * {@code notification.push.devices.enabled}. Only the memory and JDBC families
+     * have a registry; with the Redis family the application supplies its own
+     * {@code PushDeviceRegistry}.
+     *
+     * @since 1.4.0
+     */
+    PUSH_DEVICES("push.devices", false);
 
     /** The global store family property. */
     public static final String STORE_TYPE_PROPERTY = "notification.store.type";

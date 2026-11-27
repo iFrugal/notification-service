@@ -1,6 +1,6 @@
 # notification-store-jdbc
 
-PostgreSQL-backed implementations of four notification-service SPIs, written as plain SQL over Spring's `JdbcClient`:
+PostgreSQL-backed implementations of five notification-service SPIs, written as plain SQL over Spring's `JdbcClient`:
 
 | SPI | Implementation |
 |---|---|
@@ -8,6 +8,7 @@ PostgreSQL-backed implementations of four notification-service SPIs, written as 
 | `DeadLetterStore` | `JdbcDeadLetterStore` |
 | `DeliveryEventStore` (also a `DeliveryEventListener`) | `JdbcDeliveryEventStore` |
 | `NotificationAuditStore` (since 1.2.1, the status view) | `JdbcNotificationAuditStore` |
+| `PushDeviceRegistry` (since 1.4.0, `notification.push.devices.enabled=true`, DD-37) | `JdbcPushDeviceRegistry` |
 
 There is no ORM, no JPA or Hibernate, and no migration tool.
 The library never executes DDL and never needs a superuser, a table owner, or `BYPASSRLS`: every statement is plain DML on the configured tables.
@@ -194,6 +195,34 @@ CREATE INDEX IF NOT EXISTS notification_audit_idem_key_idx ON notification_audit
 CREATE INDEX IF NOT EXISTS notification_audit_tenant_received_idx ON notification_audit (tenant_key, received_at);
 
 CREATE INDEX IF NOT EXISTS notification_audit_expires_at_idx ON notification_audit (expires_at);
+
+CREATE TABLE IF NOT EXISTS notification_push_device (
+    id              BIGINT        GENERATED ALWAYS AS IDENTITY,
+    tenant_id       VARCHAR(255),
+    tenant_key      VARCHAR(255)  GENERATED ALWAYS AS (COALESCE(tenant_id, '')) STORED,
+    user_id         VARCHAR(255)  NOT NULL,
+    installation_id VARCHAR(255)  NOT NULL,
+    app_id          VARCHAR(255),
+    platform        VARCHAR(16)   NOT NULL,
+    token           VARCHAR(4096) NOT NULL,
+    token_hash      VARCHAR(32)   NOT NULL,
+    token_sha256    CHAR(64)      NOT NULL,
+    locale          VARCHAR(35),
+    timezone        VARCHAR(64),
+    attributes      TEXT          NOT NULL,
+    created_at      TIMESTAMPTZ   NOT NULL,
+    last_seen_at    TIMESTAMPTZ   NOT NULL,
+    expires_at      TIMESTAMPTZ   NOT NULL,
+    CONSTRAINT notification_push_device_pk PRIMARY KEY (id),
+    CONSTRAINT notification_push_device_installation_uq UNIQUE (tenant_key, user_id, installation_id),
+    CONSTRAINT notification_push_device_token_uq UNIQUE (tenant_key, token_sha256)
+);
+
+CREATE INDEX IF NOT EXISTS notification_push_device_user_seen_idx ON notification_push_device (tenant_key, user_id, last_seen_at);
+
+CREATE INDEX IF NOT EXISTS notification_push_device_token_hash_idx ON notification_push_device (tenant_key, token_hash);
+
+CREATE INDEX IF NOT EXISTS notification_push_device_expires_at_idx ON notification_push_device (expires_at);
 ```
 
 The tables are:
@@ -239,7 +268,8 @@ The application role needs only these grants:
 
 ```sql
 GRANT SELECT, INSERT, UPDATE, DELETE
-  ON notification_idempotency, notification_dead_letter, notification_delivery_event, notification_audit
+  ON notification_idempotency, notification_dead_letter, notification_delivery_event, notification_audit,
+     notification_push_device
   TO notification_app;
 ```
 
@@ -256,7 +286,7 @@ CREATE POLICY tenant_isolation ON notification_dead_letter
   WITH CHECK (tenant_id = current_setting('app.tenant', true));
 ```
 
-`JdbcStoreRlsIT` runs every store as a non-owner role without `BYPASSRLS` under exactly this policy, on all four tables.
+`JdbcStoreRlsIT` runs every store as a non-owner role without `BYPASSRLS` under exactly this policy, on all five tables.
 Each tenant sees and changes only its own rows, and a write for another tenant is refused by the policy.
 
 How `tenant_id` is filled:
@@ -265,9 +295,25 @@ How `tenant_id` is filled:
 - Dead-letter rows use the request's tenant when it has one, else the current `TenantContext` tenant, else `NULL`.
 - Delivery-event rows use the current `TenantContext` tenant, else `NULL`, because delivery events carry no tenant of their own.
 - Audit rows use the request's tenant (after the service has applied its default tenant).
+- Push devices use the registration's own `tenantId` when it names one, else the current `TenantContext` tenant, else `NULL` (the pool scope); every other registry operation works in the `TenantContext` scope.
+  An application that keeps devices per person rather than per organisation leaves `TenantContext` unset around registry calls and sends, and its policy must then admit `tenant_id IS NULL` rows for the roles that manage devices.
 
 Under row-level security the session tenant must match the tenant written, otherwise the insert is refused.
 The dead-letter and delivery-event stores log and swallow that failure, as their SPIs require; the idempotency store lets it propagate; the audit store lets it propagate to the core audit service, which logs and swallows it so the send itself never fails.
+
+## Push devices (since 1.4.0)
+
+`JdbcPushDeviceRegistry` keeps users' push devices in `<prefix>push_device` (DD-37), when `notification.push.devices.enabled=true`.
+
+- One row per `(tenant_key, user_id, installation_id)` and per `(tenant_key, token_sha256)`; `token_sha256` is the full SHA-256 of the token, so the token itself is never indexed.
+- `register` runs in one transaction under two advisory locks (`pg_advisory_xact_lock`, first on the scope and user, then on the scope and token): it removes the token from any other user or installation, upserts the device, and evicts the user's least recently seen devices beyond `max-devices-per-user`.
+  Advisory locks need no grant.
+  A deadlock or serialization failure (two registrations swapping tokens between two devices) or a unique key collision re-runs the whole transaction, up to three attempts.
+- `last_seen_at` is database time, one `clock_timestamp()` reading taken after both locks are held; `activeDevices` leaves out devices not seen within `stale-after`.
+- `expires_at` is `last_seen_at + purge-after` (default 270 days), so `JdbcStorePurger` deletes long-gone devices with the other stores; `purgeStale(olderThan)` deletes by last-seen time in the current scope.
+- Every removal is logged at INFO with the count and the reason, never the token or its hash.
+
+To add the table to a 1.3 schema, run its `CREATE TABLE` and `CREATE INDEX` statements from the reference DDL; nothing else changes.
 
 ## Dead-letter replay across replicas
 
@@ -283,7 +329,7 @@ The REST replay endpoints follow this cycle, with the lease from `notification.d
 
 ## Expiry and purge
 
-Each row has an `expires_at`, from `notification.idempotency.ttl` for idempotency rows, from `notification.audit.retention-days` (default 90) for audit rows, and from the two retention properties for the other tables.
+Each row has an `expires_at`, from `notification.idempotency.ttl` for idempotency rows, from `notification.audit.retention-days` (default 90) for audit rows, from `notification.push.devices.purge-after` (default 270 days after the device was last seen) for push devices, and from the two retention properties for the other tables.
 Expired rows are invisible to every read immediately; purging only reclaims the space.
 
 - `purgeExpired(batchSize)` on each store deletes at most one batch of expired rows and returns the count.
@@ -306,9 +352,10 @@ Under row-level security a purge only reaches the rows its session can see, so r
 ## GraalVM native image
 
 The stores use no reflection apart from Jackson on the model types they serialise.
-`JdbcStoreRuntimeHints`, imported by the auto-configuration, registers binding hints for `NotificationRequest` (with its attachments and recipient subtypes) and `NotificationResponse`.
+`JdbcStoreRuntimeHints`, imported by the auto-configuration, registers binding hints for `NotificationRequest` (with its attachments and recipient subtypes), `NotificationResponse` and (since 1.4.0) `PushDevice`.
 
 ## Testing
 
 `./mvnw -pl notification-store-jdbc -am verify` runs the unit tests and, when Docker is available, the `*IT` integration tests against `postgres:16-alpine` through Testcontainers.
 Without Docker the integration tests are skipped.
+`JdbcPushDeviceRegistryIT` runs the registry contract shared with the in-memory registry (`PushDeviceRegistryContractTest`, from the notification-core test-jar), plus concurrent registrations and the batch purge.

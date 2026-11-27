@@ -23,6 +23,7 @@ You do not need it for a service-account JSON key, as a file or inline: `push-pr
 |---------------|--------|
 | `adc` | Application Default Credentials, in the library's order: the file named by `GOOGLE_APPLICATION_CREDENTIALS`, the gcloud well-known file (`gcloud auth application-default login`), then the Google Cloud runtime (the metadata server of GKE, Cloud Run, Compute Engine and App Engine). |
 | `external-account:<path>` | A workload identity federation credential configuration (`"type": "external_account"`), as written by `gcloud iam workload-identity-pools create-cred-config`: a subject token from a file, a URL, an executable, or AWS, exchanged at Google's Security Token Service, with or without service account impersonation. |
+| `external-account-supplier:<name>` (since 1.4.0) | Workload identity federation without a file: the subject token comes from the `FcmSubjectTokenSupplier` bean of that name, which also names the pool audience and the service account to impersonate. |
 
 ```yaml
 notification:
@@ -66,6 +67,41 @@ The library resolves ADC once per JVM and keeps the result for every tenant that
 **Settings that apply.**
 `timeout` bounds every HTTP call of the library (the library's own connect plus read timeout, at most `timeout`), and `token-refresh-margin` decides when the token is refreshed.
 `token-endpoint` does not apply and logs a warning: the credential configuration names its own endpoints.
+
+## Workload identity federation with a supplier (since 1.4.0)
+
+`credentials: external-account-supplier:<name>` builds the identity pool credentials in code, with google-auth-library's `IdentityPoolSubjectTokenSupplier`, so there is no credential configuration file and nothing on disk to refresh (DD-37).
+Declare an `FcmSubjectTokenSupplier` bean; `FcmGoogleAuthAutoConfiguration` hands every such bean to the token provider factory.
+
+```java
+@Bean
+FcmSubjectTokenSupplier azureManagedIdentity(TokenCredential credential) {
+    return new FcmSubjectTokenSupplier() {
+        public String name() { return "azure-mi"; }
+        public String audience() {
+            return "//iam.googleapis.com/projects/123456/locations/global/workloadIdentityPools/azure/providers/entra";
+        }
+        public String serviceAccountEmail() { return "fcm-sender@my-project.iam.gserviceaccount.com"; }
+        public String subjectToken() {
+            return credential.getTokenSync(new TokenRequestContext().addScopes("api://my-gcp-fcm/.default")).getToken();
+        }
+    };
+}
+```
+
+```yaml
+notification.tenants.acme.channels.push.providers.fcm.properties:
+  credentials: external-account-supplier:azure-mi
+  project-id: my-project
+```
+
+- `subjectTokenType()` defaults to `urn:ietf:params:oauth:token-type:jwt`, `tokenUrl()` to `https://sts.googleapis.com/v1/token`.
+- With `serviceAccountEmail()` the federated token impersonates that service account through IAM Credentials (`serviceAccountImpersonationUrl()` overrides the URL); without it the federated principal is used directly.
+- The library asks the supplier only when it needs a new access token, and may ask more than once per refresh; return a fresh token each time and never log it.
+- An exception from the supplier fails the token fetch; the send fails without calling FCM.
+  The error message names the supplier and the exception's class only, never its message; your exception is kept as the cause, so what its message and causes contain is up to you.
+- Two suppliers with the same name fail startup; a name no supplier has fails the tenant's provider configuration, naming the known ones.
+- Without Spring, construct `new GoogleAuthTokenProviderFactory(List.of(supplier))` and pass it to the `FcmPushProvider` constructor.
 
 ## Every call goes through your FcmHttpTransport
 
@@ -141,4 +177,5 @@ The module's tests run against the Boot-managed versions.
 ## GraalVM native image
 
 The Google auth library and google-http-client ship their own `META-INF/native-image` metadata.
+`FcmRuntimeHints` in `push-provider-fcm` registers this module's `GoogleAuthTokenProviderFactory` for the `ServiceLoader` lookup; with Spring, `FcmGoogleAuthAutoConfiguration` creates it as a bean anyway.
 Native use of this module is not yet claimed or tested in CI; follow step 5 of the smoke plan in the [push-provider-fcm README](../push-provider-fcm/README.md#graalvm-native-image).

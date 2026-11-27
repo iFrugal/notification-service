@@ -6,6 +6,8 @@
 > Every cross-cutting feature is **opt-in by default**. The base starter
 > sends notifications and that's it. Pull the features you want, set their
 > flag to `true`, you're done.
+>
+> One exception since 1.4.0: push template sections (DD-37) are on by default; see [Push to a user](#push-to-a-user-device-registry-dd-37-since-140).
 
 ## Legend
 
@@ -192,7 +194,7 @@ Apple APNs direct is planned; the `PushProvider` SPI in `notification-api` is th
 | Provider | Artifact | When to use | Required properties |
 |----------|----------|-------------|---------------------|
 | Firebase FCM | `push-provider-fcm` | Cross-platform (Android + iOS + web) push over the FCM HTTP v1 API | `credentials`: a service-account JSON file path or the inline JSON (`adc` and `external-account:<path>` need `push-provider-fcm-google-auth`); `project-id` when the key does not name one; optional `validate-only`, `dry-run`, `timeout`, `concurrency`, `multi-token-policy` (`all`/`any`), `android.*`/`apns.*`/`webpush.*` defaults. See the [module README](../notification-channels/notification-channel-push/push-provider-fcm/README.md) |
-| FCM credentials adapter | `push-provider-fcm-google-auth` | Add to `push-provider-fcm` for `credentials: adc` (Application Default Credentials) or `credentials: external-account:<path>` (workload identity federation) | None of its own; every token call goes through the tenant's `FcmHttpTransport`. Brings the Google auth library (about 4.9 MB, no Netty). See the [module README](../notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) |
+| FCM credentials adapter | `push-provider-fcm-google-auth` | Add to `push-provider-fcm` for `credentials: adc` (Application Default Credentials), `credentials: external-account:<path>` (workload identity federation) or, since 1.4.0, `credentials: external-account-supplier:<name>` (federation with an `FcmSubjectTokenSupplier` bean, no file) | None of its own; every token call goes through the tenant's `FcmHttpTransport`. Brings the Google auth library (about 4.9 MB, no Netty). See the [module README](../notification-channels/notification-channel-push/push-provider-fcm-google-auth/README.md) |
 | Apple APNs | Planned (no artifact) | iOS-only push direct to Apple | Not defined yet |
 
 ```xml
@@ -213,6 +215,39 @@ Apple APNs direct is planned; the `PushProvider` SPI in `notification-api` is th
 `push-provider-fcm` adds no dependency beyond `notification-api`: no HTTP library and no Google library.
 The standalone server bundles both modules.
 A device token that FCM reports as unregistered is published as a `BOUNCED` delivery event with reason `INVALID_TARGET` and a hash of the token, so a `DeliveryEventListener` can delete it.
+
+#### Push to a user: device registry (DD-37, since 1.4.0)
+
+No new artifact: the registry is in `notification-core` (in memory) and `notification-store-jdbc` (`<prefix>push_device`).
+
+```yaml
+notification:
+  push:
+    devices:
+      enabled: true                    # in-memory, or JDBC with notification.store.type=jdbc
+      max-devices-per-user: 10
+      stale-after: 60d
+      purge-after: 270d                # JDBC: expired devices are purged with the other stores
+      cleanup-on-invalid-target: true  # remove a device when FCM reports its token invalid
+    user-targets:
+      multi-token-policy: any          # any | all, for sends addressed to a user
+    template-sections:
+      enabled: true                    # [TITLE] / [BODY] / [DATA key="..."] in push templates
+```
+
+| What | How |
+|------|-----|
+| Register a device | `PushDeviceRegistry.register(PushDeviceRegistration)`; the scope is `TenantContext` (none = pool) |
+| Send to a user | `PushRecipient.forUser(userId)` or `forUser(userId, appId)` |
+| No active device | `FAILED` / `NO_DEVICES` / `PERMANENT`, no provider call, no dead letter |
+| Dead token | Removed by `PushDeviceCleanupListener` from the FCM `INVALID_TARGET` event |
+| Title and data from a template | `[TITLE]`, `[BODY]` and `[DATA key="..."]` sections; the caller's `data` wins over the template's |
+
+The Redis store family has no registry: declare your own `PushDeviceRegistry` bean or startup fails.
+
+Device registration and user targeting are opt-in, but push template sections are on by default (`notification.push.template-sections.enabled`, default `true`).
+An application with its own `PUSH` `ChannelContentRenderer` must set it to `false`.
+Sections are supported only in the top-level template, not in an `<#include>`d or `<#import>`ed file.
 
 ### 2e. Planned providers
 
@@ -615,6 +650,7 @@ notification:
 | Idempotency | `JdbcIdempotencyStore` | `CaffeineIdempotencyStore` |
 | Dead-letter queue | `JdbcDeadLetterStore` (claims leased with `FOR UPDATE SKIP LOCKED`) | `InMemoryDeadLetterStore` |
 | Delivery event store | `JdbcDeliveryEventStore` | `InMemoryDeliveryEventStore` |
+| Push device registry (1.4.0, `notification.push.devices.enabled=true`) | `JdbcPushDeviceRegistry` | `InMemoryPushDeviceRegistry` |
 | Rate limiting | None: memory or Redis only | n/a |
 
 The host runs the migrations from the reference DDL in the jar (`db/postgresql/notification-store.sql`).

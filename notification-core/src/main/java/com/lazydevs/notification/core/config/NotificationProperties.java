@@ -34,7 +34,7 @@ public class NotificationProperties {
 
     /**
      * Provider fallback to {@link #defaultTenant} for tenants that have no
-     * entry under {@code notification.tenants} (DD-28).
+     * entry under {@code notification.tenants} (DD-37).
      *
      * @since 1.2.1
      */
@@ -154,6 +154,12 @@ public class NotificationProperties {
      * Recipient guard (DD-34). Off by default.
      */
     private RecipientGuardProperties recipientGuard = new RecipientGuardProperties();
+
+    /**
+     * Push device registry and user targeting (see DD-37). Off by default.
+     */
+    @Valid
+    private PushProperties push = new PushProperties();
 
     /**
      * Tenant-specific configurations
@@ -1033,6 +1039,82 @@ public class NotificationProperties {
     }
 
     /**
+     * Push settings (DD-37): the device registry and user targets.
+     */
+    @Data
+    public static class PushProperties {
+
+        /** The push device registry. */
+        @Valid
+        private PushDevicesProperties devices = new PushDevicesProperties();
+
+        /** Push notifications addressed to a user instead of device tokens. */
+        @Valid
+        private PushUserTargetsProperties userTargets = new PushUserTargetsProperties();
+
+        /** {@code [TITLE]}, {@code [BODY]} and {@code [DATA key="..."]} sections in push templates. */
+        private PushTemplateSectionsProperties templateSections = new PushTemplateSectionsProperties();
+    }
+
+    /**
+     * Sections in push templates (DD-37). A template without sections renders as before.
+     */
+    @Data
+    public static class PushTemplateSectionsProperties {
+
+        /**
+         * Register the push content renderer. Turn it off to declare your own
+         * {@code ChannelContentRenderer} for the PUSH channel.
+         */
+        private boolean enabled = true;
+    }
+
+    /**
+     * The push device registry (DD-37). Off by default; when enabled the
+     * in-memory registry registers unless a JDBC or application registry exists.
+     */
+    @Data
+    public static class PushDevicesProperties {
+
+        /** Register a {@code PushDeviceRegistry} and enable user-addressed push. */
+        private boolean enabled = false;
+
+        /** Most devices one user keeps; registering one more removes the least recently seen. */
+        @Min(value = 1, message = "push devices max-devices-per-user must be at least 1")
+        private int maxDevicesPerUser = 10;
+
+        /** A device not seen for this long gets no notifications. */
+        private java.time.Duration staleAfter = java.time.Duration.ofDays(60);
+
+        /** A device not seen for this long is deleted by the JDBC store purge. */
+        private java.time.Duration purgeAfter = java.time.Duration.ofDays(270);
+
+        /** Remove a device when its push service reports the token as invalid. */
+        private boolean cleanupOnInvalidTarget = true;
+
+        /** A zero or negative age would hide or delete every device. */
+        @AssertTrue(message = "push devices stale-after and purge-after must be positive")
+        public boolean isAgesPositive() {
+            return staleAfter != null && staleAfter.isPositive() && purgeAfter != null && purgeAfter.isPositive();
+        }
+    }
+
+    /**
+     * Push notifications addressed to a user (DD-37).
+     */
+    @Data
+    public static class PushUserTargetsProperties {
+
+        /**
+         * How a send to several devices of a user succeeds: {@code any} (one device
+         * reached is a success) or {@code all} (every device must be reached).
+         */
+        @jakarta.validation.constraints.Pattern(regexp = "any|all",
+                message = "push user-targets multi-token-policy must be 'any' or 'all'")
+        private String multiTokenPolicy = "any";
+    }
+
+    /**
      * Actuator health-indicator config (DD-21).
      */
     @Data
@@ -1256,7 +1338,7 @@ public class NotificationProperties {
     }
 
     /**
-     * Tenant provider fallback (DD-28).
+     * Tenant provider fallback (DD-37).
      *
      * @since 1.2.1
      */

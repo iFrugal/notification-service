@@ -4,18 +4,22 @@ import com.lazydevs.notification.api.audit.NotificationAuditStore;
 import com.lazydevs.notification.api.deadletter.DeadLetterStore;
 import com.lazydevs.notification.api.delivery.DeliveryEventStore;
 import com.lazydevs.notification.api.idempotency.IdempotencyStore;
+import com.lazydevs.notification.api.push.PushDeviceRegistry;
 import com.lazydevs.notification.api.ratelimit.RateLimiter;
 import com.lazydevs.notification.api.retry.RetryPredicate;
 import com.lazydevs.notification.core.audit.InMemoryNotificationAuditStore;
 import com.lazydevs.notification.core.deadletter.InMemoryDeadLetterStore;
 import com.lazydevs.notification.core.delivery.InMemoryDeliveryEventStore;
 import com.lazydevs.notification.core.idempotency.CaffeineIdempotencyStore;
+import com.lazydevs.notification.core.push.InMemoryPushDeviceRegistry;
+import com.lazydevs.notification.core.push.PushDeviceCleanupListener;
 import com.lazydevs.notification.core.ratelimit.Bucket4jRateLimiter;
 import com.lazydevs.notification.core.retry.RetryExecutor;
 import com.lazydevs.notification.core.store.ConditionalOnStoreType;
 import com.lazydevs.notification.core.store.StoreFeature;
 import com.lazydevs.notification.core.store.StoreType;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -89,6 +93,37 @@ public class NotificationCoreDefaultsAutoConfiguration {
     public InMemoryNotificationAuditStore inMemoryNotificationAuditStore(NotificationProperties properties) {
         return new InMemoryNotificationAuditStore(properties.getAudit().getMaxEntries(),
                 Duration.ofDays(properties.getAudit().getRetentionDays()), Clock.systemUTC());
+    }
+
+    /**
+     * In-memory push device registry (DD-37) for {@code notification.push.devices.enabled=true}
+     * with the memory store family. Like the audit store it carries
+     * {@link ConditionalOnStoreType}: there is no Redis registry, so with the Redis family
+     * it must not register silently in its place.
+     */
+    @Bean
+    @ConditionalOnStoreType(feature = StoreFeature.PUSH_DEVICES, type = StoreType.MEMORY)
+    @ConditionalOnMissingBean(PushDeviceRegistry.class)
+    public InMemoryPushDeviceRegistry inMemoryPushDeviceRegistry(NotificationProperties properties) {
+        NotificationProperties.PushDevicesProperties devices = properties.getPush().getDevices();
+        return new InMemoryPushDeviceRegistry(devices.getMaxDevicesPerUser(), devices.getStaleAfter(),
+                Clock.systemUTC());
+    }
+
+    /**
+     * Removes a device once its push service reported the token as invalid (DD-37), whenever
+     * a {@link PushDeviceRegistry} exists, unless
+     * {@code notification.push.devices.cleanup-on-invalid-target=false}. Declared after the
+     * in-memory registry, and the JDBC and application registries are registered before this
+     * class, so the bean condition sees every registry.
+     */
+    @Bean
+    @ConditionalOnBean(PushDeviceRegistry.class)
+    @ConditionalOnProperty(prefix = "notification.push.devices", name = "cleanup-on-invalid-target",
+            havingValue = "true", matchIfMissing = true)
+    @ConditionalOnMissingBean(PushDeviceCleanupListener.class)
+    public PushDeviceCleanupListener pushDeviceCleanupListener(PushDeviceRegistry registry) {
+        return new PushDeviceCleanupListener(registry);
     }
 
     @Bean

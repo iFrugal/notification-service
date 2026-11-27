@@ -96,7 +96,10 @@ class DefaultBeansRegistrationTest {
             assertThat(context).hasNotFailed();
             assertThat(context.getBeanFactory().getBeanDefinition("metaWhatsappProvider").isPrototype()).isTrue();
             assertThat(context).hasSingleBean(WhatsAppTemplateRegistry.class);
-            assertThat(context.getBean(ChannelContentRenderer.class).channel()).isEqualTo(Channel.WHATSAPP);
+            // One renderer per channel: WhatsApp's and (since 1.4.0, DD-37) the push sections renderer.
+            assertThat(context.getBeansOfType(ChannelContentRenderer.class).values())
+                    .extracting(ChannelContentRenderer::channel)
+                    .containsExactlyInAnyOrder(Channel.WHATSAPP, Channel.PUSH);
             // The Meta webhook is opt-in.
             assertThat(context).doesNotHaveBean(MetaWebhookHandler.class);
         });

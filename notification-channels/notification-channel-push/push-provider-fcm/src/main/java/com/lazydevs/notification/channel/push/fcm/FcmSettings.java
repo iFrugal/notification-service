@@ -28,8 +28,9 @@ import java.util.regex.Pattern;
  *   <li>{@code project-id} - Firebase project id; defaults to {@code project_id} of a
  *       service-account JSON.</li>
  *   <li>{@code credentials} - a service-account JSON file path, inline service-account
- *       JSON (starts with <code>{</code>), {@code adc} or {@code external-account:<path>}.
- *       The last two need {@code com.github.ifrugal:push-provider-fcm-google-auth}.
+ *       JSON (starts with <code>{</code>), {@code adc}, {@code external-account:<path>} or
+ *       {@code external-account-supplier:<name>} (since 1.4.0). The last three need
+ *       {@code com.github.ifrugal:push-provider-fcm-google-auth}.
  *       {@code credentials-path} is a deprecated alias.</li>
  *   <li>{@code validate-only} - send with {@code validate_only: true}: FCM validates
  *       the message and delivers nothing. Default {@code false}.</li>
@@ -116,6 +117,11 @@ public record FcmSettings(
     public static final String CREDENTIALS_ADC = "adc";
     /** Credentials prefix for a workload identity federation config file (adapter module). */
     public static final String CREDENTIALS_EXTERNAL_ACCOUNT = "external-account:";
+    /**
+     * Credentials prefix for workload identity federation with a subject token supplier bean,
+     * {@code external-account-supplier:<name>} (adapter module; since 1.4.0).
+     */
+    public static final String CREDENTIALS_EXTERNAL_ACCOUNT_SUPPLIER = "external-account-supplier:";
     /** Maven coordinates of the module that supports {@code adc} and {@code external-account:}. */
     public static final String GOOGLE_AUTH_ARTIFACT = "com.github.ifrugal:push-provider-fcm-google-auth";
 
@@ -252,7 +258,7 @@ public record FcmSettings(
         if (CREDENTIALS_ADC.equalsIgnoreCase(credentials)) {
             return CREDENTIALS_ADC;
         }
-        if (isExternalAccount(credentials)) {
+        if (isExternalAccount(credentials) || isExternalAccountSupplier(credentials)) {
             return credentials;
         }
         return "service-account-file:" + credentials;
@@ -268,9 +274,17 @@ public record FcmSettings(
                 CREDENTIALS_EXTERNAL_ACCOUNT.length());
     }
 
+    /** @return whether the spec names a subject token supplier ({@code external-account-supplier:<name>}) */
+    public static boolean isExternalAccountSupplier(String credentials) {
+        return credentials != null
+                && credentials.regionMatches(true, 0, CREDENTIALS_EXTERNAL_ACCOUNT_SUPPLIER, 0,
+                CREDENTIALS_EXTERNAL_ACCOUNT_SUPPLIER.length());
+    }
+
     /** @return whether the spec needs the google-auth adapter module */
     static boolean needsGoogleAuth(String credentials) {
-        return CREDENTIALS_ADC.equalsIgnoreCase(credentials) || isExternalAccount(credentials);
+        return CREDENTIALS_ADC.equalsIgnoreCase(credentials) || isExternalAccount(credentials)
+                || isExternalAccountSupplier(credentials);
     }
 
     /** Keeps inline credentials out of logs. */
