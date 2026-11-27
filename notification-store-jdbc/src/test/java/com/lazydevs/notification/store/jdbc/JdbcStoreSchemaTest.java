@@ -36,7 +36,7 @@ class JdbcStoreSchemaTest {
     void customPrefixAndSchemaQualifyTablesButNotIndexNames() {
         JdbcStoreSchema schema = JdbcStoreSchema.postgresql("ns_", "notify");
 
-        assertThat(schema.statements()).hasSize(18);
+        assertThat(schema.statements()).hasSize(23);
         assertThat(schema.ddl())
                 .contains("CREATE TABLE IF NOT EXISTS notify.ns_idempotency (")
                 .contains("CREATE TABLE IF NOT EXISTS notify.ns_dead_letter (")
@@ -49,7 +49,14 @@ class JdbcStoreSchemaTest {
                 .contains("CREATE TABLE IF NOT EXISTS notify.ns_push_device (")
                 .contains("CONSTRAINT ns_push_device_token_uq UNIQUE (tenant_key, token_sha256)")
                 .contains("CREATE INDEX IF NOT EXISTS ns_push_device_token_hash_idx ON notify.ns_push_device")
-                .doesNotContainPattern("notification_(idempotency|dead_letter|delivery_event|audit|push_device)")
+                .contains("CREATE TABLE IF NOT EXISTS notify.ns_template_version (")
+                .contains("CREATE TABLE IF NOT EXISTS notify.ns_template_event (")
+                .contains("CREATE UNIQUE INDEX IF NOT EXISTS ns_template_version_published_uq"
+                        + " ON notify.ns_template_version (tenant_key, channel, template_id, locale)"
+                        + " WHERE status = 'PUBLISHED'")
+                .contains("CREATE INDEX IF NOT EXISTS ns_template_event_key_idx ON notify.ns_template_event")
+                .doesNotContainPattern(
+                        "notification_(idempotency|dead_letter|delivery_event|audit|push_device|template)")
                 .doesNotContain("notify.ns_dead_letter_expires_at_idx");
     }
 

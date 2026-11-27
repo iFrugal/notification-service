@@ -2,12 +2,14 @@ package com.lazydevs.notification.starter;
 
 import com.lazydevs.notification.core.config.NotificationCoreAutoConfiguration;
 import com.lazydevs.notification.core.config.NotificationCoreDefaultsAutoConfiguration;
+import com.lazydevs.notification.core.config.NotificationTemplateStoreAutoConfiguration;
 import com.lazydevs.notification.kafka.autoconfigure.NotificationKafkaAutoConfiguration;
 import com.lazydevs.notification.redis.autoconfigure.NotificationRedisAutoConfiguration;
 import com.lazydevs.notification.rest.autoconfigure.NotificationRestAutoConfiguration;
 import com.lazydevs.notification.rest.controller.AdminController;
 import com.lazydevs.notification.rest.controller.GlobalExceptionHandler;
 import com.lazydevs.notification.rest.controller.NotificationController;
+import com.lazydevs.notification.rest.template.TemplateAdminController;
 import com.lazydevs.notification.rest.webhook.WebhookController;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.config.BeanDefinition;
@@ -67,6 +69,7 @@ class NoScannedComponentsTest {
                 NotificationController.class.getName(),
                 AdminController.class.getName(),
                 WebhookController.class.getName(),
+                TemplateAdminController.class.getName(),
                 GlobalExceptionHandler.class.getName());
 
         // The scan really walked the other modules: their auto-configurations
@@ -78,7 +81,9 @@ class NoScannedComponentsTest {
                 NotificationKafkaAutoConfiguration.class.getName(),
                 NotificationRedisAutoConfiguration.class.getName(),
                 NotificationRestAutoConfiguration.class.getName(),
-                NotificationRestAutoConfiguration.class.getName() + "$WebhookConfiguration");
+                NotificationRestAutoConfiguration.class.getName() + "$WebhookConfiguration",
+                NotificationRestAutoConfiguration.class.getName() + "$TemplateAdminConfiguration",
+                NotificationTemplateStoreAutoConfiguration.class.getName());
     }
 
     private static boolean isTestClass(MetadataReader reader) throws IOException {

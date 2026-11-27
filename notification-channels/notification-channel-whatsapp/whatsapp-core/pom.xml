@@ -28,6 +28,18 @@
             <artifactId>notification-core</artifactId>
         </dependency>
 
+        <!-- Store-backed registry (DD-38): cache of store lookups and the
+             JSON bindings. Both already come through notification-core;
+             declared because this module uses them directly. -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
         <!-- Testing: ApplicationContextRunner -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

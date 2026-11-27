@@ -492,6 +492,18 @@ Merged as PR #81 on top of the WhatsApp release 1.2.2 (PR #78), whose renderer h
 - [x] google-auth: `external-account-supplier:<name>` with the `FcmSubjectTokenSupplier` SPI
 - [x] Merged after PR #78 and released as 1.2.3; `JdbcPushDeviceRegistryIT` and the RLS case run in CI (Testcontainers)
 
+### Phase 23 - 1.3.0: template store and admin API (DD-38)
+
+Release notes: [`RELEASE_NOTES_1.3.0.md`](./RELEASE_NOTES_1.3.0.md).
+PR #82, on top of the push release 1.2.3 (PR #81).
+
+- [x] `TemplateSource` SPI serving both engine lookups; the previous `ResourceLoader` lookup is the default source
+- [x] `TemplateStore` SPI with `InMemoryTemplateStore` and `JdbcTemplateStore` (`<prefix>template_version`, `<prefix>template_event`, RLS case)
+- [x] `TemplateAdminService`: list, get, preview, validate, draft, publish (validated), restore, discard, reset, versions, events; push templates checked through `PushContentRenderer`
+- [x] `TemplateChangeFeed` with the polling `JdbcTemplateChangeFeed`; two-engine IT
+- [x] `StoreBackedWhatsAppTemplateRegistry` and the opt-in REST `TemplateAdminController`
+- [ ] Merge PR #82, then run "Release to Maven Central" with `release-version: 1.3.0`
+
 ### Out-of-scope / parked
 
 - Jackson 2 → Jackson 3 migration (cleanup; Boot 4 defaults to

@@ -293,6 +293,8 @@ All have an in-memory default; the stateful ones can move to Redis or PostgreSQL
 | **Scrubbed error message in stored failures** | DD-32 | 🔵 Off | `notification.idempotency.store-scrubbed-error-message: true` | Caffeine | `RedisIdempotencyStore` | `JdbcIdempotencyStore` |
 | **Status view** (`NotificationService.find`) | DD-33 | 🔵 Off | `notification.audit.enabled: true` | `InMemoryNotificationAuditStore` (bounded) | None: supply a store, or `notification.redis.audit.enabled: false` for memory | `JdbcNotificationAuditStore` |
 | **Recipient guard** | DD-34 | 🔵 Off | `notification.recipient-guard.enabled: true` + `channels.<channel>.allowed` | n/a | n/a | n/a |
+| **Template store** (runtime overrides, drafts, versions, restore) | DD-38 | 🔵 Off | `notification.template.store.type: memory` or `jdbc` (needs `legacy-helpers: false`) | `InMemoryTemplateStore` (one process) | None: memory or JDBC only | `JdbcTemplateStore` + `JdbcTemplateChangeFeed` (tables `<prefix>template_version`, `<prefix>template_event`) |
+| **Template admin REST API** | DD-38 | 🔵 Off | `notification.rest.admin.templates.enabled: true` (needs REST and a template store) | n/a | n/a | n/a |
 
 ### 3a. Idempotency (DD-10)
 
@@ -437,6 +439,40 @@ A request whose template is missing, invalid, does not fit its data, or renders 
 Nothing is stored, no rate-limit token is taken and nothing goes to the dead-letter store.
 The rendered content is reused for the send, so the template is rendered once.
 A channel with its own renderer (WhatsApp, DD-35) is rendered by it at this point instead; a WhatsApp value that breaks a parameter rule is refused the same way, with reason `PARAMETER_INVALID` (`TEMPLATE_PARAMETER_INVALID`) and the variable as `path`.
+
+### 3a-6. Template store and admin API (DD-38)
+
+```yaml
+notification:
+  template:
+    legacy-helpers: false              # required with any store
+    store:
+      type: jdbc                       # none (default) | memory | jdbc
+      poll-interval: 15s               # JDBC change feed
+      max-content-size: 256KB          # content and sample model, each
+      editable-channels: [email, sms, push]
+  rest:
+    admin:
+      templates:
+        enabled: true                  # optional REST API under <base-path>/admin/templates
+  store:
+    jdbc:
+      template:
+        summary-function: notification_template_summaries   # optional, for row-level security
+        change-function: notification_template_changes      # optional, for row-level security
+```
+
+| Add | When |
+|-----|------|
+| nothing | `memory`: `InMemoryTemplateStore` ships in `notification-core` |
+| `notification-store-jdbc` + a `DataSource` | `jdbc`: tables `<prefix>template_version` and `<prefix>template_event` from the reference DDL |
+| `notification-rest` | the REST API; otherwise call `TemplateAdminService` from your own controller |
+
+Overrides win over the files at their layer: tenant override, tenant file, default override, default file.
+Publishing validates the draft with its stored sample model; restore does not, so a bad publish can always be rolled back.
+The publishing replica evicts at once, the others within one poll interval.
+Declare a `TemplateSource` bean to read built-in templates from somewhere other than `base-path`, an `ActorResolver` bean to name the actor from your own authentication, a `TemplateSampleProvider` bean to seed sample models, and a `TemplateChangeListener` bean to hear about changes.
+With a store, the WhatsApp registry reads approved JSON bindings from it before the YAML ones.
 
 ### 3b. Rate limiting (DD-12 + DD-23)
 

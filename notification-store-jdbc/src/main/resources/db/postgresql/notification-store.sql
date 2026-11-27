@@ -136,3 +136,53 @@ CREATE INDEX IF NOT EXISTS notification_push_device_user_seen_idx ON notificatio
 CREATE INDEX IF NOT EXISTS notification_push_device_token_hash_idx ON notification_push_device (tenant_key, token_hash);
 
 CREATE INDEX IF NOT EXISTS notification_push_device_expires_at_idx ON notification_push_device (expires_at);
+
+CREATE TABLE IF NOT EXISTS notification_template_version (
+    id              BIGINT       GENERATED ALWAYS AS IDENTITY,
+    tenant_id       VARCHAR(255),
+    tenant_key      VARCHAR(255) GENERATED ALWAYS AS (COALESCE(tenant_id, '')) STORED,
+    channel         VARCHAR(32)  NOT NULL,
+    template_id     VARCHAR(128) NOT NULL,
+    locale          VARCHAR(128) NOT NULL DEFAULT '',
+    version         INTEGER      NOT NULL,
+    status          VARCHAR(16)  NOT NULL,
+    content_type    VARCHAR(16)  NOT NULL,
+    content         TEXT         NOT NULL,
+    sample_model    TEXT,
+    revision        BIGINT       NOT NULL,
+    created_by      VARCHAR(255) NOT NULL,
+    created_at      TIMESTAMPTZ  NOT NULL,
+    updated_by      VARCHAR(255) NOT NULL,
+    updated_at      TIMESTAMPTZ  NOT NULL,
+    published_by    VARCHAR(255),
+    published_at    TIMESTAMPTZ,
+    note            TEXT,
+    provider_status VARCHAR(16),
+    provider_ref    VARCHAR(512),
+    provider_reason TEXT,
+    CONSTRAINT notification_template_version_pk PRIMARY KEY (id),
+    CONSTRAINT notification_template_version_uq UNIQUE (tenant_key, channel, template_id, locale, version),
+    CONSTRAINT notification_template_version_status_ck
+        CHECK (status IN ('DRAFT', 'PUBLISHED', 'SUPERSEDED', 'ARCHIVED'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS notification_template_version_published_uq ON notification_template_version (tenant_key, channel, template_id, locale) WHERE status = 'PUBLISHED';
+
+CREATE UNIQUE INDEX IF NOT EXISTS notification_template_version_draft_uq ON notification_template_version (tenant_key, channel, template_id, locale) WHERE status = 'DRAFT';
+
+CREATE TABLE IF NOT EXISTS notification_template_event (
+    id          BIGINT       GENERATED ALWAYS AS IDENTITY,
+    tenant_id   VARCHAR(255),
+    tenant_key  VARCHAR(255) GENERATED ALWAYS AS (COALESCE(tenant_id, '')) STORED,
+    channel     VARCHAR(32)  NOT NULL,
+    template_id VARCHAR(128) NOT NULL,
+    locale      VARCHAR(128) NOT NULL DEFAULT '',
+    action      VARCHAR(32)  NOT NULL,
+    version     INTEGER,
+    actor       VARCHAR(255) NOT NULL,
+    occurred_at TIMESTAMPTZ  NOT NULL,
+    note        TEXT,
+    CONSTRAINT notification_template_event_pk PRIMARY KEY (id)
+);
+
+CREATE INDEX IF NOT EXISTS notification_template_event_key_idx ON notification_template_event (tenant_key, channel, template_id, locale, id);

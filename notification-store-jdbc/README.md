@@ -1,6 +1,6 @@
 # notification-store-jdbc
 
-PostgreSQL-backed implementations of five notification-service SPIs, written as plain SQL over Spring's `JdbcClient`:
+PostgreSQL-backed implementations of notification-service SPIs, written as plain SQL over Spring's `JdbcClient`:
 
 | SPI | Implementation |
 |---|---|
@@ -9,6 +9,7 @@ PostgreSQL-backed implementations of five notification-service SPIs, written as 
 | `DeliveryEventStore` (also a `DeliveryEventListener`) | `JdbcDeliveryEventStore` |
 | `NotificationAuditStore` (since 1.2.1, the status view) | `JdbcNotificationAuditStore` |
 | `PushDeviceRegistry` (since 1.2.3, `notification.push.devices.enabled=true`, DD-37) | `JdbcPushDeviceRegistry` |
+| `TemplateStore` and `TemplateChangeFeed` (since 1.3.0, see [Template store](#template-store)) | `JdbcTemplateStore`, `JdbcTemplateChangeFeed` |
 
 There is no ORM, no JPA or Hibernate, and no migration tool.
 The library never executes DDL and never needs a superuser, a table owner, or `BYPASSRLS`: every statement is plain DML on the configured tables.
@@ -223,6 +224,56 @@ CREATE INDEX IF NOT EXISTS notification_push_device_user_seen_idx ON notificatio
 CREATE INDEX IF NOT EXISTS notification_push_device_token_hash_idx ON notification_push_device (tenant_key, token_hash);
 
 CREATE INDEX IF NOT EXISTS notification_push_device_expires_at_idx ON notification_push_device (expires_at);
+
+CREATE TABLE IF NOT EXISTS notification_template_version (
+    id              BIGINT       GENERATED ALWAYS AS IDENTITY,
+    tenant_id       VARCHAR(255),
+    tenant_key      VARCHAR(255) GENERATED ALWAYS AS (COALESCE(tenant_id, '')) STORED,
+    channel         VARCHAR(32)  NOT NULL,
+    template_id     VARCHAR(128) NOT NULL,
+    locale          VARCHAR(128) NOT NULL DEFAULT '',
+    version         INTEGER      NOT NULL,
+    status          VARCHAR(16)  NOT NULL,
+    content_type    VARCHAR(16)  NOT NULL,
+    content         TEXT         NOT NULL,
+    sample_model    TEXT,
+    revision        BIGINT       NOT NULL,
+    created_by      VARCHAR(255) NOT NULL,
+    created_at      TIMESTAMPTZ  NOT NULL,
+    updated_by      VARCHAR(255) NOT NULL,
+    updated_at      TIMESTAMPTZ  NOT NULL,
+    published_by    VARCHAR(255),
+    published_at    TIMESTAMPTZ,
+    note            TEXT,
+    provider_status VARCHAR(16),
+    provider_ref    VARCHAR(512),
+    provider_reason TEXT,
+    CONSTRAINT notification_template_version_pk PRIMARY KEY (id),
+    CONSTRAINT notification_template_version_uq UNIQUE (tenant_key, channel, template_id, locale, version),
+    CONSTRAINT notification_template_version_status_ck
+        CHECK (status IN ('DRAFT', 'PUBLISHED', 'SUPERSEDED', 'ARCHIVED'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS notification_template_version_published_uq ON notification_template_version (tenant_key, channel, template_id, locale) WHERE status = 'PUBLISHED';
+
+CREATE UNIQUE INDEX IF NOT EXISTS notification_template_version_draft_uq ON notification_template_version (tenant_key, channel, template_id, locale) WHERE status = 'DRAFT';
+
+CREATE TABLE IF NOT EXISTS notification_template_event (
+    id          BIGINT       GENERATED ALWAYS AS IDENTITY,
+    tenant_id   VARCHAR(255),
+    tenant_key  VARCHAR(255) GENERATED ALWAYS AS (COALESCE(tenant_id, '')) STORED,
+    channel     VARCHAR(32)  NOT NULL,
+    template_id VARCHAR(128) NOT NULL,
+    locale      VARCHAR(128) NOT NULL DEFAULT '',
+    action      VARCHAR(32)  NOT NULL,
+    version     INTEGER,
+    actor       VARCHAR(255) NOT NULL,
+    occurred_at TIMESTAMPTZ  NOT NULL,
+    note        TEXT,
+    CONSTRAINT notification_template_event_pk PRIMARY KEY (id)
+);
+
+CREATE INDEX IF NOT EXISTS notification_template_event_key_idx ON notification_template_event (tenant_key, channel, template_id, locale, id);
 ```
 
 The tables are:
@@ -314,6 +365,95 @@ The dead-letter and delivery-event stores log and swallow that failure, as their
 - Every removal is logged at INFO with the count and the reason, never the token or its hash.
 
 To add the table to a 1.3 schema, run its `CREATE TABLE` and `CREATE INDEX` statements from the reference DDL; nothing else changes.
+
+## Template store
+
+Since 1.3.0, `notification.template.store.type=jdbc` registers `JdbcTemplateStore` and `JdbcTemplateChangeFeed` (DD-38), independently of `notification.store.type`.
+They use the same `schema`, `table-prefix` and `datasource-bean-name` as the other stores, and the tables `<prefix>template_version` and `<prefix>template_event` of the reference DDL.
+
+```yaml
+notification:
+  template:
+    legacy-helpers: false        # required with any template store
+    store:
+      type: jdbc
+      poll-interval: 15s
+      max-content-size: 256KB
+```
+
+| Property | Default | Meaning |
+|---|---|---|
+| `notification.store.jdbc.template.summary-function` | none | `SECURITY DEFINER` function the cross-tenant listing calls instead of reading the table. |
+| `notification.store.jdbc.template.change-function` | none | `SECURITY DEFINER` function the change feed calls instead of reading the table. |
+
+- Each write runs in one transaction that takes a transaction-scoped advisory lock on the key (`pg_advisory_xact_lock`), so concurrent writes to one key from any replica run one after the other, and appends its event row in the same transaction.
+- Partial unique indexes keep at most one `DRAFT` and one `PUBLISHED` row per key.
+- Keys carry their tenant (`NULL` for the default layer); the store does not read `TenantContext`.
+- The change feed reads the event table every poll interval and holds no connection in between. It re-reads the events of the last minute (or four poll intervals) so an event whose transaction commits after a higher id is still delivered.
+
+Grants for the application role:
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE
+  ON notification_template_version, notification_template_event
+  TO notification_app;
+```
+
+### Template store under row-level security
+
+A pooled multi-tenant host typically lets every tenant read the default layer and lets only a platform session write it.
+The host sets the session tenant itself: the target tenant for a tenant override, the platform session for the default layer.
+`JdbcTemplateStoreRlsIT` runs the store as a non-owner role under exactly these policies, with the tenant in `app.tenant_id` and `'~pool'` as the platform session:
+
+```sql
+ALTER TABLE notification_template_version ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notification_template_version FORCE ROW LEVEL SECURITY;
+CREATE POLICY template_select ON notification_template_version FOR SELECT TO notification_app
+  USING (tenant_id = nullif(current_setting('app.tenant_id', true), '~pool') OR tenant_id IS NULL);
+CREATE POLICY template_write ON notification_template_version FOR ALL TO notification_app
+  USING (tenant_id = nullif(current_setting('app.tenant_id', true), '~pool')
+         OR (tenant_id IS NULL AND current_setting('app.tenant_id', true) = '~pool'))
+  WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '~pool')
+         OR (tenant_id IS NULL AND current_setting('app.tenant_id', true) = '~pool'));
+-- the same two policies on notification_template_event
+```
+
+Such a session cannot list other tenants' overrides or see their events.
+Create these two functions, owned by a role that is not subject to the policies, and name them in the properties above; they return keys and metadata only, never content:
+
+```sql
+CREATE FUNCTION notification_template_summaries(p_channel varchar, p_template_id varchar)
+RETURNS TABLE (tenant_id varchar, channel varchar, template_id varchar, locale varchar,
+               version integer, status varchar, content_type varchar, revision bigint,
+               created_by varchar, created_at timestamptz, updated_by varchar,
+               updated_at timestamptz, published_by varchar, published_at timestamptz, note text,
+               provider_status varchar, provider_ref varchar, provider_reason text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT v.tenant_id, v.channel, v.template_id, v.locale, v.version, v.status, v.content_type,
+         v.revision, v.created_by, v.created_at, v.updated_by, v.updated_at, v.published_by,
+         v.published_at, v.note, v.provider_status, v.provider_ref, v.provider_reason
+  FROM notification_template_version v
+  WHERE v.status IN ('DRAFT', 'PUBLISHED')
+    AND (p_channel IS NULL OR v.channel = p_channel)
+    AND (p_template_id IS NULL OR v.template_id = p_template_id)
+$$;
+
+CREATE FUNCTION notification_template_changes(p_after bigint, p_limit integer)
+RETURNS TABLE (id bigint, tenant_id varchar, channel varchar, template_id varchar, locale varchar)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT e.id, e.tenant_id, e.channel, e.template_id, e.locale FROM notification_template_event e
+  WHERE e.id > p_after ORDER BY e.id LIMIT p_limit
+$$;
+```
+
+```yaml
+notification:
+  store:
+    jdbc:
+      template:
+        summary-function: notification_template_summaries
+        change-function: notification_template_changes
+```
 
 ## Dead-letter replay across replicas
 

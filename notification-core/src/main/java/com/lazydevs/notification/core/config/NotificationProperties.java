@@ -2,6 +2,7 @@ package com.lazydevs.notification.core.config;
 
 import com.lazydevs.notification.core.idempotency.IdempotencyFailurePolicy;
 import com.lazydevs.notification.core.store.StoreType;
+import com.lazydevs.notification.core.template.store.TemplateStoreType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Max;
@@ -12,12 +13,16 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.util.unit.DataSize;
 import org.springframework.validation.annotation.Validated;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Configuration properties for the notification service.
@@ -179,6 +184,38 @@ public class NotificationProperties {
          * caller-admission filters are restricted to {@code <base-path>/*}.
          */
         private String basePath = "/api/v1";
+        /**
+         * Admin endpoints that are off unless enabled one by one.
+         *
+         * @since 1.3.0
+         */
+        private RestAdminProperties admin = new RestAdminProperties();
+    }
+
+    /**
+     * {@code notification.rest.admin.*}.
+     *
+     * @since 1.3.0
+     */
+    @Data
+    public static class RestAdminProperties {
+        /** The template admin API under {@code <base-path>/admin/templates} (DD-38). */
+        private RestAdminTemplatesProperties templates = new RestAdminTemplatesProperties();
+    }
+
+    /**
+     * {@code notification.rest.admin.templates.*}.
+     *
+     * @since 1.3.0
+     */
+    @Data
+    public static class RestAdminTemplatesProperties {
+        /**
+         * Expose the template admin API under {@code <base-path>/admin/templates}. Needs a
+         * template store ({@code notification.template.store.type}). Like every admin
+         * endpoint it ships without authentication: secure it in the host (DD-08).
+         */
+        private boolean enabled = false;
     }
 
     @Data
@@ -260,6 +297,43 @@ public class NotificationProperties {
          * @since 1.2.1
          */
         private boolean validateBeforeDispatch = false;
+        /**
+         * Editable template overrides with drafts, versions and an admin API (DD-38).
+         *
+         * @since 1.3.0
+         */
+        private TemplateStoreProperties store = new TemplateStoreProperties();
+    }
+
+    /**
+     * {@code notification.template.store.*}: the opt-in template store (DD-38).
+     *
+     * @since 1.3.0
+     */
+    @Data
+    public static class TemplateStoreProperties {
+        /**
+         * Which template store to use: {@code none} (the default; templates come from the
+         * base path only), {@code memory} (lost on restart, one process) or {@code jdbc}
+         * (needs {@code notification-store-jdbc}). Any store requires
+         * {@code notification.template.legacy-helpers=false}; startup fails otherwise.
+         */
+        private TemplateStoreType type = TemplateStoreType.NONE;
+        /**
+         * How often the JDBC change feed polls the event table for templates changed by
+         * other replicas; the most a replica serves a replaced template after a publish.
+         */
+        private Duration pollInterval = Duration.ofSeconds(15);
+        /**
+         * Largest template content, and largest sample model, the store accepts, in bytes
+         * of UTF-8.
+         */
+        private DataSize maxContentSize = DataSize.ofKilobytes(256);
+        /**
+         * Channels whose templates the admin API may write. WhatsApp bindings are
+         * read-only by default: changing one needs a matching approval at Meta.
+         */
+        private Set<String> editableChannels = new LinkedHashSet<>(List.of("email", "sms", "push"));
     }
 
     /**
