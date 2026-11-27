@@ -47,6 +47,13 @@ public class JdbcStoreProperties {
     private Purge purge = new Purge();
 
     /**
+     * Template store settings (DD-38), used when {@code notification.template.store.type=jdbc}.
+     *
+     * @since 1.3.0
+     */
+    private Template template = new Template();
+
+    /**
      * Background purge settings. Off by default: many hosts prefer to run
      * the purge from their own scheduler (or {@code pg_cron}) by calling
      * {@link JdbcStorePurger#purgeAll()}.
@@ -62,5 +69,30 @@ public class JdbcStoreProperties {
 
         /** Maximum rows deleted per statement. */
         private int batchSize = 1000;
+    }
+
+    /**
+     * Template store settings for databases with row-level security (DD-38). A session
+     * that only sees its own tenant's rows cannot list other tenants' overrides or see
+     * their changes; name a {@code SECURITY DEFINER} function for each, returning keys and
+     * metadata only, and the store calls it instead of reading the tables.
+     *
+     * @since 1.3.0
+     */
+    @Data
+    public static class Template {
+
+        /**
+         * Function {@code (p_channel varchar, p_template_id varchar)} returning the summary
+         * columns of drafts and published versions across tenants. Blank reads the table.
+         */
+        private String summaryFunction;
+
+        /**
+         * Function {@code (p_after bigint, p_limit integer)} returning
+         * {@code (id, tenant_id, channel, template_id, locale)} of the events after
+         * {@code p_after}, by id. Blank reads the table.
+         */
+        private String changeFunction;
     }
 }

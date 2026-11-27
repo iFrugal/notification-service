@@ -12,6 +12,13 @@
       "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties",
       "sourceMethod": "getPurge()",
       "description": "Background purge of expired rows."
+    },
+    {
+      "name": "notification.store.jdbc.template",
+      "type": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties$Template",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties",
+      "sourceMethod": "getTemplate()",
+      "description": "Template store settings for databases with row-level security (DD-38). Used when notification.template.store.type=jdbc."
     }
   ],
   "properties": [
@@ -75,6 +82,18 @@
       "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties$Purge",
       "description": "Maximum rows deleted per purge statement.",
       "defaultValue": 1000
+    },
+    {
+      "name": "notification.store.jdbc.template.summary-function",
+      "type": "java.lang.String",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties$Template",
+      "description": "SECURITY DEFINER function (p_channel varchar, p_template_id varchar) returning the summary columns of drafts and published versions across tenants, for row-level-security databases. Unset reads the table."
+    },
+    {
+      "name": "notification.store.jdbc.template.change-function",
+      "type": "java.lang.String",
+      "sourceType": "com.lazydevs.notification.store.jdbc.JdbcStoreProperties$Template",
+      "description": "SECURITY DEFINER function (p_after bigint, p_limit integer) returning (id, tenant_id, channel, template_id, locale) of template events after p_after, for row-level-security databases. Unset reads the table."
     }
   ]
 }

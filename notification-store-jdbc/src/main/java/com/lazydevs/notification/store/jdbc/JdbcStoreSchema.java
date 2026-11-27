@@ -4,7 +4,8 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Renders the reference PostgreSQL DDL for the JDBC stores.
+ * Renders the reference PostgreSQL DDL for the JDBC stores, including the
+ * template store's version and event tables (DD-38, since 1.3.0).
  *
  * <p>The library never executes DDL. This helper exists so hosts can
  * generate the script for their own prefix and schema and feed it to
@@ -150,7 +151,57 @@ public final class JdbcStoreSchema {
             "CREATE INDEX IF NOT EXISTS {p}push_device_user_seen_idx"
                     + " ON {push_device} (tenant_key, user_id, last_seen_at)",
             "CREATE INDEX IF NOT EXISTS {p}push_device_token_hash_idx ON {push_device} (tenant_key, token_hash)",
-            "CREATE INDEX IF NOT EXISTS {p}push_device_expires_at_idx ON {push_device} (expires_at)");
+            "CREATE INDEX IF NOT EXISTS {p}push_device_expires_at_idx ON {push_device} (expires_at)",
+            """
+            CREATE TABLE IF NOT EXISTS {template_version} (
+                id              BIGINT       GENERATED ALWAYS AS IDENTITY,
+                tenant_id       VARCHAR(255),
+                tenant_key      VARCHAR(255) GENERATED ALWAYS AS (COALESCE(tenant_id, '')) STORED,
+                channel         VARCHAR(32)  NOT NULL,
+                template_id     VARCHAR(128) NOT NULL,
+                locale          VARCHAR(128) NOT NULL DEFAULT '',
+                version         INTEGER      NOT NULL,
+                status          VARCHAR(16)  NOT NULL,
+                content_type    VARCHAR(16)  NOT NULL,
+                content         TEXT         NOT NULL,
+                sample_model    TEXT,
+                revision        BIGINT       NOT NULL,
+                created_by      VARCHAR(255) NOT NULL,
+                created_at      TIMESTAMPTZ  NOT NULL,
+                updated_by      VARCHAR(255) NOT NULL,
+                updated_at      TIMESTAMPTZ  NOT NULL,
+                published_by    VARCHAR(255),
+                published_at    TIMESTAMPTZ,
+                note            TEXT,
+                provider_status VARCHAR(16),
+                provider_ref    VARCHAR(512),
+                provider_reason TEXT,
+                CONSTRAINT {p}template_version_pk PRIMARY KEY (id),
+                CONSTRAINT {p}template_version_uq UNIQUE (tenant_key, channel, template_id, locale, version),
+                CONSTRAINT {p}template_version_status_ck
+                    CHECK (status IN ('DRAFT', 'PUBLISHED', 'SUPERSEDED', 'ARCHIVED'))
+            )""",
+            "CREATE UNIQUE INDEX IF NOT EXISTS {p}template_version_published_uq"
+                    + " ON {template_version} (tenant_key, channel, template_id, locale) WHERE status = 'PUBLISHED'",
+            "CREATE UNIQUE INDEX IF NOT EXISTS {p}template_version_draft_uq"
+                    + " ON {template_version} (tenant_key, channel, template_id, locale) WHERE status = 'DRAFT'",
+            """
+            CREATE TABLE IF NOT EXISTS {template_event} (
+                id          BIGINT       GENERATED ALWAYS AS IDENTITY,
+                tenant_id   VARCHAR(255),
+                tenant_key  VARCHAR(255) GENERATED ALWAYS AS (COALESCE(tenant_id, '')) STORED,
+                channel     VARCHAR(32)  NOT NULL,
+                template_id VARCHAR(128) NOT NULL,
+                locale      VARCHAR(128) NOT NULL DEFAULT '',
+                action      VARCHAR(32)  NOT NULL,
+                version     INTEGER,
+                actor       VARCHAR(255) NOT NULL,
+                occurred_at TIMESTAMPTZ  NOT NULL,
+                note        TEXT,
+                CONSTRAINT {p}template_event_pk PRIMARY KEY (id)
+            )""",
+            "CREATE INDEX IF NOT EXISTS {p}template_event_key_idx"
+                    + " ON {template_event} (tenant_key, channel, template_id, locale, id)");
 
     private final JdbcStoreTables tables;
 
@@ -185,6 +236,8 @@ public final class JdbcStoreSchema {
                 .replace("{delivery_event}", tables.deliveryEvent())
                 .replace("{audit}", tables.audit())
                 .replace("{push_device}", tables.pushDevice())
+                .replace("{template_version}", tables.templateVersion())
+                .replace("{template_event}", tables.templateEvent())
                 .replace("{p}", tables.objectName(""));
     }
 }

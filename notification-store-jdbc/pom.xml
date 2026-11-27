@@ -13,7 +13,7 @@
     <packaging>jar</packaging>
 
     <name>${project.artifactId}</name>
-    <description>Notification Service JDBC store - PostgreSQL-backed IdempotencyStore, DeadLetterStore and DeliveryEventStore over plain SQL (JdbcClient). The host owns the DataSource, the JDBC driver and the schema migrations.</description>
+    <description>Notification Service JDBC store - PostgreSQL-backed IdempotencyStore, DeadLetterStore, DeliveryEventStore, NotificationAuditStore and TemplateStore over plain SQL (JdbcClient). The host owns the DataSource, the JDBC driver and the schema migrations.</description>
 
     <dependencies>
         <!-- SPI interfaces and model records only; no dependency on core. -->

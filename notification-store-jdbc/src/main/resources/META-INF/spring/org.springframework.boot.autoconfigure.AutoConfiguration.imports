@@ -1,1 +1,2 @@
 com.lazydevs.notification.store.jdbc.JdbcStoreAutoConfiguration
+com.lazydevs.notification.store.jdbc.JdbcTemplateStoreAutoConfiguration

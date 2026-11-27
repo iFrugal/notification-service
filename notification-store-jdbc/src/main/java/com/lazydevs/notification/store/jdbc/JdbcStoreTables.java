@@ -80,6 +80,24 @@ public record JdbcStoreTables(String schema, String tablePrefix) {
     }
 
     /**
+     * Qualified name of the template version table (DD-38).
+     *
+     * @since 1.3.0
+     */
+    public String templateVersion() {
+        return qualified("template_version");
+    }
+
+    /**
+     * Qualified name of the template event table (DD-38).
+     *
+     * @since 1.3.0
+     */
+    public String templateEvent() {
+        return qualified("template_event");
+    }
+
+    /**
      * Unqualified name for a constraint or index. PostgreSQL creates
      * indexes in the schema of their table, so these never carry the
      * schema.
